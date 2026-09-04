@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boa Viagem · Gestão</title>
+<link rel="icon" href="/images/logo.svg" type="image/x-icon">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="auth-body">
+
+<div class="auth-shell">
+  <div class="auth-brand">
+    <img src="images/logo.svg" alt="Logo" class="brand-mark" width="34" height="34" style="object-fit: contain;">
+
+    <div>
+      <div class="brand-name" style="color:var(--navy-950)">Boa Viagem</div>
+      <div class="muted" style="font-size:12.5px; margin-top: 4px; margin-bottom: 14px">Plataforma multi-escola de gestão de autoescolas</div>
+    </div>
+  </div>
+
+  <div class="auth-card">
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabLogin">Entrar</button>
+      <button class="auth-tab" id="tabRegisto">Nova escola</button>
+    </div>
+
+    <form id="loginForm" class="auth-form">
+      <div class="form-field full">
+        <label>Utilizador da escola</label>
+        <input name="username" required autocomplete="username" placeholder="ex: rotacerta">
+      </div>
+      <div class="form-field full">
+        <label>Palavra-passe</label>
+        <input name="password" type="password" required autocomplete="current-password">
+      </div>
+      <div id="loginError" class="inline-alert inline-alert-warning" style="display:none; margin-bottom:14px"></div>
+      <button type="submit" class="btn btn-accent" style="width:100%; justify-content:center">Entrar</button>
+    </form>
+
+    <form id="registoForm" class="auth-form" style="display:none">
+      <div class="form-field full">
+        <label>Nome da escola de condução</label>
+        <input name="nomeEscola" required placeholder="ex: Autoescola Central">
+      </div>
+      <div class="form-field full">
+        <label>Utilizador (para entrar)</label>
+        <input name="username" required placeholder="sem espaços, ex: central2026">
+      </div>
+      <div class="form-field full">
+        <label>Palavra-passe</label>
+        <input name="password" type="password" required minlength="6">
+      </div>
+      <div class="form-field full">
+        <label>Email de contacto</label>
+        <input name="email" type="email">
+      </div>
+      <div id="registoError" class="inline-alert inline-alert-warning" style="display:none; margin-bottom:14px"></div>
+      <button type="submit" class="btn btn-accent" style="width:100%; justify-content:center">Criar escola e entrar</button>
+      <p class="muted" style="margin-top:14px; font-size:12.5px; line-height:1.5">
+        Cada escola tem o seu próprio login e os seus dados ficam completamente isolados das restantes.
+      </p>
+    </form>
+  </div>
+</div>
+
+<script src="js/login.js"></script>
+</body>
+</html>

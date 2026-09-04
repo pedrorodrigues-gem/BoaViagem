@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boa Viagem · Gestão</title>
+<link rel="icon" href="/images/logo.svg" type="image/x-icon">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="brand">
+      <img src="images/logo.svg" alt="Logo" class="brand-mark" width="34" height="34" style="object-fit: contain;">
+      <div>
+        <div class="brand-name">Boa Viagem</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-group" data-group="geral">
+        <button class="nav-item" data-view="dashboard">
+          <span class="nav-ico">◧</span> Dashboard
+        </button>
+      </div>
+
+      <div class="nav-group" data-group="formacao">
+        <div class="nav-section-title">Formação</div>
+        <button class="nav-item active" data-view="calendario">
+          <span class="nav-ico">▦</span> Calendário
+        </button>
+        <button class="nav-item" data-view="alunos">
+          <span class="nav-ico">◍</span> Alunos
+        </button>
+        <button class="nav-item" data-view="aulas">
+          <span class="nav-ico">◷</span> Aulas
+        </button>
+        <button class="nav-item" data-view="exames">
+          <span class="nav-ico">✓</span> Exames
+        </button>        
+        <button class="nav-item" data-view="preinscricoes">
+          <span class="nav-ico">✉</span> Pré-inscrições
+        </button>
+      </div>
+
+      <div class="nav-group" data-group="gestao">
+        <div class="nav-section-title">Gestão</div>
+        <button class="nav-item" data-view="pagamentos">
+          <span class="nav-ico">◈</span> Pagamentos
+        </button>
+        <button class="nav-item" data-view="contratos">
+          <span class="nav-ico">▧</span> Contratos
+        </button>
+      </div>
+
+      <div class="nav-group" data-group="sistema">
+        <div class="nav-section-title">Sistema</div>
+        <button class="nav-item" data-view="config">
+          <span class="nav-ico">⚙</span> Configuração
+        </button>
+        <button class="nav-item" data-view="instrutores">
+          <span class="nav-ico">◎</span> Instrutores
+        </button>
+        <button class="nav-item" data-view="veiculos">
+          <span class="nav-ico">▤</span> Veículos
+        </button>
+        <div class="nav-section-title">Estatísticas</div>
+        <button class="nav-item" data-view="estatisticas">
+          <span class="nav-ico">⚙</span> Estatísticas
+        </button>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button class="btn btn-ghost" id="btnLogout" style="width:100%; justify-content:center; margin-top:12px; background:rgba(255,255,255,0.06); color:#fff; border-color:rgba(255,255,255,0.14)">Terminar sessão</button>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1 id="viewTitle">Dashboard</h1>
+        <p id="viewSubtitle" class="muted">Visão geral da atividade da escola</p>
+      </div>
+      <div id="global-search-container" class="topbar-search"></div>
+      <div class="topbar-actions" id="topbarActions"></div>
+    </header>
+
+    <section id="view-dashboard" class="view"></section>
+    <section id="view-calendario" class="view active"></section>
+    <section id="view-aulas" class="view"></section>
+    <section id="view-preinscricoes" class="view"></section>
+    <section id="view-exames" class="view"></section>
+    <section id="view-alunos" class="view"></section>
+    <section id="view-instrutores" class="view"></section>
+    <section id="view-veiculos" class="view"></section>
+    <section id="view-pagamentos" class="view"></section>
+    <section id="view-relatorios" class="view"></section>
+    <section id="view-contratos" class="view"></section>
+    <section id="view-config" class="view"></section>
+    <section id="view-estatisticas" class="view"></section>
+  </main>
+</div>
+
+<!-- MODAL -->
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="modalTitle">Título</h3>
+      <button class="icon-btn" id="modalClose">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<!-- ÁREA DE IMPRESSÃO (relatórios para inspeção IMT) -->
+<div id="printArea"></div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="js/app-core.js"></script>
+<script src="data-loader.js"></script>
+<script src="js/app.js"></script>
+<script src="js/pdf-autofill.js"></script>
+</body>
+</html>

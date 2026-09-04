@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boa Viagem</title>
+    <link rel="icon" href="/boaviagem.svg" type="image/x-icon">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body class="auth-body">
+    <div class="auth-shell">
+        <div class="auth-card">
+            <div style="text-align: center; margin-bottom: 24px;">
+                <div style="display: flex; justify-content: center; margin-bottom: 12px;">
+                    <div class="brand-mark" style="width: 58px; height: 58px;" aria-label="Boa Viagem"></div>
+                </div>
+                <h2 style="color: var(--brand-purple); font-weight: 800; margin-bottom: 4px;">Boa Viagem</h2>
+                <p class="muted">Escola de Condução Boa Viagem</p>
+            </div>
+
+            <% if (typeof error !== 'undefined' && error) { %>
+                <div class="inline-alert inline-alert-warning" style="margin-bottom: 16px;" role="alert">
+                    <%= error %>
+                </div>
+            <% } %>
+
+            <form action="/login" method="POST" class="auth-form">
+                <div class="form-field">
+                    <label for="username">Utilizador / Email</label>
+                    <input id="username" type="text" name="username" placeholder="aluno@boaviagem.pt" autocomplete="username" required autofocus>
+                </div>
+                <div class="form-field">
+                    <label for="password">Palavra-passe</label>
+                    <input id="password" type="password" name="password" autocomplete="current-password" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 10px;">
+                    Entrar no Portal
+                </button>
+                <p class="muted" style="text-align:center; margin-top: 12px; font-size: 0.85rem;">
+                    <a href="/recuperar-password">Esqueceu-se da palavra-passe?</a>
+                </p>
+            </form>
+        </div>
+        <p class="muted" style="text-align:center; margin-top: 16px; font-size: 0.78rem;">Boa viagem até à sua carta de condução.</p>
+    </div>
+</body>
+</html>

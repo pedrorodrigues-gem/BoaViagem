@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boa Viagem</title>
+    <link rel="icon" href="/boaviagem.svg" type="image/x-icon">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        /* Estilos do modal (caso ainda não estejam definidos em style.css) */
+        .day-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+        .day-modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .day-modal-card {
+            background: var(--surface, #ffffff);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg, 12px);
+            width: 90%;
+            max-width: 480px;
+            padding: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        .day-modal-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+        .day-modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            line-height: 1;
+            cursor: pointer;
+            color: var(--muted);
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-mark" aria-label="Boa Viagem"></div>
+                <div>
+                    <div class="brand-name">Boa Viagem</div>
+                    <div class="brand-sub">Portal Aluno</div>
+                </div>
+                <div id="sidebarActionsSlot"></div>
+            </div>
+
+            <nav class="nav">
+                <div class="nav-group">
+                    <span class="nav-section-title">Navegação</span>
+                    <a href="/dashboard" class="nav-item">
+                        <span class="nav-ico">📊</span> Dashboard
+                    </a>
+                    <a href="/conta-corrente" class="nav-item">
+                        <span class="nav-ico">💳</span> Conta Corrente
+                    </a>
+                    <a href="/testes" class="nav-item">
+                        <span class="nav-ico">📝</span> Exames Teóricos
+                    </a>
+                    <a href="#" onclick="openPasswordModal(); return false;" class="nav-item">
+                        <span class="nav-ico">🔑</span> Alterar Palavra-passe
+                    </a>
+                    <a href="/admin/questoes" class="nav-item active">
+                        <span class="nav-ico">⚙️</span> Back-office
+                    </a>
+                </div>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="topbar">
+                <div class="topbar-title">
+                    <h1>Back-office de questões</h1>
+                    <p class="muted">Popular o banco de perguntas para o simulado do exame teórico.</p>
+                </div>
+                <div class="topbar-actions">
+                    <a href="/logout" class="btn btn-danger-ghost">Sair</a>
+                </div>
+            </header>
+
+            <div class="inline-alert inline-alert-info" style="margin-bottom: 18px;">
+                ℹ️ Estas perguntas são conteúdo de treino redigido para esta plataforma — reveja e ajuste conforme o Código da Estrada e o material oficial do IMT antes de disponibilizar aos alunos.
+            </div>
+
+            <div class="stat-grid" style="margin-bottom: 20px;">
+                <div class="stat-card">
+                    <div class="stat-top">
+                        <span class="stat-label">Perguntas no banco</span>
+                        <div class="stat-icon tone-accent">📚</div>
+                    </div>
+                    <div class="stat-value"><%= questoes.length %> / <%= EXAM_SIZE %>+</div>
+                    <div class="stat-note"><%= questoes.length >= EXAM_SIZE ? 'Suficiente para um simulado completo' : 'Adicione mais para cobrir o exame completo' %></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-top">
+                        <span class="stat-label">Categorias cobertas</span>
+                        <div class="stat-icon tone-info">🗂️</div>
+                    </div>
+                    <div class="stat-value"><%= categorias.length %></div>
+                    <div class="stat-note"><%= categorias.join(', ') || 'Sem categorias definidas' %></div>
+                </div>
+            </div>
+
+            <div class="panel panel-feature">
+                <div class="panel-head">
+                    <h3><%= questaoEmEdicao ? 'Editar pergunta' : 'Adicionar nova pergunta' %></h3>
+                    <span class="status-chip status-chip-info">Banco ativo</span>
+                </div>
+
+                <form action="<%= questaoEmEdicao ? '/admin/questoes/' + questaoEmEdicao.id + '/editar' : '/admin/questoes' %>" method="POST" class="question-form">
+                    <div class="form-grid">
+                        <div class="form-field full">
+                            <label for="pergunta">Pergunta</label>
+                            <textarea id="pergunta" name="pergunta" rows="3" required><%= questaoEmEdicao ? questaoEmEdicao.pergunta : '' %></textarea>
+                        </div>
+                        <div class="form-field">
+                            <label for="categoria">Categoria</label>
+                            <input id="categoria" name="categoria" type="text" list="categoria-list" placeholder="Ex.: Sinalização" value="<%= questaoEmEdicao ? questaoEmEdicao.categoria : '' %>">
+                            <datalist id="categoria-list">
+                                <% categorias.forEach(c => { %><option value="<%= c %>"></option><% }) %>
+                            </datalist>
+                        </div>
+                        <div class="form-field">
+                            <label for="imagem">Caminho / URL da Imagem</label>
+                            <input id="imagem" name="imagem" type="text" placeholder="Ex.: /images/sinais/p1.png" value="<%= questaoEmEdicao && questaoEmEdicao.imagem ? questaoEmEdicao.imagem : '' %>">
+                        </div>
+                        <div class="form-field">
+                            <label for="correta">Resposta correta</label>
+                            <select id="correta" name="correta" required>
+                                <option value="0" <%= questaoEmEdicao && questaoEmEdicao.correta === 0 ? 'selected' : '' %>>Opção 1</option>
+                                <option value="1" <%= questaoEmEdicao && questaoEmEdicao.correta === 1 ? 'selected' : '' %>>Opção 2</option>
+                                <option value="2" <%= questaoEmEdicao && questaoEmEdicao.correta === 2 ? 'selected' : '' %>>Opção 3</option>
+                                <option value="3" <%= questaoEmEdicao && questaoEmEdicao.correta === 3 ? 'selected' : '' %>>Opção 4</option>
+                            </select>
+                        </div>
+                        <div class="form-field">
+                            <label for="opcao1">Opção 1</label>
+                            <input id="opcao1" name="opcao1" type="text" required value="<%= questaoEmEdicao ? questaoEmEdicao.opcoes[0] : '' %>">
+                        </div>
+                        <div class="form-field">
+                            <label for="opcao2">Opção 2</label>
+                            <input id="opcao2" name="opcao2" type="text" required value="<%= questaoEmEdicao ? questaoEmEdicao.opcoes[1] : '' %>">
+                        </div>
+                        <div class="form-field">
+                            <label for="opcao3">Opção 3</label>
+                            <input id="opcao3" name="opcao3" type="text" required value="<%= questaoEmEdicao ? questaoEmEdicao.opcoes[2] : '' %>">
+                        </div>
+                        <div class="form-field">
+                            <label for="opcao4">Opção 4</label>
+                            <input id="opcao4" name="opcao4" type="text" required value="<%= questaoEmEdicao ? questaoEmEdicao.opcoes[3] : '' %>">
+                        </div>
+                        <div class="form-field full">
+                            <label for="explicacao">Explicação</label>
+                            <textarea id="explicacao" name="explicacao" rows="2" placeholder="Explique por que esta é a resposta correta..."><%= questaoEmEdicao ? questaoEmEdicao.explicacao : '' %></textarea>
+                        </div>
+                    </div>
+
+                    <div class="form-actions" style="margin-top: 16px; display: flex; gap: 10px;">
+                        <button type="submit" class="btn btn-primary"><%= questaoEmEdicao ? 'Guardar alterações' : 'Guardar questão' %></button>
+                        <% if (questaoEmEdicao) { %>
+                            <a href="/admin/questoes" class="btn btn-ghost">Cancelar edição</a>
+                        <% } %>
+                    </div>
+                </form>
+            </div>
+
+            <div class="panel" style="margin-top: 20px;">
+                <div class="panel-head">
+                    <h3>Banco atual</h3>
+                    <span class="status-chip status-chip-primary"><%= questoes.length %> questões</span>
+                </div>
+
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Pergunta</th>
+                                <th>Imagem</th>
+                                <th>Categoria</th>
+                                <th>Resposta correta</th>
+                                <th>Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% if (questoes.length === 0) { %>
+                                <tr>
+                                    <td colspan="5" class="muted">Ainda não há perguntas no banco.</td>
+                                </tr>
+                            <% } else { %>
+                                <% questoes.forEach((q, idx) => { %>
+                                    <tr>
+                                        <td class="cell-wrap">
+                                            <div class="cell-primary"><%= idx + 1 %>. <%= q.pergunta %></div>
+                                        </td>
+                                        <td>
+                                            <% if (q.imagem) { %>
+                                                <a href="<%= q.imagem %>" target="_blank" title="Ver imagem">🖼️ Sim</a>
+                                            <% } else { %>
+                                                <span class="muted">—</span>
+                                            <% } %>
+                                        </td>
+                                        <td><span class="category-badge"><%= q.categoria || 'Geral' %></span></td>
+                                        <td><%= q.opcoes[q.correta] %></td>
+                                        <td class="table-actions">
+                                            <a href="/admin/questoes?edit=<%= q.id %>" class="btn btn-ghost btn-sm">Editar</a>
+                                            <form action="/admin/questoes/<%= q.id %>/delete" method="POST" onsubmit="return confirm('Eliminar esta pergunta?');">
+                                                <button type="submit" class="btn btn-danger-ghost btn-sm">Eliminar</button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                <% }) %>
+                            <% } %>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- MODAL DE ALTERAR PALAVRA-PASSE -->
+    <div id="passwordModalOverlay" class="day-modal-overlay" onclick="closePasswordModal()">
+        <div class="day-modal-card" onclick="event.stopPropagation()">
+            <div class="day-modal-head">
+                <h4 style="margin: 0;">Alterar Palavra-passe</h4>
+                <button class="day-modal-close" onclick="closePasswordModal()">&times;</button>
+            </div>
+
+            <div id="passwordModalAlert" style="display: none; margin-bottom: 14px;"></div>
+
+            <form id="passwordModalForm" class="auth-form" onsubmit="return submitPasswordModal(event)">
+                <div class="form-field">
+                    <label for="pm_passwordAtual">Palavra-passe atual</label>
+                    <input id="pm_passwordAtual" type="password" name="passwordAtual" autocomplete="current-password" required>
+                </div>
+                <div class="form-field">
+                    <label for="pm_novaPassword">Nova palavra-passe</label>
+                    <input id="pm_novaPassword" type="password" name="novaPassword" autocomplete="new-password" minlength="8" required>
+                </div>
+                <div class="form-field">
+                    <label for="pm_confirmarPassword">Confirmar nova palavra-passe</label>
+                    <input id="pm_confirmarPassword" type="password" name="confirmarPassword" autocomplete="new-password" minlength="8" required>
+                </div>
+                <button type="submit" id="pm_submitBtn" class="btn btn-primary" style="width: 100%; margin-top: 6px;">
+                    Guardar
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function openPasswordModal() {
+            document.getElementById('passwordModalForm').reset();
+            const alertBox = document.getElementById('passwordModalAlert');
+            alertBox.style.display = 'none';
+            alertBox.className = '';
+            document.getElementById('passwordModalOverlay').classList.add('active');
+        }
+
+        function closePasswordModal() {
+            document.getElementById('passwordModalOverlay').classList.remove('active');
+        }
+
+        async function submitPasswordModal(event) {
+            event.preventDefault();
+
+            const form = document.getElementById('passwordModalForm');
+            const alertBox = document.getElementById('passwordModalAlert');
+            const submitBtn = document.getElementById('pm_submitBtn');
+
+            const novaPassword = form.novaPassword.value;
+            const confirmarPassword = form.confirmarPassword.value;
+
+            const showAlert = (message, tipo) => {
+                alertBox.textContent = message;
+                alertBox.className = `inline-alert ${tipo === 'success' ? 'inline-alert-success' : 'inline-alert-warning'}`;
+                alertBox.style.display = 'block';
+            };
+
+            if (novaPassword.length < 8) {
+                showAlert('A nova password deve ter pelo menos 8 caracteres.', 'error');
+                return false;
+            }
+            if (novaPassword !== confirmarPassword) {
+                showAlert('As passwords não coincidem.', 'error');
+                return false;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'A guardar...';
+
+            try {
+                const response = await fetch('/conta/password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: new URLSearchParams(new FormData(form))
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.ok) {
+                    showAlert(data.message || 'Palavra-passe alterada com sucesso.', 'success');
+                    form.reset();
+                    setTimeout(() => closePasswordModal(), 1500);
+                } else {
+                    showAlert(data.error || 'Ocorreu um erro. Tente novamente.', 'error');
+                }
+            } catch (err) {
+                showAlert('Erro de ligação ao servidor. Tente novamente.', 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Guardar';
+            }
+
+            return false;
+        }
+
+        function relocateTopbarActions() {
+            const actions = document.querySelector('.topbar-actions');
+            const slot = document.getElementById('sidebarActionsSlot');
+            const topbar = document.querySelector('.topbar');
+            if (!actions || !slot || !topbar) return;
+
+            const isMobile = window.matchMedia('(max-width: 860px)').matches;
+
+            if (isMobile && actions.parentElement !== slot) {
+                slot.appendChild(actions);
+            } else if (!isMobile && actions.parentElement !== topbar) {
+                topbar.appendChild(actions);
+            }
+        }
+
+        relocateTopbarActions();
+        window.addEventListener('resize', relocateTopbarActions);
+    </script>
+</body>
+</html>

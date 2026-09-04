@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boa Viagem</title>
+    <link rel="icon" href="/boaviagem.svg" type="image/x-icon">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .stats-overview {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .embedded-section {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            margin-top: 15px;
+            overflow: hidden;
+            box-shadow: var(--shadow-1);
+        }
+
+        .embedded-section summary {
+            padding: 12px 16px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: var(--surface-2);
+            user-select: none;
+        }
+
+        .embedded-section summary::-webkit-details-marker { display: none; }
+
+        .embedded-section summary::after {
+            content: '▼';
+            font-size: 0.75rem;
+            transition: transform 0.2s ease;
+            color: var(--muted);
+        }
+
+        .embedded-section[open] summary::after {
+            transform: rotate(180deg);
+        }
+
+        .embedded-content {
+            padding: 16px;
+            border-top: 1px solid var(--border);
+        }
+
+        .presence-layout {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .presence-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+        }
+
+        .presence-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        /* Tags de Tipo de Aula */
+        .presence-tag {
+            padding: 4px 8px;
+            border-radius: var(--radius-sm);
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            display: inline-block;
+        }
+
+        .presence-tag-pratica { background: rgba(59, 130, 246, 0.15); color: #2563eb; border: 1px solid rgba(59, 130, 246, 0.3); }
+        .presence-tag-teorica { background: rgba(16, 185, 129, 0.15); color: #059669; border: 1px solid rgba(16, 185, 129, 0.3); }
+
+        /* Estilos do Calendário */
+        .cal-legend {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .dot-pratica { background-color: #2563eb; }
+        .dot-teorica { background-color: #059669; }
+
+        .calendar-event-pratica {
+            background-color: rgba(59, 130, 246, 0.15);
+            color: #1d4ed8;
+            border-left: 3px solid #2563eb;
+        }
+
+        .calendar-event-teorica {
+            background-color: rgba(16, 185, 129, 0.15);
+            color: #047857;
+            border-left: 3px solid #059669;
+        }
+
+        .calendar-day-interactive {
+            cursor: pointer;
+            transition: background 0.15s ease;
+        }
+
+        .calendar-day-interactive:hover {
+            background-color: var(--surface-2, #f3f4f6);
+        }
+
+        /* Modal dos Eventos */
+        .day-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+
+        .day-modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .day-modal-card {
+            background: var(--surface, #ffffff);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg, 12px);
+            width: 90%;
+            max-width: 480px;
+            padding: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+
+        .day-modal-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+
+        .day-modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            line-height: 1;
+            cursor: pointer;
+            color: var(--muted);
+        }
+
+        .modal-event-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-height: 320px;
+            overflow-y: auto;
+        }
+
+        .modal-event-card {
+            padding: 12px;
+            border-radius: var(--radius-md, 8px);
+            background: var(--surface-2, #f9fafb);
+            border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .modal-event-card.pratica { border-left: 4px solid #2563eb; }
+        .modal-event-card.teorica { border-left: 4px solid #059669; }
+    </style>
+</head>
+<body>
+    <%
+        const roleLower = String((user && user.role) || '').toLowerCase();
+        const isAlunoUser = roleLower === 'aluno';
+        const canSeeQuestionBank = !isAlunoUser;
+    %>
+
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-mark" aria-label="Boa Viagem"></div>
+                <div>
+                    <div class="brand-name">Boa Viagem</div>
+                    <div class="brand-sub">Portal Aluno</div>
+                </div>
+                <div id="sidebarActionsSlot"></div>
+            </div>
+
+            <nav class="nav">
+                <div class="nav-group">
+                    <span class="nav-section-title">Navegação</span>
+                    <a href="/dashboard" class="nav-item active">
+                        <span class="nav-ico">📊</span> Dashboard
+                    </a>
+                    <a href="/conta-corrente" class="nav-item">
+                        <span class="nav-ico">💳</span> Conta Corrente
+                    </a>
+                    <a href="/testes" class="nav-item">
+                        <span class="nav-ico">📝</span> Exames Teóricos
+                    </a>
+                    <a href="#" onclick="openPasswordModal(); return false;" class="nav-item">
+                        <span class="nav-ico">🔑</span> Alterar Palavra-passe
+                    </a>
+                    <% if (canSeeQuestionBank) { %>
+                        <a href="/admin/questoes" class="nav-item">
+                            <span class="nav-ico">⚙️</span> Back-office
+                        </a>
+                    <% } %>
+                </div>
+            </nav>
+
+        </aside>
+
+        <!-- Conteúdo Principal -->
+        <main class="main">
+            <header class="topbar">
+                <div class="topbar-title">
+                    <h1>Visão Geral & Agenda</h1>
+                    <p class="muted">Acompanhe a sua formação, assiduidade e marcação de aulas num só lugar.</p>
+                </div>
+                <div class="topbar-actions">
+                    <a href="?month=<%= new Date().toISOString().slice(0, 7) %>" class="btn btn-ghost">Este mês</a>
+                    <a href="/logout" class="btn btn-danger-ghost">Sair</a>
+                </div>
+            </header>
+
+            <!-- 1. RESUMO E HISTÓRICOS DE PRESENÇAS -->
+            <section class="stats-overview">
+                <!-- CARD AULAS PRÁTICAS -->
+                <div class="attendance-card panel">
+                    <div class="attendance-header">
+                        <span class="presence-tag presence-tag-pratica">Prática</span>
+                        <strong><%= stats.praticas %> / <%= stats.praticasMin %></strong>
+                    </div>
+                    <div class="progress-bar">
+                        <span style="width: <%= stats.taxaPraticas %>%;"></span>
+                    </div>
+
+                    <details class="embedded-section">
+                        <summary>Ver Histórico Prático (<%= historicoPraticas ? historicoPraticas.length : 0 %>)</summary>
+                        <div class="embedded-content">
+                            <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.85rem;">
+                                <% if (!historicoPraticas || historicoPraticas.length === 0) { %>
+                                    <li>Sem registos de presenças práticas.</li>
+                                <% } else { %>
+                                    <% historicoPraticas.forEach(item => { %>
+                                        <li style="padding: 8px 0; border-bottom: 1px solid var(--border);">
+                                            <strong><%= new Date(item.data).toLocaleDateString('pt-PT') %></strong> — 
+                                            <span class="<%= item.presente === 1 ? 'text-success' : 'text-danger' %>">
+                                                <%= item.presente === 1 ? '✓ Presente' : '✗ Falta' %>
+                                            </span>
+                                            <% if (item.data_marcacao) { %>
+                                                <br><small style="color: var(--muted);">Registado em: <%= new Date(item.data_marcacao).toLocaleString('pt-PT') %></small>
+                                            <% } %>
+                                        </li>
+                                    <% }) %>
+                                <% } %>
+                            </ul>
+                        </div>
+                    </details>
+                </div>
+
+                <!-- CARD AULAS TEÓRICAS -->
+                <div class="attendance-card panel">
+                    <div class="attendance-header">
+                        <span class="presence-tag presence-tag-teorica">Teórica</span>
+                        <strong><%= stats.teoricas %> / <%= stats.teoricasMin %></strong>
+                    </div>
+                    <div class="progress-bar">
+                        <span style="width: <%= stats.taxaTeoricas %>%;"></span>
+                    </div>
+
+                    <details class="embedded-section">
+                        <summary>Ver Histórico Teórico (<%= historicoTeoricas ? historicoTeoricas.length : 0 %>)</summary>
+                        <div class="embedded-content">
+                            <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.85rem;">
+                                <% if (!historicoTeoricas || historicoTeoricas.length === 0) { %>
+                                    <li>Sem registos de presenças teóricas.</li>
+                                <% } else { %>
+                                    <% historicoTeoricas.forEach(item => { %>
+                                        <li style="padding: 8px 0; border-bottom: 1px solid var(--border);">
+                                            <strong><%= new Date(item.data).toLocaleDateString('pt-PT') %></strong> — 
+                                            <span class="<%= item.presente === 1 ? 'text-success' : 'text-danger' %>">
+                                                <%= item.presente === 1 ? '✓ Presente' : '✗ Falta' %>
+                                            </span>
+                                            <% if (item.data_marcacao) { %>
+                                                <br><small style="color: var(--muted);">Registado em: <%= new Date(item.data_marcacao).toLocaleString('pt-PT') %></small>
+                                            <% } %>
+                                        </li>
+                                    <% }) %>
+                                <% } %>
+                            </ul>
+                        </div>
+                    </details>
+                </div>
+            </section>
+
+            <!-- 2. AULAS RECENTES (ÚLTIMAS 24 HORA S OU HOJE) -->
+            <section class="panel" style="margin-top: 20px;">
+                <%
+                    const agora = new Date();
+                    const limite24h = new Date(agora.getTime() - (24 * 60 * 60 * 1000));
+
+                    function getFullDateObj(dataItem, horaItem) {
+                        if (!dataItem) return new Date(0);
+                        const dataStr = new Date(dataItem).toISOString().slice(0, 10);
+                        const horaStr = horaItem ? (horaItem.split(' - ')[0].trim()) : '00:00';
+                        const horaFormatada = horaStr.length === 5 ? horaStr : '00:00';
+                        return new Date(`${dataStr}T${horaFormatada}:00`);
+                    }
+
+                    // Juntar todas as aulas num único array normalizado
+                    const todasAulasRecentes = [
+                        ...(aulas || []).map(a => ({
+                            ...a,
+                            tipo: 'pratica',
+                            dataHoraObj: getFullDateObj(a.data || a.data_aula, a.hora)
+                        })),
+                        ...(turmas || []).map(t => ({
+                            ...t,
+                            tipo: 'teorica',
+                            dataHoraObj: getFullDateObj(t.data || t.data_aula, t.hora_inicio)
+                        }))
+                    ]
+                    .filter(item => item.dataHoraObj >= limite24h)
+                    // Ordena da mais recente para a mais antiga
+                    .sort((a, b) => b.dataHoraObj - a.dataHoraObj);
+                %>
+
+                <div class="panel-head">
+                    <h3>Aulas Recentes & Hoje</h3>
+                    <span class="status-chip status-chip-primary">Últimas 24h</span>
+                </div>
+
+                <% if (todasAulasRecentes.length === 0) { %>
+                    <div class="empty-state">
+                        <h4>Sem aulas recentes</h4>
+                        <p>Não existem aulas agendadas nem realizadas nas últimas 24 horas.</p>
+                    </div>
+                <% } else { %>
+                    <div class="presence-layout">
+                        <% todasAulasRecentes.forEach(item => { %>
+                            <div class="presence-item">
+                                <div class="presence-left">
+                                    <span class="presence-tag <%= item.tipo === 'teorica' ? 'presence-tag-teorica' : 'presence-tag-pratica' %>">
+                                        <%= item.tipo === 'teorica' ? 'Teórica' : 'Prática' %>
+                                    </span>
+                                    <div class="presence-meta">
+                                        <strong>
+                                            <%= new Date(item.data || item.data_aula).toLocaleDateString('pt-PT') %> — 
+                                            <%= item.tipo === 'teorica' ? item.hora_inicio : item.hora %>
+                                            <% if (item.hora_fim) { %> - <%= item.hora_fim %><% } %>
+                                        </strong>
+                                        <small>
+                                            <% if (item.tipo === 'teorica') { %>
+                                                Tema: <%= item.tema || 'Geral' %> · 📍 Espaço: <strong><%= item.sala || item.espaco_nome || 'Sala da escola' %></strong>
+                                            <% } else { %>
+                                                Instrutor: <%= item.instrutor_nome || 'N/A' %> · 📍 Espaço: <strong><%= item.espaco_nome || item.modelo || 'Escola' %></strong>
+                                            <% } %>
+                                        </small>
+                                    </div>
+                                </div>
+                                <div class="presence-right">
+                                    <% if (item.presente === 1) { %>
+                                        <span class="badge badge-success">✓ Presente</span>
+                                    <% } else if (item.presente === 0) { %>
+                                        <span class="badge badge-danger">✗ Falta</span>
+                                    <% } else if (item.canMark) { %>
+                                        <form action="/aulas/marcar-presenca" method="POST" class="presence-actions" onsubmit="return confirm('Tem a certeza que deseja marcar presença?');">
+                                            <input type="hidden" name="<%= item.tipo === 'teorica' ? 'turma_id' : 'aula_id' %>" value="<%= item.id %>">
+                                            <button type="submit" name="presente" value="1" class="btn btn-sm btn-success">✓ Marcar Presença</button>
+                                        </form>
+                                    <% } else { %>
+                                        <span class="presence-note">Fora do prazo</span>
+                                    <% } %>
+                                </div>
+                            </div>
+                        <% }) %>
+                    </div>
+                <% } %>
+            </section>
+
+            <!-- 3. CALENDÁRIO MENSAL -->
+            <details class="embedded-section calendar-section" style="margin-top: 20px;" open>
+                <summary>
+                    <span>📅 Calendário — Agenda Mensal</span>
+                </summary>
+                <div class="embedded-content calendar-content">
+                    <%
+                        const monthDateValue = new Date(monthValue + '-01T00:00:00');
+                        const prevMonthValue = new Date(monthDateValue.getFullYear(), monthDateValue.getMonth() - 1, 1).toISOString().slice(0, 7);
+                        const nextMonthValue = new Date(monthDateValue.getFullYear(), monthDateValue.getMonth() + 1, 1).toISOString().slice(0, 7);
+                    %>
+                    <div class="panel-head">
+                        <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+                            <h3><%= monthLabel %></h3>
+                            <span class="cal-legend"><span class="dot dot-pratica"></span> Prática</span>
+                            <span class="cal-legend"><span class="dot dot-teorica"></span> Teórica</span>
+                        </div>
+                        <div class="calendar-nav">
+                            <a href="?month=<%= prevMonthValue %>" class="icon-btn" aria-label="Mês anterior">‹</a>
+                            <a href="?month=<%= nextMonthValue %>" class="icon-btn" aria-label="Mês seguinte">›</a>
+                        </div>
+                    </div>
+
+                    <div class="calendar-grid">
+                        <% ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].forEach(day => { %>
+                            <div class="calendar-head-cell"><%= day %></div>
+                        <% }) %>
+
+                        <% days.forEach(day => {
+                            const dayEvents = eventos.filter(event => event.date === day.date);
+                            const isToday = day.date === new Date().toISOString().slice(0, 10);
+                            const dayEventsEncoded = encodeURIComponent(JSON.stringify(dayEvents));
+                        %>
+                            <div 
+                                class="calendar-day calendar-day-interactive <%= day.isCurrentMonth ? '' : 'calendar-day-muted' %> <%= isToday ? 'calendar-day-today' : '' %>"
+                                onclick="openDayModal('<%= day.date %>', '<%= dayEventsEncoded %>')"
+                            >
+                                <div class="calendar-day-header">
+                                    <span class="calendar-day-number"><%= day.dayNumber %></span>
+                                </div>
+
+                                <div class="calendar-events">
+                                    <% dayEvents.slice(0, 3).forEach(event => {
+                                        const startTime = event.time ? String(event.time).split(' - ')[0].trim() : '';
+                                    %>
+                                        <div class="calendar-event calendar-event-<%= event.type %>">
+                                            <% if (startTime) { %><span class="calendar-event-time"><%= startTime %></span><% } %>
+                                            <span class="calendar-event-title"><%= event.title %></span>
+                                        </div>
+                                    <% }) %>
+                                    <% if (dayEvents.length > 3) { %>
+                                        <span class="calendar-event calendar-event-more">+<%= dayEvents.length - 3 %> mais</span>
+                                    <% } %>
+                                </div>
+                            </div>
+                        <% }) %>
+                    </div>
+                </div>
+            </details>
+        </main>
+    </div>
+
+    <!-- MODAL DE EVENTOS DO DIA -->
+    <div id="dayModalOverlay" class="day-modal-overlay" onclick="closeDayModal()">
+        <div class="day-modal-card" onclick="event.stopPropagation()">
+            <div class="day-modal-head">
+                <h4 id="dayModalTitle" style="margin: 0;">Eventos do Dia</h4>
+                <button class="day-modal-close" onclick="closeDayModal()">&times;</button>
+            </div>
+            <div id="dayModalList" class="modal-event-list">
+                <!-- Conteúdo preenchido dinamicamente via JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DE ALTERAR PALAVRA-PASSE -->
+    <div id="passwordModalOverlay" class="day-modal-overlay" onclick="closePasswordModal()">
+        <div class="day-modal-card" onclick="event.stopPropagation()">
+            <div class="day-modal-head">
+                <h4 style="margin: 0;">Alterar Palavra-passe</h4>
+                <button class="day-modal-close" onclick="closePasswordModal()">&times;</button>
+            </div>
+
+            <div id="passwordModalAlert" style="display: none; margin-bottom: 14px;"></div>
+
+            <form id="passwordModalForm" class="auth-form" onsubmit="return submitPasswordModal(event)">
+                <div class="form-field">
+                    <label for="pm_passwordAtual">Palavra-passe atual</label>
+                    <input id="pm_passwordAtual" type="password" name="passwordAtual" autocomplete="current-password" required>
+                </div>
+                <div class="form-field">
+                    <label for="pm_novaPassword">Nova palavra-passe</label>
+                    <input id="pm_novaPassword" type="password" name="novaPassword" autocomplete="new-password" minlength="8" required>
+                </div>
+                <div class="form-field">
+                    <label for="pm_confirmarPassword">Confirmar nova palavra-passe</label>
+                    <input id="pm_confirmarPassword" type="password" name="confirmarPassword" autocomplete="new-password" minlength="8" required>
+                </div>
+                <button type="submit" id="pm_submitBtn" class="btn btn-primary" style="width: 100%; margin-top: 6px;">
+                    Guardar
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function openPasswordModal() {
+            document.getElementById('passwordModalForm').reset();
+            const alertBox = document.getElementById('passwordModalAlert');
+            alertBox.style.display = 'none';
+            alertBox.className = '';
+            document.getElementById('passwordModalOverlay').classList.add('active');
+        }
+
+        function closePasswordModal() {
+            document.getElementById('passwordModalOverlay').classList.remove('active');
+        }
+
+        async function submitPasswordModal(event) {
+            event.preventDefault();
+
+            const form = document.getElementById('passwordModalForm');
+            const alertBox = document.getElementById('passwordModalAlert');
+            const submitBtn = document.getElementById('pm_submitBtn');
+
+            const novaPassword = form.novaPassword.value;
+            const confirmarPassword = form.confirmarPassword.value;
+
+            const showAlert = (message, tipo) => {
+                alertBox.textContent = message;
+                alertBox.className = `inline-alert ${tipo === 'success' ? 'inline-alert-success' : 'inline-alert-warning'}`;
+                alertBox.style.display = 'block';
+            };
+
+            if (novaPassword.length < 8) {
+                showAlert('A nova password deve ter pelo menos 8 caracteres.', 'error');
+                return false;
+            }
+            if (novaPassword !== confirmarPassword) {
+                showAlert('As passwords não coincidem.', 'error');
+                return false;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'A guardar...';
+
+            try {
+                const response = await fetch('/conta/password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: new URLSearchParams(new FormData(form))
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.ok) {
+                    showAlert(data.message || 'Palavra-passe alterada com sucesso.', 'success');
+                    form.reset();
+                    setTimeout(() => closePasswordModal(), 1500);
+                } else {
+                    showAlert(data.error || 'Ocorreu um erro. Tente novamente.', 'error');
+                }
+            } catch (err) {
+                showAlert('Erro de ligação ao servidor. Tente novamente.', 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Guardar';
+            }
+
+            return false;
+        }
+
+        function openDayModal(dateStr, encodedEvents) {
+            const events = JSON.parse(decodeURIComponent(encodedEvents));
+            
+            // Ordena os eventos pela hora de início (ex: "09:00 - 10:00" -> "09:00")
+            events.sort((a, b) => {
+                const timeA = (a.time || '').split(' - ')[0].trim();
+                const timeB = (b.time || '').split(' - ')[0].trim();
+                return timeA.localeCompare(timeB);
+            });
+
+            const formattedDate = new Date(dateStr + 'T00:00:00').toLocaleDateString('pt-PT', {
+                weekday: 'long',
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric'
+            });
+
+            document.getElementById('dayModalTitle').innerText = formattedDate;
+            const container = document.getElementById('dayModalList');
+            container.innerHTML = '';
+
+            if (!events || events.length === 0) {
+                container.innerHTML = '<p class="muted" style="text-align: center; margin: 20px 0;">Nenhuma aula agendada para este dia.</p>';
+            } else {
+                events.forEach(ev => {
+                    const card = document.createElement('div');
+                    const isTeorica = ev.type === 'teorica';
+                    const espacoInfo = ev.location || ev.espaco || ev.sala || ev.espaco_nome || 'Não especificado';
+                    
+                    card.className = `modal-event-card ${ev.type || ''}`;
+                    card.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span class="presence-tag ${isTeorica ? 'presence-tag-teorica' : 'presence-tag-pratica'}">
+                                ${isTeorica ? 'Teórica' : 'Prática'}
+                            </span>
+                            ${ev.time ? `<span style="font-size: 0.85rem; font-weight: 600; color: var(--muted);">🕒 ${ev.time}</span>` : ''}
+                        </div>
+                        <div style="font-weight: 600; font-size: 0.95rem; margin-top: 4px;">${ev.title}</div>
+                        <div style="font-size: 0.85rem; color: var(--muted); margin-top: 2px;">
+                            📍 Espaço: <strong>${espacoInfo}</strong>
+                        </div>
+                    `;
+                    container.appendChild(card);
+                });
+            }
+
+            document.getElementById('dayModalOverlay').classList.add('active');
+        }
+
+        function closeDayModal() {
+            document.getElementById('dayModalOverlay').classList.remove('active');
+        }
+
+        function relocateTopbarActions() {
+            const actions = document.querySelector('.topbar-actions');
+            const slot = document.getElementById('sidebarActionsSlot');
+            const topbar = document.querySelector('.topbar');
+            if (!actions || !slot || !topbar) return;
+
+            const isMobile = window.matchMedia('(max-width: 860px)').matches;
+
+            if (isMobile && actions.parentElement !== slot) {
+                slot.appendChild(actions);
+            } else if (!isMobile && actions.parentElement !== topbar) {
+                // repõe no fim do topbar, no local original
+                topbar.appendChild(actions);
+            }
+        }
+
+        relocateTopbarActions();
+        window.addEventListener('resize', relocateTopbarActions);
+    </script>
+</body>
+</html>

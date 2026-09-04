@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boa Viagem</title>
+    <link rel="icon" href="/boaviagem.svg" type="image/x-icon">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        /* Estilos do modal (caso ainda não estejam definidos em style.css) */
+        .day-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+        .day-modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .day-modal-card {
+            background: var(--surface, #ffffff);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg, 12px);
+            width: 90%;
+            max-width: 480px;
+            padding: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        .day-modal-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+        .day-modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            line-height: 1;
+            cursor: pointer;
+            color: var(--muted);
+        }
+    </style>
+</head>
+<body>
+    <%
+        const roleLower = String((user && user.role) || '').toLowerCase();
+        const isAlunoUser = ['aluno', 'student'].includes(roleLower);
+        const canSeeQuestionBank = !isAlunoUser;
+    %>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-mark" aria-label="Boa Viagem"></div>
+                <div>
+                    <div class="brand-name">Boa Viagem</div>
+                    <div class="brand-sub">Portal Aluno</div>
+                </div>
+                <div id="sidebarActionsSlot"></div>
+            </div>
+            <nav class="nav">
+                <div class="nav-group">
+                    <span class="nav-section-title">Navegação</span>
+                    <a href="/dashboard" class="nav-item">
+                        <span class="nav-ico">📊</span> Dashboard
+                    </a>
+                    <a href="/conta-corrente" class="nav-item">
+                        <span class="nav-ico">💳</span> Conta Corrente
+                    </a>
+                    <a href="/testes" class="nav-item active">
+                        <span class="nav-ico">📝</span> Exames Teóricos
+                    </a>
+                    <a href="#" onclick="openPasswordModal(); return false;" class="nav-item">
+                        <span class="nav-ico">🔑</span> Alterar Palavra-passe
+                    </a>
+                    <% if (canSeeQuestionBank) { %>
+                        <a href="/admin/questoes" class="nav-item">
+                            <span class="nav-ico">⚙️</span> Back-office
+                        </a>
+                    <% } %>
+                </div>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="topbar">
+                <div class="topbar-title">
+                    <h1>Simulador de exame teórico</h1>
+                    <p class="muted">Formato idêntico ao exame oficial do IMT: <%= EXAM_SIZE %> perguntas, aprovação com pelo menos <%= Math.round(EXAM_PASS_RATIO * 100) %>% de acertos.</p>
+                </div>
+                <% if (!resultado) { %>
+                    <div class="topbar-actions">
+                        <div class="exam-timer" id="examTimer" data-minutes="<%= EXAM_TIME_MINUTES %>">
+                            ⏱ <span id="examTimerLabel"><%= EXAM_TIME_MINUTES %>:00</span>
+                        </div>
+                    </div>
+                <% } %>
+            </header>
+
+            <% if (!resultado) { %>
+                <div class="inline-alert inline-alert-warning" style="margin-bottom: 16px;">
+                    ⚠️ O simulado está em curso: se sair desta página ou navegar para outra secção antes de submeter, as respostas dadas são perdidas e o exame não fica concluído.
+                </div>
+            <% } %>
+
+            <% if (isParcial && !resultado) { %>
+                <div class="inline-alert inline-alert-warning" style="margin-bottom: 16px;">
+                    ⚠️ O banco de questões tem menos de <%= EXAM_SIZE %> perguntas disponíveis. Este simulado usa todas as <%= questoes.length %> perguntas existentes — peça ao back-office para adicionar mais para simular o exame completo.
+                </div>
+            <% } %>
+
+            <div class="panel panel-feature exam-score-panel">
+                <div class="panel-head">
+                    <h3>Prontidão para exame</h3>
+                    <span class="status-chip status-chip-<%= readiness.tone %>"><%= readiness.label %></span>
+                </div>
+                <div class="readiness-summary">
+                    <div class="readiness-flags">
+                        <span class="flag-chip <%= readiness.testReady ? 'flag-ok' : 'flag-pending' %>">
+                            <%= readiness.testReady ? '✔' : '○' %> Desempenho nos simulados
+                        </span>
+                        <span class="flag-chip <%= readiness.attendanceReady ? 'flag-ok' : 'flag-pending' %>">
+                            <%= readiness.attendanceReady ? '✔' : '○' %> Horas mínimas de formação
+                        </span>
+                    </div>
+                    <div class="readiness-block">
+                        <small><%= readiness.detail %></small>
+                        <% if (canSeeQuestionBank) { %>
+                            <a href="/admin/questoes" class="btn btn-ghost btn-sm">Gerir perguntas</a>
+                        <% } %>
+                    </div>
+                </div>
+            </div>
+
+            <% if (resultado) { %>
+                <div class="panel" style="margin-bottom: 18px;">
+                    <div class="inline-alert <%= resultado.aprovado ? 'inline-alert-info' : 'inline-alert-warning' %>">
+                        <h2><%= resultado.aprovado ? '🎉 Aprovado no simulado!' : '⚠️ Reprovado no simulado' %></h2>
+                        <p>
+                            Respostas corretas: <strong><%= resultado.certas %></strong> de <%= resultado.total %>
+                            (<%= resultado.percent %>%) — <%= resultado.erros %> erro(s).
+                            É necessário pelo menos <%= Math.round(EXAM_PASS_RATIO * 100) %>% de acertos para aprovar,
+                            tal como no exame oficial (até 3 erros em 30 perguntas).
+                        </p>
+                    </div>
+                </div>
+
+                <div class="panel" style="margin-bottom: 18px;">
+                    <div class="panel-head">
+                        <h3>Desempenho por categoria</h3>
+                    </div>
+                    <div class="category-breakdown">
+                        <% Object.keys(resultado.porCategoria).forEach(cat => {
+                            const c = resultado.porCategoria[cat];
+                            const pct = Math.round((c.certas / c.total) * 100);
+                        %>
+                            <div class="category-row">
+                                <div class="category-row-head">
+                                    <span><%= cat %></span>
+                                    <strong><%= c.certas %>/<%= c.total %></strong>
+                                </div>
+                                <div class="progress-bar <%= pct >= 90 ? '' : (pct >= 60 ? 'progress-bar-info' : 'progress-bar-danger') %>">
+                                    <span style="width: <%= pct %>%"></span>
+                                </div>
+                            </div>
+                        <% }) %>
+                    </div>
+                </div>
+            <% } %>
+
+            <% if (history && history.length > 0) { %>
+                <div class="panel" style="margin-bottom: 18px;">
+                    <div class="panel-head">
+                        <h3>Histórico de simulados</h3>
+                        <span class="status-chip status-chip-primary"><%= history.length %> tentativa(s)</span>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr><th>Data</th><th>Resultado</th><th>%</th><th>Estado</th></tr>
+                            </thead>
+                            <tbody>
+                                <% history.slice(0, 8).forEach(h => { %>
+                                    <tr>
+                                        <td><%= new Date(h.data).toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) %></td>
+                                        <td><%= h.certas %>/<%= h.total %></td>
+                                        <td><%= h.percent %>%</td>
+                                        <td><span class="badge <%= h.aprovado ? 'badge-presente' : 'badge-faltou' %>"><%= h.aprovado ? 'Aprovado' : 'Reprovado' %></span></td>
+                                    </tr>
+                                <% }) %>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            <% } %>
+
+            <div class="panel">
+                <% if (resultado) { %>
+                    <div class="panel-head">
+                        <h3>Revisão das perguntas</h3>
+                        <a href="/testes" class="btn btn-primary btn-sm">Fazer novo simulado</a>
+                    </div>
+                    <% resultado.detalhe.forEach((q, idx) => { %>
+                        <div class="question-card <%= q.acertou ? 'question-card-correct' : 'question-card-wrong' %>">
+                            <div class="question-card-head">
+                                <h4><%= idx + 1 %>. <%= q.pergunta %></h4>
+                                <% if (q.categoria) { %><span class="category-badge"><%= q.categoria %></span><% } %>
+                            </div>
+                            <% if (q.imagem) { %>
+                                <div class="question-media" style="margin: 12px 0;">
+                                    <img src="<%= q.imagem %>" alt="Imagem da questão" style="max-width: 100%; max-height: 250px; border-radius: 6px;">
+                                </div>
+                            <% } %>
+                            <div class="question-options">
+                                <% q.opcoes.forEach((opt, optIdx) => {
+                                    let cls = 'option-item option-item-review';
+                                    if (optIdx === q.correta) cls += ' option-correct';
+                                    else if (optIdx === q.selecionada) cls += ' option-wrong';
+                                %>
+                                    <div class="<%= cls %>">
+                                        <span><%= opt %></span>
+                                        <% if (optIdx === q.correta) { %><span class="option-tag">Correta</span><% } %>
+                                        <% if (optIdx === q.selecionada && optIdx !== q.correta) { %><span class="option-tag option-tag-wrong">A sua resposta</span><% } %>
+                                    </div>
+                                <% }) %>
+                                <% if (q.selecionada === null) { %>
+                                    <div class="inline-alert inline-alert-warning" style="margin-top: 8px;">Não respondeu a esta pergunta.</div>
+                                <% } %>
+                            </div>
+                            <p class="question-explanation">💡 <%= q.explicacao %></p>
+                        </div>
+                    <% }) %>
+                <% } else { %>
+                    <form action="/testes/submeter" method="POST" id="examForm">
+                        <% questoes.forEach((q, idx) => { %>
+                            <div class="question-card">
+                                <div class="question-card-head">
+                                    <h4><%= idx + 1 %>. <%= q.pergunta %></h4>
+                                    <% if (q.categoria) { %><span class="category-badge"><%= q.categoria %></span><% } %>
+                                </div>
+                                <% if (q.imagem) { %>
+                                    <div class="question-media" style="margin: 12px 0;">
+                                        <img src="<%= q.imagem %>" alt="Imagem da questão" style="max-width: 100%; max-height: 250px; border-radius: 6px;">
+                                    </div>
+                                <% } %>
+                                <div class="question-options">
+                                    <% q.opcoes.forEach((opt, optIdx) => { %>
+                                        <label class="option-item">
+                                            <input type="radio" name="q_<%= q.id %>" value="<%= optIdx %>">
+                                            <span><%= opt %></span>
+                                        </label>
+                                    <% }) %>
+                                </div>
+                            </div>
+                        <% }) %>
+                        <button type="submit" class="btn btn-primary" style="margin-top: 18px;">Finalizar e submeter exame</button>
+                    </form>
+                <% } %>
+            </div>
+        </main>
+    </div>
+
+    <!-- MODAL DE ALTERAR PALAVRA-PASSE -->
+    <div id="passwordModalOverlay" class="day-modal-overlay" onclick="closePasswordModal()">
+        <div class="day-modal-card" onclick="event.stopPropagation()">
+            <div class="day-modal-head">
+                <h4 style="margin: 0;">Alterar Palavra-passe</h4>
+                <button class="day-modal-close" onclick="closePasswordModal()">&times;</button>
+            </div>
+
+            <div id="passwordModalAlert" style="display: none; margin-bottom: 14px;"></div>
+
+            <form id="passwordModalForm" class="auth-form" onsubmit="return submitPasswordModal(event)">
+                <div class="form-field">
+                    <label for="pm_passwordAtual">Palavra-passe atual</label>
+                    <input id="pm_passwordAtual" type="password" name="passwordAtual" autocomplete="current-password" required>
+                </div>
+                <div class="form-field">
+                    <label for="pm_novaPassword">Nova palavra-passe</label>
+                    <input id="pm_novaPassword" type="password" name="novaPassword" autocomplete="new-password" minlength="8" required>
+                </div>
+                <div class="form-field">
+                    <label for="pm_confirmarPassword">Confirmar nova palavra-passe</label>
+                    <input id="pm_confirmarPassword" type="password" name="confirmarPassword" autocomplete="new-password" minlength="8" required>
+                </div>
+                <button type="submit" id="pm_submitBtn" class="btn btn-primary" style="width: 100%; margin-top: 6px;">
+                    Guardar
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <% if (!resultado) { %>
+    <script>
+        (function () {
+            var timerEl = document.getElementById('examTimer');
+            var labelEl = document.getElementById('examTimerLabel');
+            var form = document.getElementById('examForm');
+            if (!timerEl || !labelEl) return;
+
+            var totalSeconds = parseInt(timerEl.dataset.minutes, 10) * 60;
+
+            function render() {
+                var m = Math.floor(totalSeconds / 60);
+                var s = totalSeconds % 60;
+                labelEl.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+                if (totalSeconds <= 60) {
+                    timerEl.classList.add('exam-timer-danger');
+                }
+            }
+
+            render();
+            var interval = setInterval(function () {
+                totalSeconds--;
+                if (totalSeconds <= 0) {
+                    clearInterval(interval);
+                    examSubmitting = true;
+                    if (form) form.submit();
+                    return;
+                }
+                render();
+            }, 1000);
+
+            var examSubmitting = false;
+            if (form) {
+                form.addEventListener('submit', function () { examSubmitting = true; });
+            }
+
+            function respostasDadas() {
+                return !!(form && form.querySelectorAll('input[type=radio]:checked').length);
+            }
+
+            window.addEventListener('beforeunload', function (e) {
+                if (examSubmitting || !respostasDadas()) return;
+                e.preventDefault();
+                e.returnValue = '';
+                return '';
+            });
+
+            document.querySelectorAll('a[href]').forEach(function (link) {
+                if (form && form.contains(link)) return;
+                link.addEventListener('click', function (evt) {
+                    if (examSubmitting) return;
+                    var confirmar = window.confirm('Tem a certeza que quer sair do simulado? As respostas dadas serão perdidas e o exame não será concluído.');
+                    if (!confirmar) {
+                        evt.preventDefault();
+                    } else {
+                        examSubmitting = true;
+                    }
+                });
+            });
+        })();
+
+        function openPasswordModal() {
+            document.getElementById('passwordModalForm').reset();
+            const alertBox = document.getElementById('passwordModalAlert');
+            alertBox.style.display = 'none';
+            alertBox.className = '';
+            document.getElementById('passwordModalOverlay').classList.add('active');
+        }
+
+        function closePasswordModal() {
+            document.getElementById('passwordModalOverlay').classList.remove('active');
+        }
+
+        async function submitPasswordModal(event) {
+            event.preventDefault();
+
+            const form = document.getElementById('passwordModalForm');
+            const alertBox = document.getElementById('passwordModalAlert');
+            const submitBtn = document.getElementById('pm_submitBtn');
+
+            const novaPassword = form.novaPassword.value;
+            const confirmarPassword = form.confirmarPassword.value;
+
+            const showAlert = (message, tipo) => {
+                alertBox.textContent = message;
+                alertBox.className = `inline-alert ${tipo === 'success' ? 'inline-alert-success' : 'inline-alert-warning'}`;
+                alertBox.style.display = 'block';
+            };
+
+            if (novaPassword.length < 8) {
+                showAlert('A nova password deve ter pelo menos 8 caracteres.', 'error');
+                return false;
+            }
+            if (novaPassword !== confirmarPassword) {
+                showAlert('As passwords não coincidem.', 'error');
+                return false;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'A guardar...';
+
+            try {
+                const response = await fetch('/conta/password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: new URLSearchParams(new FormData(form))
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.ok) {
+                    showAlert(data.message || 'Palavra-passe alterada com sucesso.', 'success');
+                    form.reset();
+                    setTimeout(() => closePasswordModal(), 1500);
+                } else {
+                    showAlert(data.error || 'Ocorreu um erro. Tente novamente.', 'error');
+                }
+            } catch (err) {
+                showAlert('Erro de ligação ao servidor. Tente novamente.', 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Guardar';
+            }
+
+            return false;
+        }
+
+        function relocateTopbarActions() {
+            const actions = document.querySelector('.topbar-actions');
+            const slot = document.getElementById('sidebarActionsSlot');
+            const topbar = document.querySelector('.topbar');
+            if (!actions || !slot || !topbar) return;
+
+            const isMobile = window.matchMedia('(max-width: 860px)').matches;
+
+            if (isMobile && actions.parentElement !== slot) {
+                slot.appendChild(actions);
+            } else if (!isMobile && actions.parentElement !== topbar) {
+                topbar.appendChild(actions);
+            }
+        }
+
+        relocateTopbarActions();
+        window.addEventListener('resize', relocateTopbarActions);
+
+        </script>
+    <% } else { %>
+    <script>
+        function openPasswordModal() {
+            document.getElementById('passwordModalForm').reset();
+            const alertBox = document.getElementById('passwordModalAlert');
+            alertBox.style.display = 'none';
+            alertBox.className = '';
+            document.getElementById('passwordModalOverlay').classList.add('active');
+        }
+
+        function closePasswordModal() {
+            document.getElementById('passwordModalOverlay').classList.remove('active');
+        }
+
+        async function submitPasswordModal(event) {
+            event.preventDefault();
+
+            const form = document.getElementById('passwordModalForm');
+            const alertBox = document.getElementById('passwordModalAlert');
+            const submitBtn = document.getElementById('pm_submitBtn');
+
+            const novaPassword = form.novaPassword.value;
+            const confirmarPassword = form.confirmarPassword.value;
+
+            const showAlert = (message, tipo) => {
+                alertBox.textContent = message;
+                alertBox.className = `inline-alert ${tipo === 'success' ? 'inline-alert-success' : 'inline-alert-warning'}`;
+                alertBox.style.display = 'block';
+            };
+
+            if (novaPassword.length < 8) {
+                showAlert('A nova password deve ter pelo menos 8 caracteres.', 'error');
+                return false;
+            }
+            if (novaPassword !== confirmarPassword) {
+                showAlert('As passwords não coincidem.', 'error');
+                return false;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'A guardar...';
+
+            try {
+                const response = await fetch('/conta/password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: new URLSearchParams(new FormData(form))
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.ok) {
+                    showAlert(data.message || 'Palavra-passe alterada com sucesso.', 'success');
+                    form.reset();
+                    setTimeout(() => closePasswordModal(), 1500);
+                } else {
+                    showAlert(data.error || 'Ocorreu um erro. Tente novamente.', 'error');
+                }
+            } catch (err) {
+                showAlert('Erro de ligação ao servidor. Tente novamente.', 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Guardar';
+            }
+
+            return false;
+        }
+
+        function relocateTopbarActions() {
+            const actions = document.querySelector('.topbar-actions');
+            const slot = document.getElementById('sidebarActionsSlot');
+            const topbar = document.querySelector('.topbar');
+            if (!actions || !slot || !topbar) return;
+
+            const isMobile = window.matchMedia('(max-width: 860px)').matches;
+
+            if (isMobile && actions.parentElement !== slot) {
+                slot.appendChild(actions);
+            } else if (!isMobile && actions.parentElement !== topbar) {
+                topbar.appendChild(actions);
+            }
+        }
+
+        relocateTopbarActions();
+        window.addEventListener('resize', relocateTopbarActions);
+    </script>
+    <% } %>
+</body>
+</html>

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boa Viagem</title>
+    <link rel="icon" href="/boaviagem.svg" type="image/x-icon">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        /* Estilos do modal (caso ainda não estejam definidos em style.css) */
+        .day-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+        .day-modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .day-modal-card {
+            background: var(--surface, #ffffff);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg, 12px);
+            width: 90%;
+            max-width: 480px;
+            padding: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        .day-modal-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+        .day-modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            line-height: 1;
+            cursor: pointer;
+            color: var(--muted);
+        }
+    </style>
+</head>
+<body>
+    <%
+        const roleLower = String((user && user.role) || '').toLowerCase();
+        const isAlunoUser = ['aluno', 'student'].includes(roleLower);
+        const canSeeQuestionBank = !isAlunoUser;
+
+        // Trata os valores vindos da rota para garantir número com 2 casas decimais
+        const totalDeb = Number(resumo.totalDebito || 0);
+        const totalLiq = Number(resumo.totalPago || 0);
+        const saldoPend = Number(resumo.saldoPendente || 0);
+    %>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-mark" aria-label="Boa Viagem"></div>
+                <div>
+                    <div class="brand-name">Boa Viagem</div>
+                    <div class="brand-sub">Portal Aluno</div>
+                </div>
+                <div id="sidebarActionsSlot"></div>
+            </div>
+            <nav class="nav">
+                <div class="nav-group">
+                    <span class="nav-section-title">Navegação</span>
+                    <a href="/dashboard" class="nav-item">
+                        <span class="nav-ico">📊</span> Dashboard
+                    </a>
+                    <a href="/conta-corrente" class="nav-item active">
+                        <span class="nav-ico">💳</span> Conta Corrente
+                    </a>
+                    <a href="/testes" class="nav-item">
+                        <span class="nav-ico">📝</span> Exames Teóricos
+                    </a>
+                    <a href="#" onclick="openPasswordModal(); return false;" class="nav-item">
+                        <span class="nav-ico">🔑</span> Alterar Palavra-passe
+                    </a>
+                    <% if (canSeeQuestionBank) { %>
+                        <a href="/admin/questoes" class="nav-item">
+                            <span class="nav-ico">⚙️</span> Back-office
+                        </a>
+                    <% } %>
+                </div>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="topbar">
+                <div class="topbar-title">
+                    <h1>Extrato Financeiro</h1>
+                    <p class="muted">Consulte os seus pagamentos, mensalidades e pendentes.</p>
+                </div>
+                <div class="topbar-actions">
+                    <a href="/logout" class="btn btn-danger-ghost">Sair</a>
+                </div>
+            </header>
+
+            <div class="cc-summary">
+                <div class="stat-card">
+                    <div class="stat-label">Total débito</div>
+                    <div class="stat-value"><%= totalDeb.toFixed(2) %> €</div>
+                </div>
+                <div class="stat-card cc-stat-success">
+                    <div class="stat-label">Total liquidado</div>
+                    <div class="stat-value"><%= totalLiq.toFixed(2) %> €</div>
+                </div>
+                <div class="stat-card cc-stat-danger">
+                    <div class="stat-label">Saldo pendente</div>
+                    <div class="stat-value"><%= saldoPend.toFixed(2) %> €</div>
+                </div>
+            </div>
+
+            <div class="panel panel-feature">
+                <div class="panel-head">
+                    <h3>Visão geral da conta</h3>
+                    <span class="status-chip status-chip-warning">Plano ativo</span>
+                </div>
+                <div class="financial-summary-grid">
+                    <div class="info-block">
+                        <span class="info-label">Último movimento</span>
+                        <strong><%= itens.length ? itens[0].descricao : 'Sem movimentos' %></strong>
+                    </div>
+                    <div class="info-block">
+                        <span class="info-label">Estado da conta</span>
+                        <strong class="<%= saldoPend > 0 ? 'cc-text-danger' : 'cc-text-success' %>">
+                            <%= saldoPend > 0 ? 'Pendente' : 'Em dia' %>
+                        </strong>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cc-doc-list">
+                <div class="cc-doc-group">
+                    <div class="cc-doc-group-head">
+                        <span class="cc-doc-title">Movimentos e Itens em Débito</span>
+                        <span class="cc-plan-badge cc-plan-mensalidades">Plano ativo</span>
+                    </div>
+
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Descrição</th>
+                                    <th>Categoria</th>
+                                    <th>Origem Plano</th>
+                                    <th>Taxa IVA</th>
+                                    <th>Valor</th>
+                                    <th>Estado</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <% if (itens.length === 0) { %>
+                                    <tr>
+                                        <td colspan="7" class="muted">Ainda não existem movimentos na sua conta corrente.</td>
+                                    </tr>
+                                <% } else { %>
+                                    <% itens.forEach(item => { 
+                                        const valorItem = Number(item.valor || 0);
+                                        const isPago = item.estado === 'Pago';
+                                        const isParcial = item.estado === 'Parcial';
+                                    %>
+                                        <tr>
+                                            <td data-label="ID">#<%= item.id %></td>
+                                            <td data-label="Descrição" class="cell-primary"><%= item.descricao %></td>
+                                            <td data-label="Categoria"><%= item.categoria %></td>
+                                            <td data-label="Origem Plano"><%= item.origem_plano || 'N/A' %></td>
+                                            <td data-label="Taxa IVA"><%= item.taxa_iva != null ? item.taxa_iva + '%' : 'Isento / Tx. Geral' %></td>
+                                            <td data-label="Valor"><strong><%= valorItem.toFixed(2) %> €</strong></td>
+                                            <td data-label="Estado">
+                                                <span class="badge <%= isPago ? 'badge-pago' : (isParcial ? 'badge-warning' : 'badge-pendente') %>">
+                                                    <%= item.estado %>
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    <% }) %>
+                                <% } %>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="cc-doc-total">
+                        <span>Total em dívida:</span>
+                        <span class="cc-text-danger"><%= saldoPend.toFixed(2) %> €</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MODAL DE ALTERAR PALAVRA-PASSE -->
+            <div id="passwordModalOverlay" class="day-modal-overlay" onclick="closePasswordModal()">
+                <div class="day-modal-card" onclick="event.stopPropagation()">
+                    <div class="day-modal-head">
+                        <h4 style="margin: 0;">Alterar Palavra-passe</h4>
+                        <button class="day-modal-close" onclick="closePasswordModal()">&times;</button>
+                    </div>
+
+                    <div id="passwordModalAlert" style="display: none; margin-bottom: 14px;"></div>
+
+                    <form id="passwordModalForm" class="auth-form" onsubmit="return submitPasswordModal(event)">
+                        <div class="form-field">
+                            <label for="pm_passwordAtual">Palavra-passe atual</label>
+                            <input id="pm_passwordAtual" type="password" name="passwordAtual" autocomplete="current-password" required>
+                        </div>
+                        <div class="form-field">
+                            <label for="pm_novaPassword">Nova palavra-passe</label>
+                            <input id="pm_novaPassword" type="password" name="novaPassword" autocomplete="new-password" minlength="8" required>
+                        </div>
+                        <div class="form-field">
+                            <label for="pm_confirmarPassword">Confirmar nova palavra-passe</label>
+                            <input id="pm_confirmarPassword" type="password" name="confirmarPassword" autocomplete="new-password" minlength="8" required>
+                        </div>
+                        <button type="submit" id="pm_submitBtn" class="btn btn-primary" style="width: 100%; margin-top: 6px;">
+                            Guardar
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script>
+        function openPasswordModal() {
+            document.getElementById('passwordModalForm').reset();
+            const alertBox = document.getElementById('passwordModalAlert');
+            alertBox.style.display = 'none';
+            alertBox.className = '';
+            document.getElementById('passwordModalOverlay').classList.add('active');
+        }
+
+        function closePasswordModal() {
+            document.getElementById('passwordModalOverlay').classList.remove('active');
+        }
+
+        async function submitPasswordModal(event) {
+            event.preventDefault();
+
+            const form = document.getElementById('passwordModalForm');
+            const alertBox = document.getElementById('passwordModalAlert');
+            const submitBtn = document.getElementById('pm_submitBtn');
+
+            const novaPassword = form.novaPassword.value;
+            const confirmarPassword = form.confirmarPassword.value;
+
+            const showAlert = (message, tipo) => {
+                alertBox.textContent = message;
+                alertBox.className = `inline-alert ${tipo === 'success' ? 'inline-alert-success' : 'inline-alert-warning'}`;
+                alertBox.style.display = 'block';
+            };
+
+            if (novaPassword.length < 8) {
+                showAlert('A nova password deve ter pelo menos 8 caracteres.', 'error');
+                return false;
+            }
+            if (novaPassword !== confirmarPassword) {
+                showAlert('As passwords não coincidem.', 'error');
+                return false;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'A guardar...';
+
+            try {
+                const response = await fetch('/conta/password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: new URLSearchParams(new FormData(form))
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.ok) {
+                    showAlert(data.message || 'Palavra-passe alterada com sucesso.', 'success');
+                    form.reset();
+                    setTimeout(() => closePasswordModal(), 1500);
+                } else {
+                    showAlert(data.error || 'Ocorreu um erro. Tente novamente.', 'error');
+                }
+            } catch (err) {
+                showAlert('Erro de ligação ao servidor. Tente novamente.', 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Guardar';
+            }
+
+            return false;
+        }
+        
+        function relocateTopbarActions() {
+            const actions = document.querySelector('.topbar-actions');
+            const slot = document.getElementById('sidebarActionsSlot');
+            const topbar = document.querySelector('.topbar');
+            if (!actions || !slot || !topbar) return;
+
+            const isMobile = window.matchMedia('(max-width: 860px)').matches;
+
+            if (isMobile && actions.parentElement !== slot) {
+                slot.appendChild(actions);
+            } else if (!isMobile && actions.parentElement !== topbar) {
+                topbar.appendChild(actions);
+            }
+        }
+
+        relocateTopbarActions();
+        window.addEventListener('resize', relocateTopbarActions);
+    </script>
+</body>
+</html>
