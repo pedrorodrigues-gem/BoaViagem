@@ -3287,6 +3287,7 @@ app.get('/api/estatisticas', async (req, res) => {
     const hoje = new Date();
     const anoAtual = hoje.getFullYear();
     const mesAtualNum = hoje.getMonth() + 1;
+    const mesAtual = mesAtualNum;
     const mesAtualStr = `${anoAtual}-${String(mesAtualNum).padStart(2, '0')}`;
 
     const anoQuery = req.query.ano ? Number(req.query.ano) : null;
@@ -3947,10 +3948,10 @@ app.get('/api/estatisticas', async (req, res) => {
     });
 
     const nomesMesesPt = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-    const nomeMesAtual = nomesMesesPt[mesAtual - 1] || '';
+    const nomeMesAtual = nomesMesesPt[mesAtualNum - 1] || '';
     const comparacaoEspacos = {
       ativo: espacosFinais.length >= 2,
-      periodoRotulo: isAnoEmCurso ? `Ano em Curso (Jan a ${nomeMesAtual} ${anoQuery})` : (modo === 'anoCivil' ? `Ano ${anoQuery}` : 'Últimos 12 Meses'),
+      periodoRotulo: isAnoEmCurso ? `Ano em Curso (Jan a ${nomeMesAtual} ${anoQuery || anoAtual})` : (modo === 'anoCivil' ? `Ano ${anoQuery}` : 'Últimos 12 Meses'),
       isAnoEmCurso,
       mesAtualStr,
       mesesLabels: meses,
