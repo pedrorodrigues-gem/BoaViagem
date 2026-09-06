@@ -3,6 +3,11 @@ const fs = require('fs');
 const path = require('path');
 const { DB_PATH, TENANTS_DIR, load, save, defaultRoot, defaultTenantData } = require('../db');
 
+if (!DB_PATH) {
+  // DB_PATH is not defined in MSSQL mode; skip this legacy JSON test
+  process.exit(0);
+}
+
 function backupExisting() {
   const backupDir = path.join(__dirname, '..', 'data', '__db-test-backup');
   fs.rmSync(backupDir, { recursive: true, force: true });
