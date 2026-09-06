@@ -1331,28 +1331,31 @@ function fmtNumeroOuMoeda(v, moeda) {
   return moeda ? fmtMoney(v) : String(v);
 }
 
-/* Gráfico de barras agrupadas (duas séries), ex: aulas teóricas vs práticas por mês. */
+/* Gráfico de barras agrupadas (duas séries), ex: aulas teóricas vs práticas por mês ou faturação de espaços. */
 function svgBarChartDuplo(labels, serieA, serieB, opts) {
   opts = opts || {};
   const w = opts.width || 760, h = opts.height || 240, pad = 36;
-  const max = Math.max(1, ...serieA, ...serieB) * 1.2;
-  const grupoW = (w - pad * 2) / labels.length;
+  const max = Math.max(1, ...(serieA || []), ...(serieB || [])) * 1.2;
+  const grupoW = (w - pad * 2) / (labels.length || 1);
   const barraW = Math.min(18, grupoW / 3);
   const corA = opts.corA || CHART_CORES.primaria;
   const corB = opts.corB || CHART_CORES.info;
+  const fmtVal = v => opts.moeda ? fmtMoney(v || 0) : (v || 0);
 
   return `
     <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:${h}px" preserveAspectRatio="xMidYMid meet">
       <line x1="${pad}" y1="${h - pad}" x2="${w - pad}" y2="${h - pad}" stroke="var(--border)" stroke-width="1"/>
       ${labels.map((l, i) => {
     const cx = pad + grupoW * i + grupoW / 2;
-    const alturaA = (serieA[i] / max) * (h - pad * 2);
-    const alturaB = (serieB[i] / max) * (h - pad * 2);
+    const valA = (serieA && serieA[i]) ? serieA[i] : 0;
+    const valB = (serieB && serieB[i]) ? serieB[i] : 0;
+    const alturaA = (valA / max) * (h - pad * 2);
+    const alturaB = (valB / max) * (h - pad * 2);
     return `
           <rect x="${(cx - barraW - 2).toFixed(1)}" y="${(h - pad - alturaA).toFixed(1)}" width="${barraW}" height="${Math.max(alturaA, 1).toFixed(1)}" fill="${corA}" rx="2"
-            style="cursor:pointer" data-tip="${esc(l)}\n${esc(opts.nomeA || 'A')}: ${serieA[i]}"/>
+            style="cursor:pointer" data-tip="${esc(l)}\n${esc(opts.nomeA || 'A')}: ${fmtVal(valA)}"/>
           <rect x="${(cx + 2).toFixed(1)}" y="${(h - pad - alturaB).toFixed(1)}" width="${barraW}" height="${Math.max(alturaB, 1).toFixed(1)}" fill="${corB}" rx="2"
-            style="cursor:pointer" data-tip="${esc(l)}\n${esc(opts.nomeB || 'B')}: ${serieB[i]}"/>
+            style="cursor:pointer" data-tip="${esc(l)}\n${esc(opts.nomeB || 'B')}: ${fmtVal(valB)}"/>
           <text x="${cx.toFixed(1)}" y="${h - 10}" font-size="11" fill="var(--muted)" text-anchor="middle">${esc(l)}</text>
         `;
   }).join('')}
@@ -1363,6 +1366,7 @@ function svgBarChartDuplo(labels, serieA, serieB, opts) {
     </div>
   `;
 }
+
 
 /* Gráfico de barras empilhadas (ex: aprovados/reprovados por mês). */
 function svgBarChartEmpilhado(labels, serieBase, serieTopo, opts) {
@@ -1722,6 +1726,284 @@ function montarFiltrosEstatisticasHTML(d) {
 
 /* ==================== VISTA DE ESTATÍSTICAS ==================== */
 
+function renderComparacaoEspacosHTML(ce) {
+  if (!ce || !ce.espacos || !ce.espacos.length) {
+    return '';
+  }
+  const espacos = ce.espacos;
+  const isDois = espacos.length === 2;
+  const e1 = espacos[0];
+  const e2 = espacos[1];
+
+  const totalReceita = espacos.reduce((s, e) => s + (e.receitaTotal || 0), 0);
+  const totalAtivos = espacos.reduce((s, e) => s + (e.alunosAtivos || 0), 0);
+  const totalNovos = espacos.reduce((s, e) => s + (e.alunosNovosPeriodo || 0), 0);
+  const totalAulas = espacos.reduce((s, e) => s + (e.aulasTotal || 0), 0);
+  const totalPraticas = espacos.reduce((s, e) => s + (e.aulasPraticas || 0), 0);
+  const totalTeoricas = espacos.reduce((s, e) => s + (e.aulasTeoricas || 0), 0);
+  const totalExames = espacos.reduce((s, e) => s + (e.examesTotal || 0), 0);
+  const totalAprovados = espacos.reduce((s, e) => s + (e.examesAprovados || 0), 0);
+  const totalPendentes = espacos.reduce((s, e) => s + (e.receitaPendente || 0), 0);
+  const totalAlunosGeral = espacos.reduce((s, e) => s + (e.totalAlunos || 0), 0);
+  const taxaAprovGeral = totalExames > 0 ? +((totalAprovados / totalExames) * 100).toFixed(1) : null;
+
+  // Proporções para quando existem 2 espaços
+  const pct1 = isDois && totalReceita > 0 ? Math.round((e1.receitaTotal / totalReceita) * 100) : 50;
+  const pct2 = 100 - pct1;
+
+  const pctAtivos1 = isDois && totalAtivos > 0 ? Math.round((e1.alunosAtivos / totalAtivos) * 100) : 50;
+  const pctAtivos2 = 100 - pctAtivos1;
+
+  const pctAulas1 = isDois && totalAulas > 0 ? Math.round((e1.aulasTotal / totalAulas) * 100) : 50;
+  const pctAulas2 = 100 - pctAulas1;
+
+  return `
+    <div class="panel" style="margin-bottom:24px; border:1px solid var(--border); box-shadow:0 4px 16px rgba(0,0,0,0.04)">
+      <div class="panel-head" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; border-bottom:1px solid var(--border); padding-bottom:12px">
+        <div>
+          <h3 style="font-size:1.1rem; display:flex; align-items:center; gap:8px; margin:0">
+            <span>🏢</span> Comparação entre Espaços da Escola
+          </h3>
+          <p class="muted" style="margin-top:3px; font-size:12.5px">
+            Desempenho comparativo de faturação, volume de formação, alunos e eficácia de exames · <strong>${esc(ce.periodoRotulo || 'Período Selecionado')}</strong>
+          </p>
+        </div>
+        <div>
+          <span class="badge" style="background:var(--accent-soft, #ede9fe); color:var(--accent, #5b21b6); font-weight:700; font-size:12px; padding:6px 12px">
+            ${espacos.length} Espaços Registados
+          </span>
+        </div>
+      </div>
+
+      <!-- CARDS COMPARATIVOS DESTACADOS (quando 2 espaços) -->
+      ${isDois ? `
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:16px; margin:16px 0">
+          
+          <!-- Card Receita -->
+          <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-md); padding:14px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+              <span style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--muted)">Receita Cobrada</span>
+              <span style="font-weight:700; color:var(--accent-dark); font-size:13px">${fmtMoney(totalReceita)}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px">
+              <span><strong>${esc(e1.nome)}</strong>: ${fmtMoney(e1.receitaTotal)} <span class="muted">(${pct1}%)</span></span>
+              <span><strong>${esc(e2.nome)}</strong>: ${fmtMoney(e2.receitaTotal)} <span class="muted">(${pct2}%)</span></span>
+            </div>
+            <div style="height:8px; width:100%; background:var(--border); border-radius:999px; overflow:hidden; display:flex">
+              <div style="width:${pct1}%; background:var(--brand-purple, #52479c)" title="${esc(e1.nome)}: ${pct1}%"></div>
+              <div style="width:${pct2}%; background:var(--brand-cyan, #47c9e3)" title="${esc(e2.nome)}: ${pct2}%"></div>
+            </div>
+          </div>
+
+          <!-- Card Alunos Ativos -->
+          <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-md); padding:14px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+              <span style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--muted)">Alunos Ativos</span>
+              <span style="font-weight:700; color:var(--ink); font-size:13px">${totalAtivos} Alunos</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px">
+              <span><strong>${esc(e1.nome)}</strong>: ${e1.alunosAtivos} <span class="muted">(${e1.alunosNovosPeriodo} novos)</span></span>
+              <span><strong>${esc(e2.nome)}</strong>: ${e2.alunosAtivos} <span class="muted">(${e2.alunosNovosPeriodo} novos)</span></span>
+            </div>
+            <div style="height:8px; width:100%; background:var(--border); border-radius:999px; overflow:hidden; display:flex">
+              <div style="width:${pctAtivos1}%; background:var(--brand-purple, #52479c)" title="${esc(e1.nome)}: ${pctAtivos1}%"></div>
+              <div style="width:${pctAtivos2}%; background:var(--brand-cyan, #47c9e3)" title="${esc(e2.nome)}: ${pctAtivos2}%"></div>
+            </div>
+          </div>
+
+          <!-- Card Aulas Dadas -->
+          <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-md); padding:14px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+              <span style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--muted)">Aulas Ministradas</span>
+              <span style="font-weight:700; color:var(--ink); font-size:13px">${totalAulas} Aulas</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px">
+              <span><strong>${esc(e1.nome)}</strong>: ${e1.aulasTotal} <span class="muted">(${e1.aulasPraticas}P/${e1.aulasTeoricas}T)</span></span>
+              <span><strong>${esc(e2.nome)}</strong>: ${e2.aulasTotal} <span class="muted">(${e2.aulasPraticas}P/${e2.aulasTeoricas}T)</span></span>
+            </div>
+            <div style="height:8px; width:100%; background:var(--border); border-radius:999px; overflow:hidden; display:flex">
+              <div style="width:${pctAulas1}%; background:var(--brand-purple, #52479c)" title="${esc(e1.nome)}: ${pctAulas1}%"></div>
+              <div style="width:${pctAulas2}%; background:var(--brand-cyan, #47c9e3)" title="${esc(e2.nome)}: ${pctAulas2}%"></div>
+            </div>
+          </div>
+
+          <!-- Card Taxa de Aprovação -->
+          <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-md); padding:14px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+              <span style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--muted)">Aprovação em Exames</span>
+              <span style="font-weight:700; color:var(--success, #16a34a); font-size:13px">${taxaAprovGeral !== null ? taxaAprovGeral + '%' : '—'} Global</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px">
+              <span><strong>${esc(e1.nome)}</strong>: ${e1.taxaAprovacao !== null ? e1.taxaAprovacao + '%' : '—'} <span class="muted">(${e1.examesAprovados}/${e1.examesTotal})</span></span>
+              <span><strong>${esc(e2.nome)}</strong>: ${e2.taxaAprovacao !== null ? e2.taxaAprovacao + '%' : '—'} <span class="muted">(${e2.examesAprovados}/${e2.examesTotal})</span></span>
+            </div>
+            <div style="display:flex; gap:12px; font-size:11.5px; color:var(--muted); margin-top:6px">
+              <span>Ticket Médio ${esc(e1.nome)}: <strong>${fmtMoney(e1.ticketMedioAluno)}</strong></span>
+              <span>Ticket Médio ${esc(e2.nome)}: <strong>${fmtMoney(e2.ticketMedioAluno)}</strong></span>
+            </div>
+          </div>
+
+        </div>
+      ` : ''}
+
+      <!-- TABELA COMPARATIVA COMPLETA -->
+      <div style="overflow-x:auto; margin-top:16px">
+        <table style="width:100%; border-collapse:collapse; font-size:13px">
+          <thead>
+            <tr style="background:var(--surface-2); border-bottom:2px solid var(--border)">
+              <th style="padding:10px 14px; text-align:left; font-weight:700">Métrica / Indicador Operacional</th>
+              ${espacos.map(e => `
+                <th style="padding:10px 14px; text-align:right; font-weight:700">
+                  ${esc(e.nome)}
+                  <div style="font-size:11px; font-weight:normal; color:var(--muted)">Série: <span class="badge" style="background:#f1f5f9; color:#475569">${esc(e.serie || 'Padrão')}</span></div>
+                </th>
+              `).join('')}
+              <th style="padding:10px 14px; text-align:right; font-weight:700; background:var(--surface-hover)">Total Escola</th>
+              ${isDois ? `<th style="padding:10px 14px; text-align:center; font-weight:700">Destaque</th>` : ''}
+            </tr>
+          </thead>
+          <tbody>
+            ${[
+              {
+                label: 'Receita Total Cobrada',
+                val: e => fmtMoney(e.receitaTotal),
+                raw: e => e.receitaTotal,
+                tot: fmtMoney(totalReceita),
+                tipo: 'money',
+                destaque: true
+              },
+              {
+                label: 'Pagamentos / Recibos Emitidos',
+                val: e => `${e.pagamentosCount} recibos`,
+                raw: e => e.pagamentosCount,
+                tot: `${espacos.reduce((s, e) => s + e.pagamentosCount, 0)} recibos`
+              },
+              {
+                label: 'Saldos Devedores em CC (Pendente)',
+                val: e => fmtMoney(e.receitaPendente),
+                raw: e => e.receitaPendente,
+                tot: fmtMoney(totalPendentes),
+                tipo: 'pendente'
+              },
+              {
+                label: 'Ticket Médio por Aluno',
+                val: e => fmtMoney(e.ticketMedioAluno),
+                raw: e => e.ticketMedioAluno,
+                tot: fmtMoney(totalAlunosGeral > 0 ? totalReceita / totalAlunosGeral : 0)
+              },
+              {
+                label: 'Alunos Ativos (Em Formação)',
+                val: e => `${e.alunosAtivos} alunos`,
+                raw: e => e.alunosAtivos,
+                tot: `${totalAtivos} alunos`,
+                destaque: true
+              },
+              {
+                label: 'Novas Matrículas no Período',
+                val: e => `${e.alunosNovosPeriodo} matrículas`,
+                raw: e => e.alunosNovosPeriodo,
+                tot: `${totalNovos} matrículas`
+              },
+              {
+                label: 'Alunos com Carta Concluída',
+                val: e => `${e.alunosConcluidos} alunos`,
+                raw: e => e.alunosConcluidos,
+                tot: `${espacos.reduce((s, e) => s + e.alunosConcluidos, 0)} alunos`
+              },
+              {
+                label: 'Aulas Práticas Realizadas',
+                val: e => `${e.aulasPraticas} aulas`,
+                raw: e => e.aulasPraticas,
+                tot: `${totalPraticas} aulas`
+              },
+              {
+                label: 'Aulas Teóricas Realizadas',
+                val: e => `${e.aulasTeoricas} aulas`,
+                raw: e => e.aulasTeoricas,
+                tot: `${totalTeoricas} aulas`
+              },
+              {
+                label: 'Total de Aulas Ministradas',
+                val: e => `${e.aulasTotal} aulas`,
+                raw: e => e.aulasTotal,
+                tot: `${totalAulas} aulas`,
+                destaque: true
+              },
+              {
+                label: 'Exames de Condução Realizados',
+                val: e => `${e.examesTotal} exames`,
+                raw: e => e.examesTotal,
+                tot: `${totalExames} exames`
+              },
+              {
+                label: 'Exames com Aprovação',
+                val: e => `${e.examesAprovados} aprovados`,
+                raw: e => e.examesAprovados,
+                tot: `${totalAprovados} aprovados`
+              },
+              {
+                label: 'Taxa de Aprovação Global (%)',
+                val: e => e.taxaAprovacao !== null ? `${e.taxaAprovacao}%` : '—',
+                raw: e => e.taxaAprovacao ?? -1,
+                tot: taxaAprovGeral !== null ? `${taxaAprovGeral}%` : '—',
+                destaque: true
+              }
+            ].map(row => {
+              let liderTag = '';
+              if (isDois) {
+                const r1 = row.raw(e1);
+                const r2 = row.raw(e2);
+                if (row.tipo === 'pendente') {
+                  if (r1 < r2) liderTag = `<span class="badge" style="background:#f0fdf4; color:#166534">Menor pendente: ${esc(e1.nome)}</span>`;
+                  else if (r2 < r1) liderTag = `<span class="badge" style="background:#f0fdf4; color:#166534">Menor pendente: ${esc(e2.nome)}</span>`;
+                  else liderTag = '<span class="muted">Igual</span>';
+                } else {
+                  if (r1 > r2) liderTag = `<span class="badge" style="background:#ede9fe; color:#5b21b6">+${typeof r1 === 'number' && typeof r2 === 'number' && row.tipo === 'money' ? fmtMoney(r1 - r2) : (r1 - r2)} em ${esc(e1.nome)}</span>`;
+                  else if (r2 > r1) liderTag = `<span class="badge" style="background:#e0f2fe; color:#0369a1">+${typeof r1 === 'number' && typeof r2 === 'number' && row.tipo === 'money' ? fmtMoney(r2 - r1) : (r2 - r1)} em ${esc(e2.nome)}</span>`;
+                  else liderTag = '<span class="muted">Equilibrado</span>';
+                }
+              }
+
+              return `
+                <tr style="border-bottom:1px solid var(--border); ${row.destaque ? 'background:rgba(244, 243, 248, 0.5); font-weight:600' : ''}">
+                  <td style="padding:8px 14px">${row.label}</td>
+                  ${espacos.map(e => `
+                    <td style="padding:8px 14px; text-align:right">${row.val(e)}</td>
+                  `).join('')}
+                  <td style="padding:8px 14px; text-align:right; font-weight:700; background:var(--surface-hover)">${row.tot}</td>
+                  ${isDois ? `<td style="padding:8px 14px; text-align:center">${liderTag}</td>` : ''}
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- GRÁFICO COMPARATIVO DE RECEITA MENSAL ENTRE ESPAÇOS -->
+      ${isDois && ce.mesesLabels && ce.mesesLabels.length ? `
+        <div style="margin-top:24px; padding-top:16px; border-top:1px solid var(--border)">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+            <h4 style="font-size:0.95rem; margin:0">Evolução Mensal de Receita: ${esc(e1.nome)} vs ${esc(e2.nome)}</h4>
+            <span class="muted" style="font-size:12px">Comparativo de faturação mensal recebida</span>
+          </div>
+          ${svgBarChartDuplo(
+            ce.mesesLabels.map(m => chartMesLabelCurto(m)),
+            e1.receitaMensal || [],
+            e2.receitaMensal || [],
+            {
+              nomeA: e1.nome,
+              nomeB: e2.nome,
+              corA: CHART_CORES.primaria,
+              corB: CHART_CORES.info,
+              moeda: true
+            }
+          )}
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
 function montarEstatisticasHTML(d) {
   const el = document.getElementById('estatisticas-conteudo') || document.getElementById('view-estatisticas');
   if (!el) return;
@@ -1768,7 +2050,7 @@ function montarEstatisticasHTML(d) {
         <div style="font-size:12px; margin-top:4px; color:${corVariacao}">
           ${(variacao === null || variacao === undefined)
         ? 'sem dados do ano anterior'
-        : `${seta} ${Math.abs(variacao)}% vs ${formatador(valorAnterior)} no período homólogo`}
+        : `${seta} ${Math.abs(variacao)}% vs ${formatador(valorAnterior)} no período homólogo${d.isAnoEmCurso ? ' (mesmos meses)' : ''}`}
         </div>
       </div>
     `;
@@ -1808,13 +2090,16 @@ function montarEstatisticasHTML(d) {
       </div>
     </div>
 
-    <!-- 2. CONCLUSÕES AUTOMÁTICAS -->
+    <!-- 2. COMPARAÇÃO ENTRE ESPAÇOS DA ESCOLA -->
+    ${renderComparacaoEspacosHTML(d.comparacaoEspacos)}
+
+    <!-- 3. CONCLUSÕES AUTOMÁTICAS -->
     <div class="panel" style="margin-bottom:20px">
       <div class="panel-head"><h3>Conclusões automáticas</h3></div>
       ${renderConclusoesHTML(conclusoes)}
     </div>
 
-    <!-- 3. EVOLUÇÃO FINANCEIRA E INSCRIÇÕES -->
+    <!-- 4. EVOLUÇÃO FINANCEIRA E INSCRIÇÕES -->
     <div class="panel" style="margin-bottom:20px">
       <div class="panel-head"><h3>Receita mensal (últimos 12 meses)</h3></div>
       ${svgLineChart(labelsMes, (d.receitaMensal || []).map(m => m.total), { cor: CHART_CORES.sucesso, moeda: true })}
@@ -1825,7 +2110,7 @@ function montarEstatisticasHTML(d) {
       ${svgLineChart(labelsMes, (d.inscricoesMensais || []).map(m => m.total), { cor: CHART_CORES.primaria })}
     </div>
 
-    <!-- 4. OPERAÇÃO: AULAS E EXAMES -->
+    <!-- 5. OPERAÇÃO: AULAS E EXAMES -->
     <div class="panel" style="margin-bottom:20px">
       <div class="panel-head"><h3>Aulas concluídas por mês — Teóricas vs Práticas</h3></div>
       ${svgBarChartDuplo(
@@ -1867,9 +2152,21 @@ function montarEstatisticasHTML(d) {
       : `<div class="muted" style="padding:12px">Ainda sem dados suficientes (é preciso ter exame teórico aprovado e 1.ª aula prática concluída para o mesmo aluno).</div>`}
      </div>
 
-    <!-- 5. COMPARAÇÃO HOMÓLOGA -->
+    <!-- 6. COMPARAÇÃO HOMÓLOGA -->
     <div class="panel" style="margin-bottom:20px">
-      <div class="panel-head"><h3>Comparação com o ano anterior (mesmo período)</h3></div>
+      <div class="panel-head" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+        <div>
+          <h3 style="margin:0">Comparação com o ano anterior (período homólogo)</h3>
+          <div class="muted" style="font-size:12.5px; margin-top:2px">
+            ${d.isAnoEmCurso ? `Ano em curso (${d.anoSelecionado}): comparação rigorosa dos meses decorridos (${chartMesLabelCurto(d.mesAtualStr)}) contra os mesmos meses homólogos do ano anterior` : 'Comparativo entre o período selecionado e o ano anterior correspondente'}
+          </div>
+        </div>
+        ${d.isAnoEmCurso ? `
+          <span class="badge" style="background:#e0f2fe; color:#0369a1; font-weight:700; font-size:12px; padding:4px 10px">
+            📅 Análise Homóloga YTD (Jan a ${chartMesLabelCurto(d.mesAtualStr)})
+          </span>
+        ` : ''}
+      </div>
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fit, minmax(200px,1fr)); margin-bottom:16px">
         ${cardVariacao('Receita', h.totais.receita.atual, h.totais.receita.anterior, h.totais.receita.variacaoPct, fmtMoney)}
         ${cardVariacao('Novas inscrições', h.totais.inscricoes.atual, h.totais.inscricoes.anterior, h.totais.inscricoes.variacaoPct, v => String(v))}
@@ -1893,7 +2190,7 @@ function montarEstatisticasHTML(d) {
       )}
     </div>
 
-    <!-- 6. FUNIL DE CONVERSÃO -->
+    <!-- 7. FUNIL DE CONVERSÃO -->
     <div class="panel" style="margin-bottom:20px">
       <div class="panel-head"><h3>Funil de conversão</h3></div>
       ${svgFunilChart(funil)}
@@ -4003,6 +4300,7 @@ async function abrirModalFolhaCaixa(dataEscolhida) {
   try {
     toast('A carregar dados da folha de caixa…');
     const dados = await api('GET', `/api/relatorios/folha-caixa-diaria?data=${dataRef}`);
+    const nomeEscola = state.escola?.nome || 'Escola de Condução';
     const totais = dados?.totais || {
       pgnum: dados?.totalGeralNumerario || 0,
       pgtr: dados?.totalGeralCartaoTransferencia || 0,
@@ -4017,57 +4315,101 @@ async function abrirModalFolhaCaixa(dataEscolhida) {
       pgtr: e.pgtr ?? e.totalCartaoTransferencia ?? 0,
       total: e.total ?? e.totalGeral ?? 0
     }));
-    
+
     openModal(`Folha de Caixa Diária · ${fmtDate(dados?.data || dataRef)}`, `
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--border)">
         <div style="display:flex; align-items:center; gap:8px">
-          <label style="margin:0; font-weight:600">Data:</label>
-          <input type="date" id="dataFolhaCaixa" value="${dados?.data || dataRef}" onchange="abrirModalFolhaCaixa(this.value)" style="padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius-sm)">
+          <label style="margin:0; font-weight:600; font-size:13px">Data de Referência:</label>
+          <input type="date" id="dataFolhaCaixa" value="${dados?.data || dataRef}" onchange="abrirModalFolhaCaixa(this.value)" style="padding:6px 12px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:13px">
         </div>
         <button class="btn btn-accent btn-sm" onclick="exportarFolhaCaixaPdf('${dados?.data || dataRef}')">
           <span class="icon">🖨️</span> Descarregar / Imprimir PDF
         </button>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Espaço</th>
-              <th>Série</th>
-              <th style="text-align:right">Numerário (PGNUM)</th>
-              <th style="text-align:right">Cartão / Transf. (PGTR)</th>
-              <th style="text-align:right">Total do Espaço</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${espacos.length ? espacos.map(e => `
-              <tr>
-                <td class="cell-primary">${esc(e.nome)}</td>
-                <td><span class="badge" style="background:#f1f5f9; color:#475569">${esc(e.serie || 'Padrão')}</span></td>
-                <td style="text-align:right; font-weight:500">${fmtMoney(e.pgnum)}</td>
-                <td style="text-align:right; font-weight:500">${fmtMoney(e.pgtr)}</td>
-                <td style="text-align:right; font-weight:700; color:var(--ink)">${fmtMoney(e.total)}</td>
+
+      <!-- PRÉ-VISUALIZAÇÃO FORMATADA FIEL AO PDF -->
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); padding:20px; box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+        <div style="margin-bottom:20px; border-bottom:2px solid var(--navy-900, #16233b); padding-bottom:12px">
+          <h2 style="font-size:19px; margin:0 0 4px; color:var(--brand-black)">${esc(nomeEscola)}</h2>
+          <div style="font-size:14px; font-weight:600; color:var(--muted); margin-bottom:4px">Folha de Caixa Diária · Fecho de Turno</div>
+          <div class="muted" style="font-size:12px">Data de referência: <strong>${fmtDate(dados?.data || dataRef)}</strong> · Emitido para conferência de caixa</div>
+        </div>
+
+        <!-- 3 CARDS DE TOTAIS EM DESTAQUE -->
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:14px; margin-bottom:20px">
+          <div style="border:1px solid #fde68a; border-radius:8px; padding:12px 16px; background:#fffbeb">
+            <span style="font-size:11px; text-transform:uppercase; color:#92400e; font-weight:700; letter-spacing:0.4px">Numerário (PGNUM)</span>
+            <div style="font-size:20px; font-weight:800; color:#92400e; margin-top:4px">${fmtMoney(totais.pgnum)}</div>
+          </div>
+          <div style="border:1px solid #bae6fd; border-radius:8px; padding:12px 16px; background:#f0f9ff">
+            <span style="font-size:11px; text-transform:uppercase; color:#0369a1; font-weight:700; letter-spacing:0.4px">Cartão / Transferência (PGTR)</span>
+            <div style="font-size:20px; font-weight:800; color:#0369a1; margin-top:4px">${fmtMoney(totais.pgtr)}</div>
+          </div>
+          <div style="border:1px solid #bbf7d0; border-radius:8px; padding:12px 16px; background:#f0fdf4">
+            <span style="font-size:11px; text-transform:uppercase; color:#166534; font-weight:700; letter-spacing:0.4px">Total Recebido no Dia</span>
+            <div style="font-size:22px; font-weight:800; color:#15803d; margin-top:4px">${fmtMoney(totais.geral)}</div>
+          </div>
+        </div>
+
+        <!-- TABELA FORMATADA E ALINHADA COM O PDF -->
+        <div class="table-wrap" style="box-shadow:none; border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden; margin-bottom:16px">
+          <table style="width:100%; border-collapse:collapse; font-size:13px">
+            <thead>
+              <tr style="background:#f8fafc; border-bottom:1px solid var(--border)">
+                <th style="padding:10px 12px; text-align:left; font-weight:700">Espaço / Posto</th>
+                <th style="padding:10px 12px; text-align:left; font-weight:700">Série</th>
+                <th style="padding:10px 12px; text-align:right; font-weight:700">Numerário (PGNUM)</th>
+                <th style="padding:10px 12px; text-align:right; font-weight:700">Cartão / Transf. (PGTR)</th>
+                <th style="padding:10px 12px; text-align:right; font-weight:700">Total do Espaço</th>
               </tr>
-            `).join('') : `<tr><td colspan="5" class="muted" style="text-align:center">Nenhum espaço registado.</td></tr>`}
-          </tbody>
-          <tfoot>
-            <tr style="background:var(--surface-hover); font-weight:700">
-              <td>TOTAIS DO DIA</td>
-              <td>—</td>
-              <td style="text-align:right; color:#92400e">${fmtMoney(totais.pgnum)}</td>
-              <td style="text-align:right; color:#0369a1">${fmtMoney(totais.pgtr)}</td>
-              <td style="text-align:right; font-size:1.05em; color:var(--accent-dark)">${fmtMoney(totais.geral)}</td>
-            </tr>
-          </tfoot>
-        </table>
+            </thead>
+            <tbody>
+              ${espacos.length ? espacos.map(e => `
+                <tr style="border-bottom:1px solid var(--border)">
+                  <td style="padding:10px 12px; font-weight:600" class="cell-primary">${esc(e.nome)}</td>
+                  <td style="padding:10px 12px"><span class="badge" style="background:#f1f5f9; color:#475569">${esc(e.serie || 'Padrão')}</span></td>
+                  <td style="padding:10px 12px; text-align:right; font-weight:500; font-variant-numeric:tabular-nums">${fmtMoney(e.pgnum)}</td>
+                  <td style="padding:10px 12px; text-align:right; font-weight:500; font-variant-numeric:tabular-nums">${fmtMoney(e.pgtr)}</td>
+                  <td style="padding:10px 12px; text-align:right; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums">${fmtMoney(e.total)}</td>
+                </tr>
+              `).join('') : `<tr><td colspan="5" class="muted" style="text-align:center; padding:16px">Nenhum recebimento registado nesta data.</td></tr>`}
+            </tbody>
+            <tfoot>
+              <tr style="background:#f8fafc; font-weight:700; border-top:2px solid var(--border)">
+                <td style="padding:12px; text-transform:uppercase; font-size:12px">TOTAIS DO DIA (${totais.quantidade} recebimentos)</td>
+                <td style="padding:12px">—</td>
+                <td style="padding:12px; text-align:right; color:#92400e; font-variant-numeric:tabular-nums">${fmtMoney(totais.pgnum)}</td>
+                <td style="padding:12px; text-align:right; color:#0369a1; font-variant-numeric:tabular-nums">${fmtMoney(totais.pgtr)}</td>
+                <td style="padding:12px; text-align:right; font-size:1.1em; color:#15803d; font-variant-numeric:tabular-nums">${fmtMoney(totais.geral)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <p class="muted" style="margin:10px 0 20px; font-size:12px">
+          * Total de ${totais.quantidade} pagamento(s) registado(s). Os valores excluem pagamentos anulados.
+        </p>
+
+        <!-- ASSINATURAS DO FECHO DE CAIXA -->
+        <div style="display:flex; justify-content:space-between; margin-top:24px; gap:40px; font-size:12px; color:var(--muted)">
+          <div style="flex:1; text-align:center">
+            <div style="border-top:1px dashed var(--border); margin-bottom:6px; height:24px"></div>
+            <span>Responsável de Caixa / Receção</span>
+          </div>
+          <div style="flex:1; text-align:center">
+            <div style="border-top:1px dashed var(--border); margin-bottom:6px; height:24px"></div>
+            <span>Direção / Administração</span>
+          </div>
+        </div>
       </div>
-      <p class="muted" style="margin-top:12px; font-size:12.5px">
-        * Total de ${totais.quantidade} pagamento(s) recebido(s) nesta data. Os valores excluem pagamentos anulados.
-      </p>
-      <div class="form-actions">
+
+      <div class="form-actions" style="margin-top:16px; display:flex; justify-content:flex-end; gap:10px">
         <button type="button" class="btn btn-ghost" onclick="closeModal()">Fechar</button>
+        <button type="button" class="btn btn-accent" onclick="exportarFolhaCaixaPdf('${dados?.data || dataRef}')">
+          <span class="icon">🖨️</span> Imprimir / Exportar PDF
+        </button>
       </div>
-    `);
+    `, { maxWidth: '880px', width: 'min(880px, 96vw)' });
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -4351,30 +4693,33 @@ async function carregarEsperaTeoricaPratica() {
 
 async function carregarInscricoesEspaco() {
   const box = document.getElementById('inscricoesEspacoBox');
+  if (!box) return;
   try {
     const { porEspaco } = await api('GET', '/api/relatorios/inscricoes-espaco');
-    const anoAtual = new Date().getFullYear();
+    const anoFiltro = (state.estatisticasFiltros?.modo === 'anoCivil' && state.estatisticasFiltros?.ano)
+      ? state.estatisticasFiltros.ano
+      : new Date().getFullYear();
     box.innerHTML = porEspaco.length ? porEspaco.map(e => {
-      const porMesAno = e.porMes.filter(m => m.mes.startsWith(String(anoAtual)));
+      const porMesAno = e.porMes.filter(m => m.mes.startsWith(String(anoFiltro)));
       return `
-        <div style="margin-bottom:18px">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
-            <strong>${esc(e.espacoNome)}</strong>
-            <span class="muted">${e.totalAlunos} inscrições no total</span>
+        <div style="margin-bottom:20px; border:1px solid var(--border); border-radius:var(--radius-sm); padding:14px; background:var(--surface)">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+            <strong style="font-size:14px">${esc(e.espacoNome)}</strong>
+            <span class="badge" style="background:#f1f5f9; color:#475569">${e.totalAlunos} inscrições no total</span>
           </div>
-          <div class="table-wrap" style="box-shadow:none; margin-bottom:8px">
+          <div class="table-wrap" style="box-shadow:none; border:1px solid var(--border); border-radius:var(--radius-sm); margin-bottom:10px">
             <table>
-              <thead><tr><th>Mês (${anoAtual})</th><th>Inscrições</th></tr></thead>
+              <thead><tr style="background:var(--surface-2)"><th style="padding:8px 12px">Mês (${anoFiltro})</th><th style="padding:8px 12px; text-align:right">Inscrições</th></tr></thead>
               <tbody>
-                ${porMesAno.length ? porMesAno.map(m => `<tr><td>${fmtMesLabel(m.mes)}</td><td>${m.total}</td></tr>`).join('') : `<tr><td colspan="2" class="muted">Sem inscrições este ano.</td></tr>`}
+                ${porMesAno.length ? porMesAno.map(m => `<tr><td style="padding:8px 12px">${fmtMesLabel(m.mes)}</td><td style="padding:8px 12px; text-align:right; font-weight:600">${m.total}</td></tr>`).join('') : `<tr><td colspan="2" class="muted" style="text-align:center; padding:8px 12px">Sem inscrições em ${anoFiltro}.</td></tr>`}
               </tbody>
             </table>
           </div>
-          <div class="table-wrap" style="box-shadow:none">
+          <div class="table-wrap" style="box-shadow:none; border:1px solid var(--border); border-radius:var(--radius-sm)">
             <table>
-              <thead><tr><th>Ano</th><th>Inscrições</th></tr></thead>
+              <thead><tr style="background:var(--surface-2)"><th style="padding:8px 12px">Ano</th><th style="padding:8px 12px; text-align:right">Total de Inscrições</th></tr></thead>
               <tbody>
-                ${e.porAno.length ? e.porAno.map(a => `<tr><td>${esc(a.ano)}</td><td>${a.total}</td></tr>`).join('') : `<tr><td colspan="2" class="muted">Sem dados.</td></tr>`}
+                ${e.porAno.length ? e.porAno.map(a => `<tr><td style="padding:8px 12px" class="cell-primary">${esc(a.ano)}</td><td style="padding:8px 12px; text-align:right; font-weight:600">${a.total}</td></tr>`).join('') : `<tr><td colspan="2" class="muted" style="text-align:center; padding:8px 12px">Sem dados.</td></tr>`}
               </tbody>
             </table>
           </div>
@@ -4388,31 +4733,34 @@ async function carregarInscricoesEspaco() {
 
 async function carregarFluxoCaixa() {
   const box = document.getElementById('fluxoCaixaBox');
+  if (!box) return;
   try {
     const { global, porEspaco } = await api('GET', '/api/relatorios/fluxo-caixa');
-    const anoAtual = new Date().getFullYear();
+    const anoFiltro = (state.estatisticasFiltros?.modo === 'anoCivil' && state.estatisticasFiltros?.ano)
+      ? state.estatisticasFiltros.ano
+      : new Date().getFullYear();
 
     function blocoHtml(titulo, dados) {
-      const porMesAno = dados.porMes.filter(m => m.chave.startsWith(String(anoAtual)));
+      const porMesAno = dados.porMes.filter(m => m.chave.startsWith(String(anoFiltro)));
       return `
-        <div style="margin-bottom:18px">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
-            <strong>${esc(titulo)}</strong>
-            <span class="muted">Total geral: ${fmtMoney(dados.total)}</span>
+        <div style="margin-bottom:20px; border:1px solid var(--border); border-radius:var(--radius-sm); padding:14px; background:var(--surface)">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+            <strong style="font-size:14px">${esc(titulo)}</strong>
+            <span class="badge" style="background:#f0fdf4; color:#166534; font-weight:700">Total: ${fmtMoney(dados.total)}</span>
           </div>
-          <div class="table-wrap" style="box-shadow:none; margin-bottom:8px">
+          <div class="table-wrap" style="box-shadow:none; border:1px solid var(--border); border-radius:var(--radius-sm); margin-bottom:10px">
             <table>
-              <thead><tr><th>Mês (${anoAtual})</th><th>Valor recebido</th></tr></thead>
+              <thead><tr style="background:var(--surface-2)"><th style="padding:8px 12px">Mês (${anoFiltro})</th><th style="padding:8px 12px; text-align:right">Valor Recebido</th></tr></thead>
               <tbody>
-                ${porMesAno.length ? porMesAno.map(m => `<tr><td>${fmtMesLabel(m.chave)}</td><td>${fmtMoney(m.total)}</td></tr>`).join('') : `<tr><td colspan="2" class="muted">Sem pagamentos este ano.</td></tr>`}
+                ${porMesAno.length ? porMesAno.map(m => `<tr><td style="padding:8px 12px">${fmtMesLabel(m.chave)}</td><td style="padding:8px 12px; text-align:right; font-weight:600; font-variant-numeric:tabular-nums">${fmtMoney(m.total)}</td></tr>`).join('') : `<tr><td colspan="2" class="muted" style="text-align:center; padding:8px 12px">Sem pagamentos em ${anoFiltro}.</td></tr>`}
               </tbody>
             </table>
           </div>
-          <div class="table-wrap" style="box-shadow:none">
+          <div class="table-wrap" style="box-shadow:none; border:1px solid var(--border); border-radius:var(--radius-sm)">
             <table>
-              <thead><tr><th>Ano</th><th>Valor recebido</th></tr></thead>
+              <thead><tr style="background:var(--surface-2)"><th style="padding:8px 12px">Ano</th><th style="padding:8px 12px; text-align:right">Total Recebido</th></tr></thead>
               <tbody>
-                ${dados.porAno.length ? dados.porAno.map(a => `<tr><td>${esc(a.chave)}</td><td>${fmtMoney(a.total)}</td></tr>`).join('') : `<tr><td colspan="2" class="muted">Sem dados.</td></tr>`}
+                ${dados.porAno.length ? dados.porAno.map(a => `<tr><td style="padding:8px 12px" class="cell-primary">${esc(a.chave)}</td><td style="padding:8px 12px; text-align:right; font-weight:600; font-variant-numeric:tabular-nums">${fmtMoney(a.total)}</td></tr>`).join('') : `<tr><td colspan="2" class="muted" style="text-align:center; padding:8px 12px">Sem dados.</td></tr>`}
               </tbody>
             </table>
           </div>
@@ -5820,13 +6168,28 @@ async function deleteItem(collection, id, label) {
 }
 
 /* ---------------- Modal ---------------- */
-function openModal(title, bodyHtml) {
+function openModal(title, bodyHtml, options = {}) {
   document.getElementById('modalTitle').textContent = title;
   document.getElementById('modalBody').innerHTML = bodyHtml;
+  const modalEl = document.querySelector('#modalBackdrop .modal');
+  if (modalEl) {
+    if (options.maxWidth) {
+      modalEl.style.maxWidth = options.maxWidth;
+      modalEl.style.width = options.width || '100%';
+    } else {
+      modalEl.style.maxWidth = '';
+      modalEl.style.width = '';
+    }
+  }
   document.getElementById('modalBackdrop').classList.add('open');
 }
 function closeModal() {
   document.getElementById('modalBackdrop').classList.remove('open');
+  const modalEl = document.querySelector('#modalBackdrop .modal');
+  if (modalEl) {
+    modalEl.style.maxWidth = '';
+    modalEl.style.width = '';
+  }
 }
 document.getElementById('modalClose').addEventListener('click', closeModal);
 document.getElementById('modalBackdrop').addEventListener('click', (e) => {
