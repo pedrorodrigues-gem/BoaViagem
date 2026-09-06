@@ -14,7 +14,7 @@
     pagamentos: () => window.fetchCollectionAll('/api/pagamentos', { limit: 500, maxPages: 30 }),
     contratos: () => window.fetchCollectionAll('/api/contratos', { limit: 500, maxPages: 30 }),
     preInscricoes: () => window.fetchCollectionAll('/api/preinscricoes', { limit: 500, maxPages: 30 }),
-    examesMarcacoes: () => window.fetchCollectionAll('/api/examesMarcacoes', { limit: 500, maxPages: 30 }),
+    examesMarcacoes: () => api('GET', '/api/examesMarcacoes?limit=200'),
     espacos: () => api('GET', '/api/espacos'),
     produtos: () => api('GET', '/api/produtos'),
     escola: () => api('GET', '/api/escola'),
@@ -33,7 +33,7 @@
     contratos: ['contratos', 'alunos', 'produtos', 'espacos', 'config'],
     config: ['espacos', 'produtos', 'config'],
     preinscricoes: ['preInscricoes', 'espacos'],
-    exames: ['examesMarcacoes', 'alunos'],
+    exames: ['examesMarcacoes'],
     estatisticas: []
   };
 
