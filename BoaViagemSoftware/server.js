@@ -2618,10 +2618,10 @@ app.get('/api/relatorios/fluxo-caixa', async (req, res) => {
       };
     });
 
-    res.json({ global, porEspaco });
+    ok(res, { global, porEspaco });
   } catch (err) {
     console.error('Erro ao gerar relatório de fluxo de caixa:', err);
-    res.status(500).json({ error: 'Erro ao gerar relatório de fluxo de caixa.' });
+    res.status(500).json({ success: false, error: 'Erro ao gerar relatório de fluxo de caixa.' });
   }
 });
 
