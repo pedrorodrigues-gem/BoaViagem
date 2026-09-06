@@ -112,3 +112,54 @@ test('Normalização de acentos e pesquisa global insensível a diacríticos', (
   const aulaTipo = normalizarTexto('Teórica');
   assert.strictEqual(aulaTipo.includes(termoPesquisa), true);
 });
+
+test('Sanitização de anos de comparação impede injeção de NaN no SQL', () => {
+  function sanitizarAnosParaComparacao(anosDisponiveisRaw, anosComparacaoParam) {
+    const anosDisponiveis = (anosDisponiveisRaw || [])
+      .map(r => Number(r.ano))
+      .filter(a => Number.isInteger(a) && a >= 1990 && a <= 2100)
+      .sort((a, b) => a - b);
+    const currYear = 2026;
+    if (!anosDisponiveis.includes(currYear)) anosDisponiveis.push(currYear);
+    const anosComparacao = Math.max(2, Math.min(20, Number(anosComparacaoParam) || 5));
+    const anosParaComparar = anosDisponiveis.slice(-anosComparacao);
+    const validYears = anosParaComparar.filter(a => Number.isInteger(a) && a >= 1990 && a <= 2100);
+    return validYears.length ? validYears.join(',') : String(currYear);
+  }
+
+  // Caso 1: Array com dados corrompidos contendo null e NaN
+  const rawCorrompido = [{ ano: null }, { ano: 'invalid' }, { ano: 2024 }, { ano: 2025 }];
+  const res1 = sanitizarAnosParaComparacao(rawCorrompido, 5);
+  assert.strictEqual(res1, '2024,2025,2026');
+  assert.strictEqual(res1.includes('NaN'), false);
+
+  // Caso 2: Array vazio
+  const res2 = sanitizarAnosParaComparacao([], 5);
+  assert.strictEqual(res2, '2026');
+
+  // Caso 3: Parâmetro malicioso/inválido
+  const res3 = sanitizarAnosParaComparacao([{ ano: 2023 }], 'abc');
+  assert.strictEqual(res3, '2023,2026');
+});
+
+test('Paginação de exames devolve páginas corretas e não excede limite', () => {
+  const dados = Array.from({ length: 15 }, (_, i) => ({ id: i + 1, data: `2026-03-${String(i + 1).padStart(2, '0')}` }));
+  
+  function paginarExames(lista, reqQuery) {
+    const limit = Math.max(1, Math.min(500, Number(reqQuery.limit) || 200));
+    const offset = Math.max(0, Number(reqQuery.offset) || 0);
+    return lista.slice(offset, offset + limit);
+  }
+
+  const p1 = paginarExames(dados, { limit: 5, offset: 0 });
+  assert.strictEqual(p1.length, 5);
+  assert.strictEqual(p1[0].id, 1);
+
+  const p2 = paginarExames(dados, { limit: 5, offset: 10 });
+  assert.strictEqual(p2.length, 5);
+  assert.strictEqual(p2[0].id, 11);
+
+  const p3 = paginarExames(dados, { limit: 5, offset: 15 });
+  assert.strictEqual(p3.length, 0);
+});
+
