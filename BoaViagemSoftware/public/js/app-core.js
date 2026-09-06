@@ -22,7 +22,9 @@
     contaCorrenteAtual: null,
     preInscricoes: [],
     examesMarcacoes: [],
-    espacos: []
+    espacos: [],
+    relatorios: { dadosAtuais: null, mapaAtual: [], esperaAtual: [] },
+    estatisticas: null
   };
 
   var CATEGORIAS_CONTA = ['Diversos', 'Exames teóricos', 'Exames práticos', 'Lições práticas', 'Lições teóricas'];
@@ -455,20 +457,21 @@
 
   function render(view) {
     view = view || state.view;
-    var fn = {
+    var fns = {
       dashboard: renderDashboard,
-      calendario: renderCalendario,
-      aulas: renderAulas,
-      alunos: renderAlunos,
-      instrutores: renderInstrutores,
-      veiculos: renderVeiculos,
-      pagamentos: renderPagamentos,
-      contratos: renderContratos,
-      config: renderConfig,
-      preinscricoes: renderPreInscricoes,
-      exames: renderExamesMarcacoes,
-      estatisticas: renderEstatisticas
-    }[view];
+      calendario: window.renderCalendario || (typeof renderCalendario !== 'undefined' ? renderCalendario : null),
+      aulas: window.renderAulas || (typeof renderAulas !== 'undefined' ? renderAulas : null),
+      alunos: window.renderAlunos || (typeof renderAlunos !== 'undefined' ? renderAlunos : null),
+      instrutores: window.renderInstrutores || (typeof renderInstrutores !== 'undefined' ? renderInstrutores : null),
+      veiculos: window.renderVeiculos || (typeof renderVeiculos !== 'undefined' ? renderVeiculos : null),
+      pagamentos: window.renderPagamentos || (typeof renderPagamentos !== 'undefined' ? renderPagamentos : null),
+      contratos: window.renderContratos || (typeof renderContratos !== 'undefined' ? renderContratos : null),
+      config: window.renderConfig || (typeof renderConfig !== 'undefined' ? renderConfig : null),
+      preinscricoes: window.renderPreInscricoes || (typeof renderPreInscricoes !== 'undefined' ? renderPreInscricoes : null),
+      exames: window.renderExamesMarcacoes || (typeof renderExamesMarcacoes !== 'undefined' ? renderExamesMarcacoes : null),
+      estatisticas: window.renderEstatisticas || (typeof renderEstatisticas !== 'undefined' ? renderEstatisticas : null)
+    };
+    var fn = fns[view];
     if (fn) fn();
   }
 

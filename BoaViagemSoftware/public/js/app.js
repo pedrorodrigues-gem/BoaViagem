@@ -1633,14 +1633,16 @@ async function renderEstatisticas() {
     state.estatisticas = dados;
     montarFiltrosEstatisticasHTML(dados);
     montarEstatisticasHTML(dados);
-    carregarMapaGeral();
-    carregarEsperaTeoricaPratica();
-    carregarInscricoesEspaco();
-    carregarFluxoCaixa();
+    carregarMapaGeral().catch(() => {});
+    carregarEsperaTeoricaPratica().catch(() => {});
+    carregarInscricoesEspaco().catch(() => {});
+    carregarFluxoCaixa().catch(() => {});
   } catch (err) {
+    console.error('Erro ao carregar estatísticas:', err);
     document.getElementById('estatisticas-conteudo').innerHTML = emptyState('Erro ao carregar estatísticas', err.message);
   }
 }
+window.renderEstatisticas = renderEstatisticas;
  
 /* Barra de filtros: período (rolante/ano civil) + ano + nº de anos a comparar. */
 function montarFiltrosEstatisticasHTML(d) {
@@ -4029,8 +4031,10 @@ async function abrirFichaIndividualModal(alunoId) {
 
 async function carregarMapaGeral() {
   const box = document.getElementById('mapaGeralBox');
+  if (!box) return;
   try {
     const linhas = await api('GET', '/api/relatorios/geral');
+    state.relatorios = state.relatorios || {};
     state.relatorios.mapaAtual = linhas;
     box.innerHTML = `
       <div class="table-wrap" style="box-shadow:none">
@@ -4066,18 +4070,23 @@ async function carregarMapaGeral() {
 async function carregarEsperaTeoricaPratica() {
   const box = document.getElementById('esperaTeoricaPraticaBox');
   const alertBox = document.getElementById('alertasEsperaBox');
+  if (!box && !alertBox) return;
   try {
     const lista = await api('GET', '/api/relatorios/espera-teorica-pratica');
+    state.relatorios = state.relatorios || {};
     state.relatorios.esperaAtual = lista;
 
-    const emAlerta = lista.filter(r => r.diasEspera > 60);
-    alertBox.innerHTML = emAlerta.length ? `
-      <div class="inline-alert inline-alert-warning" style="margin:12px">
-        ${emAlerta.map(r => `⚠ ${esc(r.nome)} (${esc(r.espacoNome)}) — ${r.diasEspera} dias de espera desde a aprovação teórica em ${fmtDate(r.dataExameAprovado)}.`).join('<br>')}
-      </div>
-    ` : `<div class="muted" style="padding:12px">Sem casos acima de 60 dias de espera.</div>`;
+    const emAlerta = (lista || []).filter(r => r.diasEspera > 60);
+    if (alertBox) {
+      alertBox.innerHTML = emAlerta.length ? `
+        <div class="inline-alert inline-alert-warning" style="margin:12px">
+          ${emAlerta.map(r => `⚠ ${esc(r.nome)} (${esc(r.espacoNome)}) — ${r.diasEspera} dias de espera desde a aprovação teórica em ${fmtDate(r.dataExameAprovado)}.`).join('<br>')}
+        </div>
+      ` : `<div class="muted" style="padding:12px">Sem casos acima de 60 dias de espera.</div>`;
+    }
 
-    box.innerHTML = lista.length ? `
+    if (box) {
+      box.innerHTML = (lista && lista.length) ? `
       <div class="table-wrap" style="box-shadow:none">
         <table>
           <thead><tr><th>Aluno</th><th>Espaço</th><th>Exame teórico aprovado</th><th>1.ª aula prática</th><th>Dias de espera</th></tr></thead>
