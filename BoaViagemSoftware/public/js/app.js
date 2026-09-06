@@ -593,7 +593,7 @@ function renderExamesMarcacoesTab() {
     <div class="panel">
       <div class="panel-head"><h3>Marcações de exames</h3></div>
       <form id="examesForm" class="form-grid">
-        <div class="form-field"><label>Aluno</label><select name="alunoId" required>${state.alunos.map(a => `<option value="${a.id}">${esc(a.nome)}</option>`).join('')}</select></div>
+        ${renderAlunoPickerHtml(null, { label: 'Aluno', required: true, hint: 'Podes escolher da lista ou escrever o nome' })}
         <div class="form-field"><label>Tipo</label><select name="tipo"><option>Teórico</option><option>Prático</option></select></div>
         <div class="form-field"><label>Data</label><input name="data" type="date" required value="${new Date().toISOString().slice(0, 10)}"></div>
         <div class="form-field"><label>Hora</label><input name="hora" type="time"></div>
@@ -622,7 +622,7 @@ function renderExamesMarcacoesTab() {
           <tbody>
             ${state.examesMarcacoes.map(m => `
               <tr>
-                <td>${esc(getAlunoNomePorId(m.alunoId))}</td>
+                <td>${esc(m.alunoNome || getAlunoNomePorId(m.alunoId) || '—')}</td>
                 <td>${esc(m.tipo || '—')}</td>
                 <td>${fmtDate(m.data)}</td>
                 <td>${esc(m.hora || '—')}</td>
@@ -647,6 +647,7 @@ function renderExamesMarcacoesTab() {
   `;
 
   const form = document.getElementById('examesForm');
+  if (form) bindAlunoPicker(form);
   function atualizarHoraFimExame() {
     const hora = form.querySelector('[name="hora"]')?.value;
     const duracao = form.querySelector('[name="duracao"]')?.value;
@@ -1131,6 +1132,65 @@ function renderAlunos() {
     ? `<div class="inline-alert inline-alert-info" style="margin-bottom:12px">A carregar todos os alunos em segundo plano — os resultados podem estar incompletos por instantes.</div>`
     : '';
 
+  const tableHtml = list.length ? `<table>
+    <thead><tr><th>Nº</th><th>Aluno</th><th>Categoria</th><th>Progresso</th><th>Estado</th><th>Documentos</th><th></th></tr></thead>
+    <tbody>
+      ${list.map(a => {
+        const tags = [
+          selosValidade(a.atestadoMedico?.dataValidade, 'Atestado médico'),
+          a.examePsicotecnico?.aplicavel ? selosValidade(a.examePsicotecnico?.dataValidade, 'Exame psicotécnico') : '',
+          selosValidade(a.processoIMT?.dataValidade, 'Processo IMT'), (a.cartasCategorias || []).map(c => selosValidade(c.dataValidade, `Carta ${c.categoria}`))
+        ].filter(Boolean).join(' ');
+        return `
+        <tr>
+          <td class="cell-primary">#${a.numeroAluno ?? a.id}</td>
+          <td>
+            <div style="display:flex; align-items:center; gap:10px">
+              ${avatarHtml(a.nome, a.foto, 36)}
+              <div>
+                <div class="cell-primary">${esc(a.nome)}</div>
+                <div class="cell-sub">${esc(a.email || '')} ${a.telefone ? '· ' + esc(a.telefone) : ''} ${a.nif ? '· NIF ' + esc(a.nif) : ''}</div>
+              </div>
+            </div>
+          </td>
+          <td>${esc(a.categoria || '—')}</td>
+          <td style="min-width:140px">
+            <div class="cell-sub" style="margin-bottom:4px">${getAlunoContagens(a).aulasTeoricas} teóricas · ${getAlunoContagens(a).aulasPraticas} práticas</div>
+            <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, ((getAlunoContagens(a).aulasPraticas||0)/28)*100)}%"></div></div>
+          </td>
+          <td><span class="${badgeClass(a.estado)}">${esc(a.estado || '—')}</span></td>
+          <td>${tags || '<span class="muted" style="font-size:12px">Em dia</span>'}</td>
+          <td>
+            <div class="row-actions">
+              <button class="btn btn-ghost btn-sm" onclick="abrirContaCorrente(${a.id})">Conta Corrente</button>
+              <button class="btn btn-ghost btn-sm" onclick="abrirHistoricoAulasModal(${a.id})">Histórico Aulas</button>
+              <button class="btn btn-ghost btn-sm" onclick="abrirFichaIndividualModal(${a.id})">Ficha Individual</button>
+              <button class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(${a.id})">Preencher PDF</button>
+              <button class="btn btn-ghost btn-sm" onclick="openAlunoForm(${a.id})">Editar</button>
+              <button class="btn btn-ghost btn-sm" onclick="abrirDocumentosAlunoModal(${a.id})">Documentos</button>
+              <button class="btn btn-danger-ghost btn-sm" onclick="deleteItem('alunos', ${a.id}, '${escJs(a.nome)}')">Remover</button>
+            </div>
+          </td>
+        </tr>
+      `;}).join('')}
+    </tbody>
+  </table>` : emptyState('Nenhum aluno encontrado', 'Ajusta a pesquisa ou adiciona um novo aluno.');
+
+  const tableWrap = document.getElementById('alunosTableWrap');
+  const searchInput = document.getElementById('alunosSearchInput');
+
+  if (tableWrap && searchInput) {
+    tableWrap.innerHTML = tableHtml;
+    const chips = el.querySelectorAll('.filter-row .chip');
+    chips.forEach(c => {
+      c.classList.toggle('active', c.textContent.trim() === filtro);
+    });
+    if (document.activeElement !== searchInput && searchInput.value !== (state.search.alunos || '')) {
+      searchInput.value = state.search.alunos || '';
+    }
+    return;
+  }
+
   el.innerHTML = `
     ${avisoCarregamento}
     <div class="toolbar">
@@ -1140,50 +1200,8 @@ function renderAlunos() {
         ${estados.map(e => `<button class="chip ${filtro === e ? 'active' : ''}" onclick="mudarFiltroAlunos('${e}')">${e}</button>`).join('')}
       </div>
     </div>
-    <div class="table-wrap">
-      ${list.length ? `<table>
-        <thead><tr><th>Nº</th><th>Aluno</th><th>Categoria</th><th>Progresso</th><th>Estado</th><th>Documentos</th><th></th></tr></thead>
-        <tbody>
-          ${list.map(a => {
-            const tags = [
-              selosValidade(a.atestadoMedico?.dataValidade, 'Atestado médico'),
-              a.examePsicotecnico?.aplicavel ? selosValidade(a.examePsicotecnico?.dataValidade, 'Exame psicotécnico') : '',
-              selosValidade(a.processoIMT?.dataValidade, 'Processo IMT'), (a.cartasCategorias || []).map(c => selosValidade(c.dataValidade, `Carta ${c.categoria}`))
-            ].filter(Boolean).join(' ');
-            return `
-            <tr>
-              <td class="cell-primary">#${a.numeroAluno ?? a.id}</td>
-              <td>
-                <div style="display:flex; align-items:center; gap:10px">
-                  ${avatarHtml(a.nome, a.foto, 36)}
-                  <div>
-                    <div class="cell-primary">${esc(a.nome)}</div>
-                    <div class="cell-sub">${esc(a.email || '')} ${a.telefone ? '· ' + esc(a.telefone) : ''} ${a.nif ? '· NIF ' + esc(a.nif) : ''}</div>
-                  </div>
-                </div>
-              </td>
-              <td>${esc(a.categoria || '—')}</td>
-              <td style="min-width:140px">
-                <div class="cell-sub" style="margin-bottom:4px">${getAlunoContagens(a).aulasTeoricas} teóricas · ${getAlunoContagens(a).aulasPraticas} práticas</div>
-                <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, ((getAlunoContagens(a).aulasPraticas||0)/28)*100)}%"></div></div>
-              </td>
-              <td><span class="${badgeClass(a.estado)}">${esc(a.estado || '—')}</span></td>
-              <td>${tags || '<span class="muted" style="font-size:12px">Em dia</span>'}</td>
-              <td>
-                <div class="row-actions">
-                  <button class="btn btn-ghost btn-sm" onclick="abrirContaCorrente(${a.id})">Conta Corrente</button>
-                  <button class="btn btn-ghost btn-sm" onclick="abrirHistoricoAulasModal(${a.id})">Histórico Aulas</button>
-                  <button class="btn btn-ghost btn-sm" onclick="abrirFichaIndividualModal(${a.id})">Ficha Individual</button>
-                  <button class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(${a.id})">Preencher PDF</button>
-                  <button class="btn btn-ghost btn-sm" onclick="openAlunoForm(${a.id})">Editar</button>
-                  <button class="btn btn-ghost btn-sm" onclick="abrirDocumentosAlunoModal(${a.id})">Documentos</button>
-                  <button class="btn btn-danger-ghost btn-sm" onclick="deleteItem('alunos', ${a.id}, '${escJs(a.nome)}')">Remover</button>
-                </div>
-              </td>
-            </tr>
-          `;}).join('')}
-        </tbody>
-      </table>` : emptyState('Nenhum aluno encontrado', 'Ajusta a pesquisa ou adiciona um novo aluno.')}
+    <div id="alunosTableWrap" class="table-wrap">
+      ${tableHtml}
     </div>
   `;
 }

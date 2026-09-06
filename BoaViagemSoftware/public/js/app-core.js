@@ -539,11 +539,29 @@
   var _searchDebounceTimers = {};
   function updateSearchAndRerender(inputEl, chave, renderFn) {
     if (_searchDebounceTimers[chave]) clearTimeout(_searchDebounceTimers[chave]);
-    var valor = inputEl.value;
+    var valor = inputEl ? inputEl.value : '';
+    state.search[chave] = valor;
     _searchDebounceTimers[chave] = setTimeout(function () {
-      state.search[chave] = valor;
+      var isFocused = inputEl && (document.activeElement === inputEl);
+      var start = inputEl ? inputEl.selectionStart : null;
+      var end = inputEl ? inputEl.selectionEnd : null;
+      var inputId = inputEl ? inputEl.id : null;
+
       renderFn();
-    }, 200);
+
+      if (isFocused) {
+        var restoredInput = inputId ? document.getElementById(inputId) : null;
+        if (!restoredInput && chave) {
+          restoredInput = document.querySelector('[oninput*="\'' + chave + '\'"]');
+        }
+        if (restoredInput) {
+          restoredInput.focus();
+          if (start !== null && end !== null && typeof restoredInput.setSelectionRange === 'function') {
+            try { restoredInput.setSelectionRange(start, end); } catch (e) {}
+          }
+        }
+      }
+    }, 300);
   }
 
   window.state = state;
