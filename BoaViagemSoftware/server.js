@@ -2755,16 +2755,70 @@ async function atualizarEstadosContaCorrente(req, alunoId) {
   }
 }
 
-app.get('/api/contaCorrente/:alunoId', (req, res) => {
-  const { tenant } = currentTenant(req);
-  const alunoId = Number(req.params.alunoId);
-  const aluno = tenant.alunos.find(a => a.id === alunoId);
-  if (!aluno) return notFound(res, 'Aluno não encontrado');
-  const itens = tenant.itensConta.filter(i => i.alunoId === alunoId);
-  const pagamentos = tenant.pagamentos.filter(p => p.alunoId === alunoId);
-  const resultado = calcularContaCorrente(itens, pagamentos);
-  const contratos = (tenant.contratos || []).filter(c => c.alunoId === alunoId);
-  ok(res, { aluno, contratos, ...resultado });
+app.get('/api/contaCorrente/:alunoId', async (req, res) => {
+  try {
+    const alunoId = Number(req.params.alunoId);
+    if (!alunoId) return badRequest(res, 'ID do aluno inválido');
+
+    let aluno = null;
+    const { tenant } = currentTenant(req);
+    if (tenant.alunos && tenant.alunos.length) {
+      aluno = tenant.alunos.find(a => a.id === alunoId);
+    }
+    if (!aluno) {
+      const alunoRes = await query('SELECT * FROM alunos WHERE id = @alunoId AND escola_id = @escolaId', { alunoId, escolaId: req.escolaId });
+      if (alunoRes.recordset[0]) {
+        aluno = nestAlunoExtras(dbRowToJs(alunoRes.recordset[0]));
+      }
+    }
+    if (!aluno) return notFound(res, 'Aluno não encontrado');
+
+    const [itensRes, pagamentosRes, contratosRes] = await Promise.all([
+      query('SELECT * FROM itens_conta WHERE aluno_id = @alunoId AND escola_id = @escolaId ORDER BY ordem, id', { alunoId, escolaId: req.escolaId }),
+      query('SELECT * FROM pagamentos WHERE aluno_id = @alunoId AND escola_id = @escolaId ORDER BY data, id', { alunoId, escolaId: req.escolaId }),
+      query('SELECT * FROM contratos WHERE aluno_id = @alunoId AND escola_id = @escolaId ORDER BY id DESC', { alunoId, escolaId: req.escolaId })
+    ]);
+
+    const itens = (itensRes.recordset || []).map(dbRowToJs);
+    const pagamentos = (pagamentosRes.recordset || []).map(p => {
+      const jsP = dbRowToJs(p);
+      if (jsP.faturacaoNumero) {
+        jsP.faturacao = {
+          tipo: jsP.faturacaoTipo,
+          serie: jsP.faturacaoSerie,
+          numero: jsP.faturacaoNumero
+        };
+      }
+      return jsP;
+    });
+
+    const contratos = (contratosRes.recordset || []).map(c => {
+      const jsC = dbRowToJs(c);
+      jsC.assinatura = jsC.assinaturaNomeDigitado ? {
+        nomeDigitado: jsC.assinaturaNomeDigitado,
+        dataHora: jsC.assinaturaDataHora,
+        imagemBase64: jsC.assinaturaImagem ? `data:image/png;base64,${jsC.assinaturaImagem}` : null
+      } : null;
+      jsC.assinaturaTutor = jsC.assinaturaTutorNomeDigitado ? {
+        nomeDigitado: jsC.assinaturaTutorNomeDigitado,
+        imagemBase64: jsC.assinaturaTutorImagem ? `data:image/png;base64,${jsC.assinaturaTutorImagem}` : null
+      } : null;
+      if (jsC.pdfAssinadoFilename) {
+        jsC.pdfAssinado = {
+          filename: jsC.pdfAssinadoFilename,
+          uploadedAt: jsC.pdfAssinadoUploadedAt,
+          size: jsC.pdfAssinadoTamanhoBytes
+        };
+      }
+      return jsC;
+    });
+
+    const resultado = calcularContaCorrente(itens, pagamentos);
+    ok(res, { aluno, contratos, ...resultado });
+  } catch (ex) {
+    console.error('Erro ao obter conta corrente:', ex);
+    res.status(500).json({ success: false, error: `Falha ao obter conta corrente: ${ex.message || ex}` });
+  }
 });
 
 /* ------------------------------------------------------------
@@ -2773,10 +2827,16 @@ app.get('/api/contaCorrente/:alunoId', (req, res) => {
    Todas as contagens de aulas por tipo/estado nesta secção usam os
    helpers isTipo / isEstadoConcluida definidos na secção 2. */
 
-app.get('/api/relatorios/aluno/:id', (req, res) => {
+app.get('/api/relatorios/aluno/:id', async (req, res) => {
   const { tenant } = currentTenant(req);
   const alunoId = Number(req.params.id);
-  const aluno = tenant.alunos.find(a => a.id === alunoId);
+  let aluno = (tenant.alunos || []).find(a => a.id === alunoId);
+  if (!aluno) {
+    const alunoRes = await query('SELECT * FROM alunos WHERE id = @alunoId AND escola_id = @escolaId', { alunoId, escolaId: req.escolaId });
+    if (alunoRes.recordset[0]) {
+      aluno = nestAlunoExtras(dbRowToJs(alunoRes.recordset[0]));
+    }
+  }
   if (!aluno) return notFound(res);
 
   const praticas = tenant.aulas
@@ -3110,11 +3170,17 @@ app.get('/api/relatorios/folha-caixa-diaria', async (req, res) => {
     const rows = result.recordset || [];
     const espacosMap = new Map();
 
-    const todosEspacosRes = await query('SELECT id, nome FROM espacos WHERE escola_id = @e ORDER BY nome', { e: req.escolaId });
+    const todosEspacosRes = await query('SELECT id, nome, serie FROM espacos WHERE escola_id = @e ORDER BY nome', { e: req.escolaId });
     for (const esp of (todosEspacosRes.recordset || [])) {
       espacosMap.set(esp.nome, {
+        id: esp.id,
+        nome: esp.nome,
+        serie: esp.serie || null,
         espacoId: esp.id,
         espacoNome: esp.nome,
+        pgnum: 0,
+        pgtr: 0,
+        total: 0,
         totalNumerario: 0,
         totalCartaoTransferencia: 0,
         totalGeral: 0,
@@ -3126,8 +3192,14 @@ app.get('/api/relatorios/folha-caixa-diaria', async (req, res) => {
       const espacoNome = r.espaco_nome;
       if (!espacosMap.has(espacoNome)) {
         espacosMap.set(espacoNome, {
+          id: r.espaco_id || null,
+          nome: espacoNome,
+          serie: null,
           espacoId: r.espaco_id || null,
           espacoNome,
+          pgnum: 0,
+          pgtr: 0,
+          total: 0,
           totalNumerario: 0,
           totalCartaoTransferencia: 0,
           totalGeral: 0,
@@ -3138,10 +3210,13 @@ app.get('/api/relatorios/folha-caixa-diaria', async (req, res) => {
       const val = Number(r.valor) || 0;
       const modo = String(r.modo_pagamento || 'PGNUM').toUpperCase();
       if (modo === 'PGTR') {
+        item.pgtr = +(item.pgtr + val).toFixed(2);
         item.totalCartaoTransferencia = +(item.totalCartaoTransferencia + val).toFixed(2);
       } else {
+        item.pgnum = +(item.pgnum + val).toFixed(2);
         item.totalNumerario = +(item.totalNumerario + val).toFixed(2);
       }
+      item.total = +(item.total + val).toFixed(2);
       item.totalGeral = +(item.totalGeral + val).toFixed(2);
       item.pagamentos.push({
         id: r.id,
@@ -3156,14 +3231,23 @@ app.get('/api/relatorios/folha-caixa-diaria', async (req, res) => {
     }
 
     const espacos = Array.from(espacosMap.values());
-    const totalGeralNumerario = +espacos.reduce((s, e) => s + e.totalNumerario, 0).toFixed(2);
-    const totalGeralCartaoTransferencia = +espacos.reduce((s, e) => s + e.totalCartaoTransferencia, 0).toFixed(2);
+    const totalGeralNumerario = +espacos.reduce((s, e) => s + e.pgnum, 0).toFixed(2);
+    const totalGeralCartaoTransferencia = +espacos.reduce((s, e) => s + e.pgtr, 0).toFixed(2);
     const totalGeralDia = +(totalGeralNumerario + totalGeralCartaoTransferencia).toFixed(2);
+    const totalQuantidade = espacos.reduce((s, e) => s + e.pagamentos.length, 0);
+
+    const totais = {
+      pgnum: totalGeralNumerario,
+      pgtr: totalGeralCartaoTransferencia,
+      geral: totalGeralDia,
+      quantidade: totalQuantidade
+    };
 
     ok(res, {
       data,
       escolaNome: req.escola?.nome || 'Escola de Condução',
       espacos,
+      totais,
       totalGeralNumerario,
       totalGeralCartaoTransferencia,
       totalGeralDia
