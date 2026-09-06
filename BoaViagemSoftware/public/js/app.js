@@ -4,7 +4,7 @@
    1) PESQUISA GLOBAL — caixa de pesquisa que indexa alunos, instrutores, veículos,
       contratos, pagamentos, pré-inscrições, turmas e páginas fixas, e navega para lá.
    ==================================================================================== */
- 
+
 function normalizarTexto(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
@@ -12,29 +12,29 @@ function normalizarTexto(s) {
 function mesmoDia(dataCampo, dataISO) {
   return String(dataCampo || '').slice(0, 10) === dataISO;
 }
- 
+
 /* Constrói o índice de tudo o que é pesquisável. Cada item tem uma `acao()` que faz a
    navegação — para alunos/instrutores/veículos abre logo a ficha, para os restantes
    muda apenas de vista (podes especializar mais tarde se quiseres, ex: abrir modal
    específico do pagamento). */
 function construirIndiceGlobal() {
   const idx = [];
- 
+
   (state.alunos || []).forEach(a => idx.push({
     tipo: 'Aluno', label: a.nome, sub: `Nº ${a.numeroAluno ?? a.id} · ${a.categoria || '—'} · ${a.estado || ''}`,
     acao: () => { switchView('alunos'); setTimeout(() => openAlunoForm(a.id), 60); }
   }));
- 
+
   (state.instrutores || []).forEach(i => idx.push({
     tipo: 'Instrutor', label: i.nome, sub: i.cargo || 'Instrutor',
     acao: () => { switchView('instrutores'); setTimeout(() => openInstrutorForm(i.id), 60); }
   }));
- 
+
   (state.veiculos || []).forEach(v => idx.push({
     tipo: 'Veículo', label: v.matricula, sub: `${v.marca || ''} ${v.modelo || ''}`.trim() || '—',
     acao: () => { switchView('veiculos'); setTimeout(() => openVeiculoForm(v.id), 60); }
   }));
- 
+
   (state.contratos || []).forEach(c => {
     const al = findAluno(c.alunoId);
     idx.push({
@@ -42,7 +42,7 @@ function construirIndiceGlobal() {
       acao: () => switchView('contratos')
     });
   });
- 
+
   (state.pagamentos || []).forEach(p => {
     const al = findAluno(p.alunoId);
     idx.push({
@@ -50,17 +50,17 @@ function construirIndiceGlobal() {
       acao: () => switchView('pagamentos')
     });
   });
- 
+
   (state.preInscricoes || []).forEach(p => idx.push({
     tipo: 'Pré-inscrição', label: p.nome, sub: `${p.email || ''} · ${p.categoria || ''}`,
     acao: () => switchView('preinscricoes')
   }));
- 
+
   (state.turmasTeoricas || []).forEach(t => idx.push({
     tipo: 'Turma teórica', label: t.tema, sub: `${fmtDate(t.data)} · ${t.horaInicio || ''}`,
     acao: () => { switchView('calendario'); setTimeout(() => abrirTurmaTeoricaDetalhe(t.id), 60); }
   }));
- 
+
   const paginas = [
     { label: 'Dashboard', view: 'dashboard' }, { label: 'Calendário', view: 'calendario' },
     { label: 'Alunos', view: 'alunos' }, { label: 'Instrutores', view: 'instrutores' },
@@ -70,10 +70,10 @@ function construirIndiceGlobal() {
     { label: 'Estatísticas', view: 'estatisticas' }, { label: 'Configurações', view: 'config' }
   ];
   paginas.forEach(p => idx.push({ tipo: 'Página', label: p.label, sub: 'Ir para a secção', acao: () => switchView(p.view) }));
- 
+
   return idx;
 }
- 
+
 function pesquisarGlobal(query) {
   const q = normalizarTexto(query).trim();
   if (!q) return [];
@@ -93,13 +93,13 @@ function pesquisarGlobal(query) {
     .slice(0, 20)
     .map(r => r.item);
 }
- 
+
 /* Injeta a caixa de pesquisa num contentor existente (ex: <div id="global-search-container">
    no cabeçalho/topbar). Chama isto UMA VEZ no init(), depois de renderNavItems(). */
 function renderGlobalSearchBox(containerId) {
   const el = document.getElementById(containerId);
   if (!el) return;
- 
+
   el.innerHTML = `
     <div style="position:relative; width:100%; max-width:360px">
       <input id="globalSearchInput" placeholder="Pesquisar em todo o site... (nome, matrícula, tema...)"
@@ -111,14 +111,14 @@ function renderGlobalSearchBox(containerId) {
         max-height:360px; overflow-y:auto; display:none; z-index:1000"></div>
     </div>
   `;
- 
+
   const input = document.getElementById('globalSearchInput');
   const results = document.getElementById('globalSearchResults');
   let timer = null;
   let itensAtuais = [];
- 
+
   function esconder() { results.style.display = 'none'; results.innerHTML = ''; }
- 
+
   async function mostrarResultados() {
     const queryStr = input.value.trim();
     if (!queryStr) { esconder(); return; }
@@ -165,15 +165,15 @@ function renderGlobalSearchBox(containerId) {
       });
     });
   }
- 
+
   input.addEventListener('input', () => {
     clearTimeout(timer);
     timer = setTimeout(mostrarResultados, 250);
   });
   input.addEventListener('focus', () => { if (input.value.trim()) mostrarResultados(); });
- 
+
   document.addEventListener('click', (e) => { if (!el.contains(e.target)) esconder(); });
- 
+
   // Atalho "/" para focar a pesquisa a partir de qualquer sítio (exceto dentro de campos de texto)
   document.addEventListener('keydown', (e) => {
     const alvoEIntput = ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName);
@@ -274,7 +274,7 @@ function exportarFolhaAssinaturasTurma(turmaId) {
   const alunosBase = (t.inscritos || []).length
     ? (t.inscritos || []).map(id => findAluno(id)).filter(Boolean)
     : getAlunosAtivos();
- 
+
   const linhas = alunosBase.map(a => `
     <tr>
       <td style="width:34px; text-align:center; font-size:16px">☐</td>
@@ -283,7 +283,7 @@ function exportarFolhaAssinaturasTurma(turmaId) {
       <td style="min-width:220px; height:34px"></td>
     </tr>
   `).join('');
- 
+
   const html = `
     <div class="print-doc">
       <div class="print-head">
@@ -369,9 +369,9 @@ async function renderCalendario() {
           <div class="cal-daynum">${dia}</div>
           <div class="cal-events">
             ${evsDia.slice(0, 3).map(e => {
-              const className = e.origem === 'preInscricao' ? 'cal-event-preinscricao' : (e.tipo === 'Teórica' ? 'cal-event-teorica' : 'cal-event-pratica');
-              return `<div class="cal-event ${className}" title="${esc(e.titulo)}"><span class="cal-event-time">${esc(e.hora || '')}</span> ${esc(e.titulo)}</div>`;
-            }).join('')}
+        const className = e.origem === 'preInscricao' ? 'cal-event-preinscricao' : (e.tipo === 'Teórica' ? 'cal-event-teorica' : 'cal-event-pratica');
+        return `<div class="cal-event ${className}" title="${esc(e.titulo)}"><span class="cal-event-time">${esc(e.hora || '')}</span> ${esc(e.titulo)}</div>`;
+      }).join('')}
             ${evsDia.length > 3 ? `<div class="cal-event-more">+${evsDia.length - 3} mais</div>` : ''}
           </div>
         </div>`;
@@ -597,8 +597,8 @@ function renderExamesMarcacoesTab() {
         <div class="form-field"><label>Tipo</label><select name="tipo"><option>Teórico</option><option>Prático</option></select></div>
         <div class="form-field"><label>Data</label><input name="data" type="date" required value="${new Date().toISOString().slice(0, 10)}"></div>
         <div class="form-field"><label>Hora</label><input name="hora" type="time"></div>
-<div class="form-field"><label>Duração (min)</label><input name="duracao" id="exameDuracaoInput" type="number" min="10" value="60"></div>
-<div class="form-field"><label>Hora fim (calculada)</label><input type="time" id="exameHoraFimCalc" readonly style="background:var(--bg-subtle,#f3f4f6); font-weight:600" tabindex="-1"></div>
+        <div class="form-field"><label>Duração (min)</label><input name="duracao" id="exameDuracaoInput" type="number" min="10" value="60"></div>
+        <div class="form-field"><label>Hora fim (calculada)</label><input type="time" id="exameHoraFimCalc" readonly style="background:var(--bg-subtle,#f3f4f6); font-weight:600" tabindex="-1"></div>
         <div class="form-field"><label>Local / Sala</label><input name="local" placeholder="Ex: Sala 2"></div>
         <div class="form-field"><label>Estado</label><select name="estado"><option>Marcado</option><option>Realizado</option><option>Cancelado</option></select></div>
         <div class="form-field">
@@ -830,7 +830,7 @@ function renderPreInscricoes() {
       };
       try {
         await api('POST', '/api/preinscricoes', payload);
-await refreshCollections(['preInscricoes']);
+        await refreshCollections(['preInscricoes']);
         renderPreInscricoes();
         toast('Pré-inscrição guardada.');
       } catch (err) {
@@ -1044,7 +1044,7 @@ function renderDocumentosAlunoHTML(aluno) {
     <p class="muted" style="margin-top:8px; font-size:12px">Máximo 15MB por ficheiro. Sugestões de nome: CC, Cartão de Cidadão, Comprovativo de morada, Contrato assinado, Atestado médico, Foto tipo passe...</p>
   `;
 }
- 
+
 function bindUploadDocumentoAluno(alunoId, rerenderFn) {
   const form = document.getElementById('uploadDocumentoForm');
   if (!form) return;
@@ -1069,7 +1069,7 @@ function bindUploadDocumentoAluno(alunoId, rerenderFn) {
     } catch (err) { toast(err.message, 'error'); }
   });
 }
- 
+
 async function removerDocumentoAluno(alunoId, docId) {
   if (!confirm('Tens a certeza que queres remover este documento?')) return;
   try {
@@ -1079,7 +1079,7 @@ async function removerDocumentoAluno(alunoId, docId) {
     abrirDocumentosAlunoModal(alunoId);
   } catch (err) { toast(err.message, 'error'); }
 }
- 
+
 function abrirDocumentosAlunoModal(alunoId) {
   const aluno = findAluno(alunoId);
   if (!aluno) return;
@@ -1136,12 +1136,12 @@ function renderAlunos() {
     <thead><tr><th>Nº</th><th>Aluno</th><th>Categoria</th><th>Progresso</th><th>Estado</th><th>Documentos</th><th></th></tr></thead>
     <tbody>
       ${list.map(a => {
-        const tags = [
-          selosValidade(a.atestadoMedico?.dataValidade, 'Atestado médico'),
-          a.examePsicotecnico?.aplicavel ? selosValidade(a.examePsicotecnico?.dataValidade, 'Exame psicotécnico') : '',
-          selosValidade(a.processoIMT?.dataValidade, 'Processo IMT'), (a.cartasCategorias || []).map(c => selosValidade(c.dataValidade, `Carta ${c.categoria}`))
-        ].filter(Boolean).join(' ');
-        return `
+    const tags = [
+      selosValidade(a.atestadoMedico?.dataValidade, 'Atestado médico'),
+      a.examePsicotecnico?.aplicavel ? selosValidade(a.examePsicotecnico?.dataValidade, 'Exame psicotécnico') : '',
+      selosValidade(a.processoIMT?.dataValidade, 'Processo IMT'), (a.cartasCategorias || []).map(c => selosValidade(c.dataValidade, `Carta ${c.categoria}`))
+    ].filter(Boolean).join(' ');
+    return `
         <tr>
           <td class="cell-primary">#${a.numeroAluno ?? a.id}</td>
           <td>
@@ -1156,7 +1156,7 @@ function renderAlunos() {
           <td>${esc(a.categoria || '—')}</td>
           <td style="min-width:140px">
             <div class="cell-sub" style="margin-bottom:4px">${getAlunoContagens(a).aulasTeoricas} teóricas · ${getAlunoContagens(a).aulasPraticas} práticas</div>
-            <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, ((getAlunoContagens(a).aulasPraticas||0)/28)*100)}%"></div></div>
+            <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, ((getAlunoContagens(a).aulasPraticas || 0) / 28) * 100)}%"></div></div>
           </td>
           <td><span class="${badgeClass(a.estado)}">${esc(a.estado || '—')}</span></td>
           <td>${tags || '<span class="muted" style="font-size:12px">Em dia</span>'}</td>
@@ -1172,7 +1172,8 @@ function renderAlunos() {
             </div>
           </td>
         </tr>
-      `;}).join('')}
+      `;
+  }).join('')}
     </tbody>
   </table>` : emptyState('Nenhum aluno encontrado', 'Ajusta a pesquisa ou adiciona um novo aluno.');
 
@@ -1344,17 +1345,17 @@ function svgBarChartDuplo(labels, serieA, serieB, opts) {
     <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:${h}px" preserveAspectRatio="xMidYMid meet">
       <line x1="${pad}" y1="${h - pad}" x2="${w - pad}" y2="${h - pad}" stroke="var(--border)" stroke-width="1"/>
       ${labels.map((l, i) => {
-        const cx = pad + grupoW * i + grupoW / 2;
-        const alturaA = (serieA[i] / max) * (h - pad * 2);
-        const alturaB = (serieB[i] / max) * (h - pad * 2);
-        return `
+    const cx = pad + grupoW * i + grupoW / 2;
+    const alturaA = (serieA[i] / max) * (h - pad * 2);
+    const alturaB = (serieB[i] / max) * (h - pad * 2);
+    return `
           <rect x="${(cx - barraW - 2).toFixed(1)}" y="${(h - pad - alturaA).toFixed(1)}" width="${barraW}" height="${Math.max(alturaA, 1).toFixed(1)}" fill="${corA}" rx="2"
             style="cursor:pointer" data-tip="${esc(l)}\n${esc(opts.nomeA || 'A')}: ${serieA[i]}"/>
           <rect x="${(cx + 2).toFixed(1)}" y="${(h - pad - alturaB).toFixed(1)}" width="${barraW}" height="${Math.max(alturaB, 1).toFixed(1)}" fill="${corB}" rx="2"
             style="cursor:pointer" data-tip="${esc(l)}\n${esc(opts.nomeB || 'B')}: ${serieB[i]}"/>
           <text x="${cx.toFixed(1)}" y="${h - 10}" font-size="11" fill="var(--muted)" text-anchor="middle">${esc(l)}</text>
         `;
-      }).join('')}
+  }).join('')}
     </svg>
     <div style="display:flex; gap:16px; justify-content:center; margin-top:6px; font-size:12.5px">
       <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:${corA}; margin-right:5px"></span>${esc(opts.nomeA || 'A')}</span>
@@ -1378,19 +1379,19 @@ function svgBarChartEmpilhado(labels, serieBase, serieTopo, opts) {
     <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:${h}px" preserveAspectRatio="xMidYMid meet">
       <line x1="${pad}" y1="${h - pad}" x2="${w - pad}" y2="${h - pad}" stroke="var(--border)" stroke-width="1"/>
       ${labels.map((l, i) => {
-        const cx = pad + grupoW * i + grupoW / 2;
-        const alturaBase = (serieBase[i] / max) * (h - pad * 2);
-        const alturaTopo = (serieTopo[i] / max) * (h - pad * 2);
-        const total = serieBase[i] + serieTopo[i];
-        const pct = total > 0 ? ((serieBase[i] / total) * 100).toFixed(0) : '—';
-        return `
+    const cx = pad + grupoW * i + grupoW / 2;
+    const alturaBase = (serieBase[i] / max) * (h - pad * 2);
+    const alturaTopo = (serieTopo[i] / max) * (h - pad * 2);
+    const total = serieBase[i] + serieTopo[i];
+    const pct = total > 0 ? ((serieBase[i] / total) * 100).toFixed(0) : '—';
+    return `
           <rect x="${(cx - barraW / 2).toFixed(1)}" y="${(h - pad - alturaBase).toFixed(1)}" width="${barraW}" height="${Math.max(alturaBase, 1).toFixed(1)}" fill="${corBase}" rx="2"
             style="cursor:pointer" data-tip="${esc(l)}\n${esc(opts.nomeBase || 'Aprovados')}: ${serieBase[i]}\nTaxa de aprovação: ${pct}%"/>
           <rect x="${(cx - barraW / 2).toFixed(1)}" y="${(h - pad - alturaBase - alturaTopo).toFixed(1)}" width="${barraW}" height="${Math.max(alturaTopo, 1).toFixed(1)}" fill="${corTopo}" rx="2"
             style="cursor:pointer" data-tip="${esc(l)}\n${esc(opts.nomeTopo || 'Reprovados')}: ${serieTopo[i]}"/>
           <text x="${cx.toFixed(1)}" y="${h - 10}" font-size="11" fill="var(--muted)" text-anchor="middle">${esc(l)}</text>
         `;
-      }).join('')}
+  }).join('')}
     </svg>
     <div style="display:flex; gap:16px; justify-content:center; margin-top:6px; font-size:12.5px">
       <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:${corBase}; margin-right:5px"></span>${esc(opts.nomeBase || 'Aprovados')}</span>
@@ -1471,13 +1472,13 @@ function svgLineChartDuplo(labels, serieA, serieB, opts) {
   const passoX = (w - pad * 2) / Math.max(1, labels.length - 1);
   const corA = opts.corA || CHART_CORES.primaria;
   const corB = opts.corB || CHART_CORES.neutro;
- 
+
   const pontosPara = serie => serie.map((v, i) => [pad + i * passoX, h - pad - (v / max) * (h - pad * 2)]);
   const pontosA = pontosPara(serieA);
   const pontosB = pontosPara(serieB);
   const pathDe = pontos => pontos.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ');
   const gridY = [0, 0.25, 0.5, 0.75, 1].map(f => h - pad - f * (h - pad * 2));
- 
+
   return `
     <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:${h}px" preserveAspectRatio="xMidYMid meet">
       ${gridY.map(y => `<line x1="${pad}" y1="${y}" x2="${w - pad}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3,3"/>`).join('')}
@@ -1496,15 +1497,15 @@ function svgLineChartDuplo(labels, serieA, serieB, opts) {
     </div>
   `;
 }
- 
- 
+
+
 /* ---- Funil de conversão (barras horizontais decrescentes com % de conversão) ---- */
 function svgFunilChart(etapas, opts) {
   opts = opts || {};
   if (!etapas.length || !etapas[0].total) return `<div class="muted" style="padding:12px">Sem dados para mostrar.</div>`;
   const max = etapas[0].total;
   const cor = opts.cor || CHART_CORES.primaria;
- 
+
   return `
     <div style="display:flex; flex-direction:column; gap:12px">
       ${etapas.map((e, i) => `
@@ -1530,24 +1531,24 @@ function svgBarChartSimples(labels, valores, opts) {
   const grupoW = (w - pad * 2) / labels.length;
   const barraW = Math.min(52, grupoW * 0.5);
   const cor = opts.cor || CHART_CORES.primaria;
- 
+
   return `
     <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:${h}px" preserveAspectRatio="xMidYMid meet">
       <line x1="${pad}" y1="${h - pad}" x2="${w - pad}" y2="${h - pad}" stroke="var(--border)" stroke-width="1"/>
       ${labels.map((l, i) => {
-        const cx = pad + grupoW * i + grupoW / 2;
-        const altura = (valores[i] / max) * (h - pad * 2);
-        const extra = opts.tips && opts.tips[i] ? `\n${opts.tips[i]}` : '';
-        return `
+    const cx = pad + grupoW * i + grupoW / 2;
+    const altura = (valores[i] / max) * (h - pad * 2);
+    const extra = opts.tips && opts.tips[i] ? `\n${opts.tips[i]}` : '';
+    return `
           <rect x="${(cx - barraW / 2).toFixed(1)}" y="${(h - pad - altura).toFixed(1)}" width="${barraW}" height="${Math.max(altura, 1).toFixed(1)}" fill="${cor}" rx="3"
             style="cursor:pointer" data-tip="${esc(l)}: ${fmtNumeroOuMoeda(valores[i], opts.moeda)}${extra}"/>
           <text x="${cx.toFixed(1)}" y="${h - 10}" font-size="11" fill="var(--muted)" text-anchor="middle">${esc(l)}</text>
         `;
-      }).join('')}
+  }).join('')}
     </svg>
   `;
 }
- 
+
 /* Tabela detalhada do comparativo anual — complementa o gráfico com todos os números lado a lado. */
 function tabelaComparativoAnualHTML(comparativoAnual) {
   if (!comparativoAnual || !comparativoAnual.length) {
@@ -1555,7 +1556,7 @@ function tabelaComparativoAnualHTML(comparativoAnual) {
   }
   const corVariacao = v => v == null ? 'var(--muted)' : (v >= 0 ? 'var(--success, #1f9d55)' : 'var(--danger, #d1453b)');
   const fmtVariacao = v => v == null ? '—' : `${v >= 0 ? '▲' : '▼'} ${Math.abs(v)}%`;
- 
+
   return `
     <div style="overflow-x:auto; margin-top:14px">
       <table style="width:100%; border-collapse:collapse; font-size:13px">
@@ -1587,7 +1588,7 @@ function tabelaComparativoAnualHTML(comparativoAnual) {
     </div>
   `;
 }
- 
+
 function svgLineChartMediana(labels, valores, amostras, opts) {
   opts = opts || {};
   const w = opts.width || 760, h = opts.height || 220, pad = 36;
@@ -1597,7 +1598,7 @@ function svgLineChartMediana(labels, valores, amostras, opts) {
   const cor = opts.cor || CHART_CORES.info;
   const pontos = valores.map((v, i) => v === null ? null : [pad + i * passoX, h - pad - (v / max) * (h - pad * 2)]);
   const gridY = [0, 0.25, 0.5, 0.75, 1].map(f => h - pad - f * (h - pad * 2));
- 
+
   // Constrói o path só entre pontos consecutivos válidos (evita "saltar" visualmente sobre meses sem dados)
   let path = '';
   pontos.forEach((p, i) => {
@@ -1605,7 +1606,7 @@ function svgLineChartMediana(labels, valores, amostras, opts) {
     const anterior = i > 0 ? pontos[i - 1] : null;
     path += (anterior === null ? 'M' : 'L') + ` ${p[0].toFixed(1)} ${p[1].toFixed(1)} `;
   });
- 
+
   return `
     <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:${h}px" preserveAspectRatio="xMidYMid meet">
       ${gridY.map(y => `<line x1="${pad}" y1="${y}" x2="${w - pad}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3,3"/>`).join('')}
@@ -1619,13 +1620,13 @@ function svgLineChartMediana(labels, valores, amostras, opts) {
     </svg>
   `;
 }
- 
+
 /* ==================== (2) FILTROS + CARREGAMENTO — substitui renderEstatisticas() ==================== */
- 
+
 /* Filtros vivem em state.estatisticasFiltros (cria o objeto global "state" se ainda não existir). */
 if (typeof state === 'undefined') { var state = {}; }
 state.estatisticasFiltros = state.estatisticasFiltros || { modo: 'rolante12', ano: null, anosComparacao: 5 };
- 
+
 function queryStringEstatisticas() {
   const f = state.estatisticasFiltros;
   const params = new URLSearchParams();
@@ -1634,7 +1635,7 @@ function queryStringEstatisticas() {
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 }
- 
+
 async function renderEstatisticas() {
   initChartTooltip();
   const el = document.getElementById('view-estatisticas');
@@ -1651,23 +1652,23 @@ async function renderEstatisticas() {
     state.estatisticas = dados;
     montarFiltrosEstatisticasHTML(dados);
     montarEstatisticasHTML(dados);
-    carregarMapaGeral().catch(() => {});
-    carregarEsperaTeoricaPratica().catch(() => {});
-    carregarInscricoesEspaco().catch(() => {});
-    carregarFluxoCaixa().catch(() => {});
+    carregarMapaGeral().catch(() => { });
+    carregarEsperaTeoricaPratica().catch(() => { });
+    carregarInscricoesEspaco().catch(() => { });
+    carregarFluxoCaixa().catch(() => { });
   } catch (err) {
     console.error('Erro ao carregar estatísticas:', err);
     document.getElementById('estatisticas-conteudo').innerHTML = emptyState('Erro ao carregar estatísticas', err.message);
   }
 }
 window.renderEstatisticas = renderEstatisticas;
- 
+
 /* Barra de filtros: período (rolante/ano civil) + ano + nº de anos a comparar. */
 function montarFiltrosEstatisticasHTML(d) {
   const f = state.estatisticasFiltros;
   const anosDisponiveis = d.anosDisponiveis || [];
   const alvo = document.getElementById('estatisticas-filtros');
- 
+
   alvo.innerHTML = `
     <div class="panel" style="margin-bottom:20px; display:flex; gap:20px; align-items:center; flex-wrap:wrap">
       <div style="display:flex; gap:8px; align-items:center">
@@ -1694,7 +1695,7 @@ function montarFiltrosEstatisticasHTML(d) {
       </div>
     </div>
   `;
- 
+
   document.getElementById('filtro-modo-estatisticas').addEventListener('change', async (e) => {
     const modo = e.target.value;
     const filtros = { modo };
@@ -1704,7 +1705,7 @@ function montarFiltrosEstatisticasHTML(d) {
     state.estatisticasFiltros = { ...state.estatisticasFiltros, ...filtros };
     await renderEstatisticas();
   });
- 
+
   const selAno = document.getElementById('filtro-ano-estatisticas');
   if (selAno) {
     selAno.addEventListener('change', async (e) => {
@@ -1712,7 +1713,7 @@ function montarFiltrosEstatisticasHTML(d) {
       await renderEstatisticas();
     });
   }
- 
+
   document.getElementById('filtro-anos-comparacao-estatisticas').addEventListener('change', async (e) => {
     state.estatisticasFiltros = { ...state.estatisticasFiltros, anosComparacao: Number(e.target.value) };
     await renderEstatisticas();
@@ -1755,19 +1756,19 @@ function montarEstatisticasHTML(d) {
   // --- Auxiliar de Renderização para Cards de Variação ---
   const cardVariacao = (label, valorAtual, valorAnterior, variacao, formatador) => {
     const positivo = variacao !== null && variacao !== undefined && variacao >= 0;
-    const corVariacao = (variacao === null || variacao === undefined) 
-      ? 'var(--muted)' 
+    const corVariacao = (variacao === null || variacao === undefined)
+      ? 'var(--muted)'
       : (positivo ? 'var(--success, #1f9d55)' : 'var(--danger, #d1453b)');
     const seta = (variacao === null || variacao === undefined) ? '' : (positivo ? '▲' : '▼');
-    
+
     return `
       <div class="stat-card">
         <div class="stat-value">${formatador(valorAtual)}</div>
         <div class="stat-label">${label}</div>
         <div style="font-size:12px; margin-top:4px; color:${corVariacao}">
-          ${(variacao === null || variacao === undefined) 
-            ? 'sem dados do ano anterior' 
-            : `${seta} ${Math.abs(variacao)}% vs ${formatador(valorAnterior)} no período homólogo`}
+          ${(variacao === null || variacao === undefined)
+        ? 'sem dados do ano anterior'
+        : `${seta} ${Math.abs(variacao)}% vs ${formatador(valorAnterior)} no período homólogo`}
         </div>
       </div>
     `;
@@ -1828,11 +1829,11 @@ function montarEstatisticasHTML(d) {
     <div class="panel" style="margin-bottom:20px">
       <div class="panel-head"><h3>Aulas concluídas por mês — Teóricas vs Práticas</h3></div>
       ${svgBarChartDuplo(
-        labelsMes,
-        (d.aulasMensais || []).map(m => m.praticas),
-        (d.aulasMensais || []).map(m => m.teoricas),
-        { nomeA: 'Práticas', nomeB: 'Teóricas', corA: CHART_CORES.primaria, corB: CHART_CORES.info }
-      )}
+    labelsMes,
+    (d.aulasMensais || []).map(m => m.praticas),
+    (d.aulasMensais || []).map(m => m.teoricas),
+    { nomeA: 'Práticas', nomeB: 'Teóricas', corA: CHART_CORES.primaria, corB: CHART_CORES.info }
+  )}
     </div>
 
     <div class="panel" style="margin-bottom:20px">
@@ -1844,11 +1845,11 @@ function montarEstatisticasHTML(d) {
         </span>
       </div>
       ${svgBarChartEmpilhado(
-        labelsMes,
-        (d.examesMensais || []).map(m => m.aprovados),
-        (d.examesMensais || []).map(m => m.reprovados),
-        {}
-      )}
+    labelsMes,
+    (d.examesMensais || []).map(m => m.aprovados),
+    (d.examesMensais || []).map(m => m.reprovados),
+    {}
+  )}
     </div>
 
     <div class="panel" style="margin-bottom:20px">
@@ -1857,13 +1858,13 @@ function montarEstatisticasHTML(d) {
          <span class="muted" style="font-size:12.5px">Contabilizado no mês em que ocorre a 1.ª aula prática</span>
        </div>
        ${(d.tempoEsperaMensal || []).some(m => m.medianaDias !== null)
-         ? svgLineChartMediana(
-             (d.tempoEsperaMensal || []).map(m => chartMesLabelCurto(m.mes)),
-             (d.tempoEsperaMensal || []).map(m => m.medianaDias),
-             (d.tempoEsperaMensal || []).map(m => m.amostras),
-             { cor: CHART_CORES.info }
-           )
-         : `<div class="muted" style="padding:12px">Ainda sem dados suficientes (é preciso ter exame teórico aprovado e 1.ª aula prática concluída para o mesmo aluno).</div>`}
+      ? svgLineChartMediana(
+        (d.tempoEsperaMensal || []).map(m => chartMesLabelCurto(m.mes)),
+        (d.tempoEsperaMensal || []).map(m => m.medianaDias),
+        (d.tempoEsperaMensal || []).map(m => m.amostras),
+        { cor: CHART_CORES.info }
+      )
+      : `<div class="muted" style="padding:12px">Ainda sem dados suficientes (é preciso ter exame teórico aprovado e 1.ª aula prática concluída para o mesmo aluno).</div>`}
      </div>
 
     <!-- 5. COMPARAÇÃO HOMÓLOGA -->
@@ -1879,15 +1880,15 @@ function montarEstatisticasHTML(d) {
           <div class="stat-label">Taxa de aprovação</div>
           <div style="font-size:12px; margin-top:4px; color:var(--muted)">
             ${(h.totais.taxaAprovacao.variacaoPP === null || h.totais.taxaAprovacao.variacaoPP === undefined)
-              ? 'sem dados do ano anterior' 
-              : `${h.totais.taxaAprovacao.variacaoPP >= 0 ? '▲' : '▼'} ${Math.abs(h.totais.taxaAprovacao.variacaoPP)} p.p. vs ${h.totais.taxaAprovacao.anterior}% no período homólogo`}
+      ? 'sem dados do ano anterior'
+      : `${h.totais.taxaAprovacao.variacaoPP >= 0 ? '▲' : '▼'} ${Math.abs(h.totais.taxaAprovacao.variacaoPP)} p.p. vs ${h.totais.taxaAprovacao.anterior}% no período homólogo`}
           </div>
         </div>
       </div>
       ${svgLineChartDuplo(
-        labelsHomologo, 
-        (h.porMes || []).map(m => m.receitaAtual), 
-        (h.porMes || []).map(m => m.receitaAnterior), 
+        labelsHomologo,
+        (h.porMes || []).map(m => m.receitaAtual),
+        (h.porMes || []).map(m => m.receitaAnterior),
         { cor: CHART_CORES.primaria, corA: CHART_CORES.primaria, corB: CHART_CORES.neutro, moeda: true, nomeA: 'Período atual', nomeB: 'Ano anterior' }
       )}
     </div>
@@ -1904,14 +1905,14 @@ function montarEstatisticasHTML(d) {
       <span class="muted" style="font-size:12px">${(d.comparativoAnual || []).length} anos · ${d.modo === 'anoCivil' ? `ano civil selecionado: ${d.anoSelecionado}` : 'período rolante de 12 meses'}</span>
     </div>
     ${svgBarChartSimples(
-      (d.comparativoAnual || []).map(a => String(a.ano)),
-      (d.comparativoAnual || []).map(a => a.receita),
-      {
-        cor: CHART_CORES.sucesso,
-        moeda: true,
-        tips: (d.comparativoAnual || []).map(a => a.variacaoReceitaPct != null ? `Variação vs ano anterior: ${a.variacaoReceitaPct >= 0 ? '+' : ''}${a.variacaoReceitaPct}%` : 'Sem ano anterior para comparar')
-      }
-    )}
+        (d.comparativoAnual || []).map(a => String(a.ano)),
+        (d.comparativoAnual || []).map(a => a.receita),
+        {
+          cor: CHART_CORES.sucesso,
+          moeda: true,
+          tips: (d.comparativoAnual || []).map(a => a.variacaoReceitaPct != null ? `Variação vs ano anterior: ${a.variacaoReceitaPct >= 0 ? '+' : ''}${a.variacaoReceitaPct}%` : 'Sem ano anterior para comparar')
+        }
+      )}
     ${tabelaComparativoAnualHTML(d.comparativoAnual)}
   </div>
 
@@ -1965,8 +1966,8 @@ function montarEstatisticasHTML(d) {
       <div class="panel">
         <div class="panel-head"><h3>Taxa de aprovação por instrutor</h3><span class="muted" style="font-size:12px">Exame prático · min. 3 exames</span></div>
         ${desempInstr.length
-          ? svgBarChartHorizontal(desempInstr.map(i => ({ label: i.nome, total: i.taxaAprovacao })), { cor: CHART_CORES.info })
-          : `<div class="muted" style="padding:12px">Ainda sem dados suficientes.</div>`}
+      ? svgBarChartHorizontal(desempInstr.map(i => ({ label: i.nome, total: i.taxaAprovacao })), { cor: CHART_CORES.info })
+      : `<div class="muted" style="padding:12px">Ainda sem dados suficientes.</div>`}
       </div>
 
       <div class="panel">
@@ -2237,7 +2238,7 @@ function gerarConclusoes(d) {
       texto: `Novas inscrições estão ${Math.abs(hInsc.variacaoPct)}% ${hInsc.variacaoPct >= 0 ? 'acima' : 'abaixo'} do mesmo período do ano anterior (${hInsc.anterior} → ${hInsc.atual}).`
     });
   }
- 
+
   // 17. Comparação homóloga — aulas concluídas
   const hAulas = homologa?.totais?.aulasConcluidas;
   if (hAulas && hAulas.variacaoPct != null && Math.abs(hAulas.variacaoPct) >= 10) {
@@ -2246,7 +2247,7 @@ function gerarConclusoes(d) {
       texto: `O número de aulas concluídas está ${Math.abs(hAulas.variacaoPct)}% ${hAulas.variacaoPct >= 0 ? 'acima' : 'abaixo'} do mesmo período do ano anterior.`
     });
   }
- 
+
   // 18. Mês com maior subida/queda de receita face ao ano anterior (dentro do período homólogo)
   if (homologa?.porMes?.length) {
     const comVariacao = homologa.porMes
@@ -2269,13 +2270,13 @@ function gerarConclusoes(d) {
       }
     }
   }
- 
+
   // 19-21. Comparativo anual: CAGR, melhor/pior ano, tendência consistente
   if (d.comparativoAnual && d.comparativoAnual.length >= 2) {
     const anos = d.comparativoAnual;
     const primeiro = anos[0];
     const ultimo = anos[anos.length - 1];
- 
+
     // CAGR de receita ao longo de todo o período comparado
     if (primeiro.receita > 0 && anos.length >= 3) {
       const nAnos = anos.length - 1;
@@ -2285,7 +2286,7 @@ function gerarConclusoes(d) {
         texto: `A receita cresceu, em média, ${cagr.toFixed(1)}% ao ano entre ${primeiro.ano} e ${ultimo.ano} (crescimento anual composto).`
       });
     }
- 
+
     // Melhor e pior ano em receita
     const melhorAno = anos.reduce((a, b) => (b.receita > a.receita ? b : a));
     const piorAno = anos.reduce((a, b) => (b.receita < a.receita ? b : a));
@@ -2295,7 +2296,7 @@ function gerarConclusoes(d) {
         texto: `${melhorAno.ano} foi o melhor ano em receita (${fmtMoney(melhorAno.receita)}), enquanto ${piorAno.ano} foi o mais fraco (${fmtMoney(piorAno.receita)}).`
       });
     }
- 
+
     // Tendência consistente nos últimos 3 anos disponíveis
     const ultimosTres = anos.slice(-3);
     if (ultimosTres.length === 3 && ultimosTres.every(a => a.variacaoReceitaPct != null)) {
@@ -2320,7 +2321,7 @@ function acrescentarReflexoesAnuaisEHomologas(conclusoes, d, homologa) {
       texto: `Novas inscrições estão ${Math.abs(hInsc.variacaoPct)}% ${hInsc.variacaoPct >= 0 ? 'acima' : 'abaixo'} do mesmo período do ano anterior (${hInsc.anterior} → ${hInsc.atual}).`
     });
   }
- 
+
   const hAulas = homologa?.totais?.aulasConcluidas;
   if (hAulas && hAulas.variacaoPct != null && Math.abs(hAulas.variacaoPct) >= 10) {
     conclusoes.push({
@@ -2328,7 +2329,7 @@ function acrescentarReflexoesAnuaisEHomologas(conclusoes, d, homologa) {
       texto: `O número de aulas concluídas está ${Math.abs(hAulas.variacaoPct)}% ${hAulas.variacaoPct >= 0 ? 'acima' : 'abaixo'} do mesmo período do ano anterior.`
     });
   }
- 
+
   if (homologa?.porMes?.length) {
     const comVariacao = homologa.porMes
       .map(m => ({ mes: m.mes, variacao: m.receitaAnterior ? ((m.receitaAtual - m.receitaAnterior) / m.receitaAnterior) * 100 : null }))
@@ -2350,12 +2351,12 @@ function acrescentarReflexoesAnuaisEHomologas(conclusoes, d, homologa) {
       }
     }
   }
- 
+
   if (d.comparativoAnual && d.comparativoAnual.length >= 2) {
     const anos = d.comparativoAnual;
     const primeiro = anos[0];
     const ultimo = anos[anos.length - 1];
- 
+
     if (primeiro.receita > 0 && anos.length >= 3) {
       const nAnos = anos.length - 1;
       const cagr = (Math.pow(ultimo.receita / primeiro.receita, 1 / nAnos) - 1) * 100;
@@ -2364,7 +2365,7 @@ function acrescentarReflexoesAnuaisEHomologas(conclusoes, d, homologa) {
         texto: `A receita cresceu, em média, ${cagr.toFixed(1)}% ao ano entre ${primeiro.ano} e ${ultimo.ano} (crescimento anual composto).`
       });
     }
- 
+
     const melhorAno = anos.reduce((a, b) => (b.receita > a.receita ? b : a));
     const piorAno = anos.reduce((a, b) => (b.receita < a.receita ? b : a));
     if (melhorAno.ano !== piorAno.ano) {
@@ -2373,7 +2374,7 @@ function acrescentarReflexoesAnuaisEHomologas(conclusoes, d, homologa) {
         texto: `${melhorAno.ano} foi o melhor ano em receita (${fmtMoney(melhorAno.receita)}), enquanto ${piorAno.ano} foi o mais fraco (${fmtMoney(piorAno.receita)}).`
       });
     }
- 
+
     const ultimosTres = anos.slice(-3);
     if (ultimosTres.length === 3 && ultimosTres.every(a => a.variacaoReceitaPct != null)) {
       if (ultimosTres.every(a => a.variacaoReceitaPct > 0)) {
@@ -2410,13 +2411,13 @@ function avatarHtml(nome, id, size, temFoto) {
   if (temFoto && id) {
     return `<img src="/api/alunos/${id}/foto" loading="lazy" alt="${esc(nome || '')}"
       style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;vertical-align:middle;border:1px solid var(--border)"
-      onerror="this.replaceWith(Object.assign(document.createElement('span'), {outerHTML: avatarIniciaisHtml('${esc(nome||'').replace(/'/g,"\\'")}', ${size})}))">`;
+      onerror="this.replaceWith(Object.assign(document.createElement('span'), {outerHTML: avatarIniciaisHtml('${esc(nome || '').replace(/'/g, "\\'")}', ${size})}))">`;
   }
   return avatarIniciaisHtml(nome, size);
 }
 function avatarIniciaisHtml(nome, size) {
   const iniciais = String(nome || '?').trim().split(/\s+/).slice(0, 2).map(p => p[0]).join('').toUpperCase() || '?';
-  return `<span style="display:inline-flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;border-radius:50%;background:var(--accent-soft,#e7edf7);color:var(--accent,#2657c8);font-weight:700;font-size:${Math.round(size*0.4)}px;vertical-align:middle">${esc(iniciais)}</span>`;
+  return `<span style="display:inline-flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;border-radius:50%;background:var(--accent-soft,#e7edf7);color:var(--accent,#2657c8);font-weight:700;font-size:${Math.round(size * 0.4)}px;vertical-align:middle">${esc(iniciais)}</span>`;
 }
 
 /* Liga um seletor de ficheiro de foto (aluno/instrutor) a um input hidden
@@ -2470,11 +2471,11 @@ function renderCartasCategoriasListHTML(lista) {
     </div>
   `).join('') : `<p class="muted" style="margin-bottom:6px">Nenhuma categoria detida registada.</p>`;
 }
- 
+
 function bindCartasCategoriasEditor(form, cartasCategoriasEdit) {
   const box = form.querySelector('#cartasCategoriasList');
   const btnAdd = form.querySelector('#btnAdicionarCartaCategoria');
- 
+
   function render() {
     box.innerHTML = renderCartasCategoriasListHTML(cartasCategoriasEdit);
     box.querySelectorAll('[data-carta-row]').forEach(row => {
@@ -2657,9 +2658,9 @@ function openAlunoForm(id) {
   atualizarPrevisaoCartaAluno();
 
   let cartasCategoriasEdit = Array.isArray(item?.cartasCategorias)
-          ? item.cartasCategorias.map(c => ({ ...c }))
-          : [];
-        bindCartasCategoriasEditor(form, cartasCategoriasEdit);
+    ? item.cartasCategorias.map(c => ({ ...c }))
+    : [];
+  bindCartasCategoriasEditor(form, cartasCategoriasEdit);
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
@@ -2706,8 +2707,8 @@ function renderInstrutores() {
         <thead><tr><th>Instrutor</th><th>Cargo</th><th>Título profissional</th><th>Categorias</th><th>Estado</th><th></th></tr></thead>
         <tbody>
           ${list.map(i => {
-            const tag = selosValidade(i.tituloProfissionalValidade, 'Título');
-            return `
+    const tag = selosValidade(i.tituloProfissionalValidade, 'Título');
+    return `
             <tr>
               <td>
                 <div style="display:flex; align-items:center; gap:10px">
@@ -2732,7 +2733,7 @@ function renderInstrutores() {
                 </div>
               </td>
             </tr>`;
-          }).join('')}
+  }).join('')}
         </tbody>
       </table>` : emptyState('Nenhum instrutor encontrado', 'Adiciona um instrutor à equipa pedagógica.')}
     </div>
@@ -2935,10 +2936,10 @@ function renderAulasPraticasTab() {
         <thead><tr><th>Data / Hora</th><th>Aluno</th><th>Instrutor</th><th>Veículo</th><th>Estado</th><th></th></tr></thead>
         <tbody>
           ${list.map(a => {
-            const aluno = findAluno(a.alunoId);
-            const instrutor = findInstrutor(a.instrutorId);
-            const veiculo = findVeiculo(a.veiculoId);
-            return `
+    const aluno = findAluno(a.alunoId);
+    const instrutor = findInstrutor(a.instrutorId);
+    const veiculo = findVeiculo(a.veiculoId);
+    return `
             <tr>
               <td class="cell-primary">${fmtDataHora(a.data, a.hora)}</td>
               <td>${esc(aluno?.nome || '—')}</td>
@@ -2952,7 +2953,7 @@ function renderAulasPraticasTab() {
                 </div>
               </td>
             </tr>`;
-          }).join('')}
+  }).join('')}
         </tbody>
       </table>` : emptyState('Nenhuma aula prática encontrada', periodo === 'Futuras' ? 'Não há aulas práticas agendadas — muda para "Histórico" para ver aulas passadas.' : 'Agenda uma nova aula prática individual.')}
     </div>
@@ -3354,10 +3355,10 @@ function renderContaCorrenteModal(cc) {
               <td><span class="${badgeClass(p.estado)}">${esc(p.estado)}</span></td>
               <td>
                 ${p.estado !== 'Pago'
-                  ? '<span class="muted" style="font-size:12px">Ainda não recebido — não aplicado ao saldo</span>'
-                  : (p.alocacoes && p.alocacoes.length
-                    ? p.alocacoes.map(a => `${esc(a.descricao)} (${fmtMoney(a.valor)})`).join(', ') + (p.sobra > 0.009 ? ` <span class="muted" style="font-size:12px">· sobra ${fmtMoney(p.sobra)} sem itens para aplicar</span>` : '')
-                    : '<span class="muted" style="font-size:12px">Sem itens em dívida para aplicar</span>')}
+      ? '<span class="muted" style="font-size:12px">Ainda não recebido — não aplicado ao saldo</span>'
+      : (p.alocacoes && p.alocacoes.length
+        ? p.alocacoes.map(a => `${esc(a.descricao)} (${fmtMoney(a.valor)})`).join(', ') + (p.sobra > 0.009 ? ` <span class="muted" style="font-size:12px">· sobra ${fmtMoney(p.sobra)} sem itens para aplicar</span>` : '')
+        : '<span class="muted" style="font-size:12px">Sem itens em dívida para aplicar</span>')}
               </td>
             </tr>
           `).join('') : `<tr><td colspan="4" class="muted">Sem pagamentos registados.</td></tr>`}
@@ -3654,9 +3655,9 @@ function renderPagamentos() {
         <thead><tr><th>Aluno</th><th>Descrição</th><th>Data</th><th>Valor</th><th>Estado</th><th>Faturação</th><th></th></tr></thead>
         <tbody>
           ${list.map(p => {
-            const aluno = findAluno(p.alunoId);
-            const fat = p.faturacao;
-            return `
+    const aluno = findAluno(p.alunoId);
+    const fat = p.faturacao;
+    return `
             <tr>
               <td class="cell-primary">${esc(aluno?.nome || '—')} ${aluno ? `<span class="muted" style="font-size:12px">· Nº ${aluno.numeroAluno ?? aluno.id}</span>` : ''}</td>
               <td>${esc(p.descricao || '—')}</td>
@@ -3673,7 +3674,7 @@ function renderPagamentos() {
                 </div>
               </td>
             </tr>`;
-          }).join('')}
+  }).join('')}
         </tbody>
       </table>` : emptyState('Nenhum pagamento encontrado', 'Regista um novo pagamento de um aluno.')}
     </div>
@@ -4060,12 +4061,12 @@ async function carregarMapaGeral() {
           <thead><tr><th>Aluno</th><th>Categoria</th><th>Horas teóricas</th><th>Horas práticas</th><th>Km percorridos</th><th>Faltas teóricas</th><th>Conformidade</th></tr></thead>
           <tbody>
             ${linhas.map(l => {
-              const okTeorica = l.horasTeoricasMin ? l.horasTeoricasRealizadas >= l.horasTeoricasMin : null;
-              const okPratica = l.horasPraticasMin ? l.horasPraticasRealizadas >= l.horasPraticasMin : null;
-              const okKm = l.kmMin ? l.kmTotalPercorridos >= l.kmMin : null;
-              const semDados = okTeorica === null && okPratica === null && okKm === null;
-              const conforme = semDados ? null : (okTeorica !== false && okPratica !== false && okKm !== false);
-              return `
+      const okTeorica = l.horasTeoricasMin ? l.horasTeoricasRealizadas >= l.horasTeoricasMin : null;
+      const okPratica = l.horasPraticasMin ? l.horasPraticasRealizadas >= l.horasPraticasMin : null;
+      const okKm = l.kmMin ? l.kmTotalPercorridos >= l.kmMin : null;
+      const semDados = okTeorica === null && okPratica === null && okKm === null;
+      const conforme = semDados ? null : (okTeorica !== false && okPratica !== false && okKm !== false);
+      return `
               <tr>
                 <td class="cell-primary">${esc(l.nome)}</td>
                 <td>${esc(l.categoria || '—')}</td>
@@ -4075,7 +4076,7 @@ async function carregarMapaGeral() {
                 <td>${l.faltasTeoricas}</td>
                 <td>${semDados ? '<span class="badge badge-inativo">Sem requisito definido</span>' : (conforme ? '<span class="badge badge-ativo">Conforme</span>' : '<span class="badge badge-suspenso">Por completar</span>')}</td>
               </tr>`;
-            }).join('')}
+    }).join('')}
           </tbody>
         </table>
       </div>
@@ -4122,9 +4123,10 @@ async function carregarEsperaTeoricaPratica() {
         </table>
       </div>
     ` : emptyState('Sem dados', 'Ainda não há alunos com exame teórico aprovado e aula prática registada.');
+    } // <-- fecha o "if (box)" que faltava
   } catch (err) {
-    box.innerHTML = emptyState('Erro ao carregar', err.message);
-    alertBox.innerHTML = '';
+    if (box) box.innerHTML = emptyState('Erro ao carregar', err.message);
+    if (alertBox) alertBox.innerHTML = '';
   }
 }
 
@@ -4296,8 +4298,8 @@ function renderComposicaoCartaBox() {
           <span class="muted" style="font-size:12.5px">${planos.length} plano${planos.length === 1 ? '' : 's'} de preço definido${planos.length === 1 ? '' : 's'}</span>
         </div>
         ${planos.length ? planos.map((plano, pIdx) => {
-          const total = calcularTotalComposicaoLinhas(plano.linhas);
-          return `
+      const total = calcularTotalComposicaoLinhas(plano.linhas);
+      return `
           <div style="border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:10px; background:var(--bg-subtle,#f9fafb)">
             <div class="form-grid" style="grid-template-columns: 2fr auto; align-items:end; margin-bottom:8px">
               <div class="form-field" style="margin-bottom:0">
@@ -4311,8 +4313,8 @@ function renderComposicaoCartaBox() {
             </div>
             <div data-comp-linhas data-cat="${cat}" data-pidx="${pIdx}">
               ${(plano.linhas || []).length ? plano.linhas.map((l, i) => {
-                const produto = state.produtos.find(p => p.id === Number(l.produtoId));
-                return `
+        const produto = state.produtos.find(p => p.id === Number(l.produtoId));
+        return `
                 <div class="form-grid" style="grid-template-columns: 2fr 1fr auto; align-items:end; margin-bottom:6px">
                   <div class="form-field">
                     <label>Produto</label>
@@ -4325,12 +4327,12 @@ function renderComposicaoCartaBox() {
                 </div>
                 ${!produto ? '<p class="muted" style="margin:-4px 0 8px; color:var(--danger)">Produto removido do catálogo — escolhe outro.</p>' : ''}
                 `;
-              }).join('') : '<p class="muted">Sem produtos neste plano — o contrato não poderá usá-lo enquanto não adicionares pelo menos um.</p>'}
+      }).join('') : '<p class="muted">Sem produtos neste plano — o contrato não poderá usá-lo enquanto não adicionares pelo menos um.</p>'}
             </div>
             <button type="button" class="btn btn-ghost btn-sm" data-comp-add data-cat="${cat}" data-pidx="${pIdx}">+ Adicionar produto</button>
           </div>
         `;
-        }).join('') : '<p class="muted" style="margin-bottom:10px">Sem planos de preço definidos para esta categoria — os contratos desta categoria não poderão ser criados (exceto com plano de pagamento "Personalizado") enquanto não criares pelo menos um plano.</p>'}
+    }).join('') : '<p class="muted" style="margin-bottom:10px">Sem planos de preço definidos para esta categoria — os contratos desta categoria não poderão ser criados (exceto com plano de pagamento "Personalizado") enquanto não criares pelo menos um plano.</p>'}
         <button type="button" class="btn btn-accent btn-sm" data-plano-add data-cat="${cat}">+ Novo plano de preço para ${esc(cat)}</button>
       </div>
     `;
@@ -4394,8 +4396,8 @@ function renderEspacosList() {
         <thead><tr><th>Espaço</th><th>Observações</th><th>Alunos atribuídos</th><th></th></tr></thead>
         <tbody>
           ${state.espacos.map(e => {
-            const c = contagem(e.id);
-            return `
+    const c = contagem(e.id);
+    return `
             <tr>
               <td><strong>${esc(e.nome)}</strong></td>
               <td>${esc(e.observacoes || '—')}</td>
@@ -4407,7 +4409,7 @@ function renderEspacosList() {
                 </div>
               </td>
             </tr>`;
-          }).join('')}
+  }).join('')}
         </tbody>
       </table>
     </div>
@@ -4603,7 +4605,7 @@ function imprimirRelatorioAluno() {
     <div class="print-doc">
       <div class="print-head">
         <h1>Ficha de Formação do Aluno</h1>
-        <p class="muted">Documento gerado para efeitos de comprovação de assiduidade / inspeção IMT · Emitido em ${fmtDate(new Date().toISOString().slice(0,10))}</p>
+        <p class="muted">Documento gerado para efeitos de comprovação de assiduidade / inspeção IMT · Emitido em ${fmtDate(new Date().toISOString().slice(0, 10))}</p>
       </div>
       <table class="print-info"><tbody>
         <tr><td><strong>Nº Aluno</strong></td><td>${aluno.numeroAluno ?? aluno.id}</td><td><strong>Categoria</strong></td><td>${esc(aluno.categoria || '—')}</td></tr>
@@ -4633,7 +4635,7 @@ function imprimirMapaGeral() {
     <div class="print-doc">
       <div class="print-head">
         <h1>Mapa Geral de Assiduidade</h1>
-        <p class="muted">Documento gerado para efeitos de inspeção IMT · Emitido em ${fmtDate(new Date().toISOString().slice(0,10))}</p>
+        <p class="muted">Documento gerado para efeitos de inspeção IMT · Emitido em ${fmtDate(new Date().toISOString().slice(0, 10))}</p>
       </div>
       <div id="mapaGeralBoxPrint"></div>
     </div>
@@ -4677,8 +4679,8 @@ function renderContratos() {
         <thead><tr><th>Aluno</th><th>Categoria</th><th>Valor</th><th>Plano</th><th>Estado</th><th></th></tr></thead>
         <tbody>
           ${list.map(c => {
-            const aluno = findAluno(c.alunoId);
-            return `
+    const aluno = findAluno(c.alunoId);
+    return `
             <tr>
               <td>
                 <div class="cell-primary">${esc(aluno?.nome || 'Aluno removido')}</div>
@@ -4698,7 +4700,7 @@ function renderContratos() {
                 </div>
               </td>
             </tr>`;
-          }).join('')}
+  }).join('')}
         </tbody>
       </table>` : emptyState('Nenhum contrato encontrado', 'Cria o primeiro contrato de formação para um aluno.')}
     </div>
@@ -4754,7 +4756,7 @@ function openContratoForm(id) {
         ${renderAlunoPickerHtml(item?.alunoId, { label: 'Aluno', required: !item, hint: 'Escolhe um aluno existente ou escreve o nome completo.' })}
         <div class="form-field">
           <label>Categoria</label>
-          <select name="categoria" id="contratoCategoriaSelect">${['A','A1','A2','AM','B','B1','C','C+E','D'].map(c => `<option ${item?.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}</select>        
+          <select name="categoria" id="contratoCategoriaSelect">${['A', 'A1', 'A2', 'AM', 'B', 'B1', 'C', 'C+E', 'D'].map(c => `<option ${item?.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}</select>        
         </div>
         <div class="form-field">
           <label>Plano de preço da carta</label>
@@ -5010,7 +5012,7 @@ function gerarTextoContrato(contrato) {
   const escola = state.escola || {};
 
   // Data de assinatura por extenso
-  const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
   const dataAssinatura = contrato.dataAssinatura ? new Date(contrato.dataAssinatura) : new Date();
   const dataExtenso = `${dataAssinatura.getDate()} de ${MESES[dataAssinatura.getMonth()]} de ${dataAssinatura.getFullYear()}`;
 
@@ -5334,8 +5336,8 @@ function abrirDocumentoContrato(id) {
       </div>
       <p class="muted" style="margin-top:6px">
         Máximo 15MB. ${fat
-          ? 'Este contrato já tem fatura emitida — submeter um novo PDF substitui apenas o ficheiro, não gera uma nova fatura.'
-          : 'Ao submeter, se a integração estiver ativa e o aluno tiver NIF, a fatura é emitida automaticamente na Cegid Primavera.'}
+      ? 'Este contrato já tem fatura emitida — submeter um novo PDF substitui apenas o ficheiro, não gera uma nova fatura.'
+      : 'Ao submeter, se a integração estiver ativa e o aluno tiver NIF, a fatura é emitida automaticamente na Cegid Primavera.'}
       </p>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" onclick="closeModal()">Fechar</button>
