@@ -298,4 +298,21 @@ test('Estrutura de comparativo entre espaços (2 espaços) calcula métricas e s
   assert.strictEqual(metricasEspacos[0].taxaAprovacao, 80.0);
 });
 
+test('chartMesLabelCurto não lança erro com valores undefined, null ou formatos inválidos', () => {
+  function chartMesLabelCurto(chaveMes) {
+    if (!chaveMes || typeof chaveMes !== 'string') return '';
+    const partes = chaveMes.split('-');
+    if (partes.length < 2) return chaveMes;
+    const [ano, mes] = partes;
+    const rotulo = new Date(Number(ano), Number(mes) - 1, 1).toLocaleDateString('pt-PT', { month: 'short' });
+    return rotulo.replace('.', '').charAt(0).toUpperCase() + rotulo.replace('.', '').slice(1);
+  }
+
+  assert.strictEqual(chartMesLabelCurto(undefined), '');
+  assert.strictEqual(chartMesLabelCurto(null), '');
+  assert.strictEqual(chartMesLabelCurto(''), '');
+  assert.strictEqual(chartMesLabelCurto('2026-09').toLowerCase().startsWith('set'), true);
+});
+
+
 
