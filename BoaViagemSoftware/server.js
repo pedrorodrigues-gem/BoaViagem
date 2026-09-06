@@ -3284,8 +3284,14 @@ function medianaDe(numeros) {
 app.get('/api/estatisticas', async (req, res) => {
   try {
     const e = req.escolaId;
+    const hoje = new Date();
+    const anoAtual = hoje.getFullYear();
+    const mesAtualNum = hoje.getMonth() + 1;
+    const mesAtualStr = `${anoAtual}-${String(mesAtualNum).padStart(2, '0')}`;
+
     const anoQuery = req.query.ano ? Number(req.query.ano) : null;
     const modo = anoQuery ? 'anoCivil' : 'rolante12';
+    const isAnoEmCurso = (modo === 'anoCivil' && anoQuery === anoAtual);
     const meses = modo === 'anoCivil' ? mesesDoAnoCivil(anoQuery) : ultimosNMeses(12);
 
     const inicioMes = meses[0] + '-01';
@@ -3332,7 +3338,13 @@ app.get('/api/estatisticas', async (req, res) => {
       esperaRes,
       anosDisponiveisRes,
       alunosTotaisRes,
-      tempoMedioPraticaRes
+      tempoMedioPraticaRes,
+      todosEspacosRes,
+      espacoAlunosRes,
+      espacoReceitaMensalRes,
+      espacoReceitaTotaisRes,
+      espacoAulasRes,
+      espacoExamesRes
     ] = await Promise.all([
       // 1. Receita mensal atual
       safeQ(`
@@ -3526,7 +3538,7 @@ app.get('/api/estatisticas', async (req, res) => {
         ORDER BY aluno_id, tipo, data
       `, { e }, 'tentativas'),
 
-      // 21. Desempenho de instrutores (com NULLIF para prevenir divisão por zero)
+      // 21. Desempenho de instrutores
       safeQ(`
         WITH AlunoInstrutorPrincipal AS (
           SELECT aluno_id, instrutor_id,
@@ -3611,7 +3623,75 @@ app.get('/api/estatisticas', async (req, res) => {
             AND TRY_CONVERT(date, m.data) >= TRY_CONVERT(date, a.data_inscricao)
           GROUP BY a.id, a.data_inscricao
         ) sub
-      `, { e }, 'tempoMedioPratica')
+      `, { e }, 'tempoMedioPratica'),
+
+      // 26. Espaços da escola
+      safeQ('SELECT id, nome, serie FROM espacos WHERE escola_id = @e ORDER BY nome', { e }, 'todosEspacos'),
+
+      // 27. Alunos e inscrições por espaço
+      safeQ(`
+        SELECT
+          e.id AS espaco_id, e.nome AS espaco_nome, e.serie,
+          COUNT(DISTINCT a.id) AS total_alunos,
+          SUM(CASE WHEN a.estado = 'Ativo' OR a.estado IS NULL THEN 1 ELSE 0 END) AS alunos_ativos,
+          SUM(CASE WHEN a.estado = 'Concluído' THEN 1 ELSE 0 END) AS alunos_concluidos,
+          SUM(CASE WHEN a.data_inscricao >= @inicioMes AND a.data_inscricao <= @fimMes THEN 1 ELSE 0 END) AS inscricoes_periodo,
+          SUM(CASE WHEN a.data_inscricao >= @inicioHomologo AND a.data_inscricao <= @fimHomologo THEN 1 ELSE 0 END) AS inscricoes_homologo
+        FROM espacos e
+        LEFT JOIN alunos a ON a.espaco_id = e.id AND a.escola_id = @e
+        WHERE e.escola_id = @e
+        GROUP BY e.id, e.nome, e.serie
+      `, { e, inicioMes, fimMes, inicioHomologo, fimHomologo }, 'espacoAlunos'),
+
+      // 28. Receita mensal por espaço
+      safeQ(`
+        SELECT a.espaco_id, FORMAT(TRY_CONVERT(date, p.data), 'yyyy-MM') AS mes, ISNULL(SUM(p.valor), 0) AS total
+        FROM pagamentos p
+        JOIN alunos a ON a.id = p.aluno_id AND a.escola_id = @e
+        WHERE p.escola_id = @e AND p.estado = 'Pago' AND p.data >= @inicioMes AND p.data <= @fimMes AND a.espaco_id IS NOT NULL
+        GROUP BY a.espaco_id, FORMAT(TRY_CONVERT(date, p.data), 'yyyy-MM')
+      `, { e, inicioMes, fimMes }, 'espacoReceitaMensal'),
+
+      // 29. Receita total e pendente por espaço
+      safeQ(`
+        SELECT a.espaco_id,
+          SUM(CASE WHEN p.estado = 'Pago' AND p.data >= @inicioMes AND p.data <= @fimMes THEN p.valor ELSE 0 END) AS receita_periodo,
+          SUM(CASE WHEN p.estado = 'Pago' AND p.data >= @inicioHomologo AND p.data <= @fimHomologo THEN p.valor ELSE 0 END) AS receita_homologa,
+          SUM(CASE WHEN p.estado = 'Pendente' THEN p.valor ELSE 0 END) AS receita_pendente
+        FROM pagamentos p
+        JOIN alunos a ON a.id = p.aluno_id AND a.escola_id = @e
+        WHERE p.escola_id = @e AND a.espaco_id IS NOT NULL
+        GROUP BY a.espaco_id
+      `, { e, inicioMes, fimMes, inicioHomologo, fimHomologo }, 'espacoReceitaTotais'),
+
+      // 30. Aulas por espaço
+      safeQ(`
+        SELECT espaco_id,
+          SUM(CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 1 ELSE 0 END) AS aulas_praticas,
+          SUM(CASE WHEN LOWER(tipo) NOT LIKE '%prat%' THEN 1 ELSE 0 END) AS aulas_teoricas,
+          COUNT(*) AS total_aulas
+        FROM aulas
+        WHERE escola_id = @e AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
+          AND data >= @inicioMes AND data <= @fimMes AND espaco_id IS NOT NULL
+        GROUP BY espaco_id
+      `, { e, inicioMes, fimMes }, 'espacoAulas'),
+
+      // 31. Exames por espaço
+      safeQ(`
+        SELECT a.espaco_id,
+          COUNT(*) AS total_exames,
+          SUM(CASE WHEN m.resultado = 'Aprovado' THEN 1 ELSE 0 END) AS aprovados,
+          SUM(CASE WHEN m.resultado = 'Reprovado' THEN 1 ELSE 0 END) AS reprovados,
+          SUM(CASE WHEN m.tipo = 'Teórico' THEN 1 ELSE 0 END) AS exames_teoricos,
+          SUM(CASE WHEN m.tipo = 'Teórico' AND m.resultado = 'Aprovado' THEN 1 ELSE 0 END) AS aprovados_teoricos,
+          SUM(CASE WHEN m.tipo = 'Prático' THEN 1 ELSE 0 END) AS exames_praticos,
+          SUM(CASE WHEN m.tipo = 'Prático' AND m.resultado = 'Aprovado' THEN 1 ELSE 0 END) AS aprovados_praticos
+        FROM exames_marcacoes m
+        JOIN alunos a ON a.id = m.aluno_id AND a.escola_id = @e
+        WHERE m.escola_id = @e AND m.resultado IN ('Aprovado', 'Reprovado')
+          AND m.data >= @inicioMes AND m.data <= @fimMes AND a.espaco_id IS NOT NULL
+        GROUP BY a.espaco_id
+      `, { e, inicioMes, fimMes }, 'espacoExames')
     ]);
 
     // Mapeamentos para garantir que todos os meses do período estão representados
@@ -3710,23 +3790,50 @@ app.get('/api/estatisticas', async (req, res) => {
     const somaExamesTotal = arr => arr.reduce((s, m) => s + m.aprovados + m.reprovados, 0);
     const variacaoPct = (atual, anterior) => (anterior ? +(((atual - anterior) / anterior) * 100).toFixed(1) : null);
 
-    const totalReceitaAtual = somaTotal(receitaMensal);
-    const totalReceitaAnterior = somaTotal(receitaAnterior);
-    const totalInscricoesAtual = somaTotal(inscricoesMensais);
-    const totalInscricoesAnterior = somaTotal(inscricoesAnterior);
-    const totalAulasAtual = somaAulas(aulasMensais);
-    const totalAulasAnterior = somaAulas(aulasAnterior);
-    const aprovadosAtual = somaAprovados(examesMensais);
-    const aprovadosAnterior = somaAprovados(examesAnterior);
-    const totalExamesAtual = somaExamesTotal(examesMensais);
-    const totalExamesAnterior = somaExamesTotal(examesAnterior);
+    // Quando o ano está a decorrer, a comparação homóloga justa (YTD) considera apenas os meses decorridos até à data atual
+    const indicesDecorridos = isAnoEmCurso
+      ? meses.map((m, idx) => m <= mesAtualStr ? idx : -1).filter(idx => idx !== -1)
+      : meses.map((_, idx) => idx);
+
+    const receitaMesesDecorridos = indicesDecorridos.map(i => receitaMensal[i]);
+    const receitaHomologaDecorridos = indicesDecorridos.map(i => receitaAnterior[i]);
+
+    const inscricoesMesesDecorridos = indicesDecorridos.map(i => inscricoesMensais[i]);
+    const inscricoesHomologaDecorridos = indicesDecorridos.map(i => inscricoesAnterior[i]);
+
+    const aulasMesesDecorridos = indicesDecorridos.map(i => aulasMensais[i]);
+    const aulasHomologaDecorridos = indicesDecorridos.map(i => aulasAnterior[i]);
+
+    const examesMesesDecorridos = indicesDecorridos.map(i => examesMensais[i]);
+    const examesHomologaDecorridos = indicesDecorridos.map(i => examesAnterior[i]);
+
+    const totalReceitaAtual = somaTotal(receitaMesesDecorridos);
+    const totalReceitaAnterior = somaTotal(receitaHomologaDecorridos);
+    const totalReceitaAnteriorAnoCompleto = somaTotal(receitaAnterior);
+
+    const totalInscricoesAtual = somaTotal(inscricoesMesesDecorridos);
+    const totalInscricoesAnterior = somaTotal(inscricoesHomologaDecorridos);
+    const totalInscricoesAnteriorAnoCompleto = somaTotal(inscricoesAnterior);
+
+    const totalAulasAtual = somaAulas(aulasMesesDecorridos);
+    const totalAulasAnterior = somaAulas(aulasHomologaDecorridos);
+    const totalAulasAnteriorAnoCompleto = somaAulas(aulasAnterior);
+
+    const aprovadosAtual = somaAprovados(examesMesesDecorridos);
+    const aprovadosAnterior = somaAprovados(examesHomologaDecorridos);
+    const totalExamesAtual = somaExamesTotal(examesMesesDecorridos);
+    const totalExamesAnterior = somaExamesTotal(examesHomologaDecorridos);
     const taxaAprovAtual = totalExamesAtual ? +((aprovadosAtual / totalExamesAtual) * 100).toFixed(1) : null;
     const taxaAprovAnterior = totalExamesAnterior ? +((aprovadosAnterior / totalExamesAnterior) * 100).toFixed(1) : null;
 
     const comparacaoHomologa = {
+      isAnoEmCurso,
+      mesAtual: mesAtualStr,
+      mesesDecorridos: indicesDecorridos.length,
       porMes: meses.map((m, i) => ({
         mes: m,
         mesAnoAnterior: mesesAnoAnterior[i],
+        decorrido: !isAnoEmCurso || m <= mesAtualStr,
         receitaAtual: receitaMensal[i].total,
         receitaAnterior: receitaAnterior[i].total,
         inscricoesAtual: inscricoesMensais[i].total,
@@ -3735,15 +3842,109 @@ app.get('/api/estatisticas', async (req, res) => {
         aulasAnterior: aulasAnterior[i].praticas + aulasAnterior[i].teoricas
       })),
       totais: {
-        receita: { atual: totalReceitaAtual, anterior: totalReceitaAnterior, variacaoPct: variacaoPct(totalReceitaAtual, totalReceitaAnterior) },
-        inscricoes: { atual: totalInscricoesAtual, anterior: totalInscricoesAnterior, variacaoPct: variacaoPct(totalInscricoesAtual, totalInscricoesAnterior) },
-        aulasConcluidas: { atual: totalAulasAtual, anterior: totalAulasAnterior, variacaoPct: variacaoPct(totalAulasAtual, totalAulasAnterior) },
+        isAnoEmCurso,
+        mesAtual: mesAtualStr,
+        mesesDecorridos: indicesDecorridos.length,
+        receita: {
+          atual: totalReceitaAtual,
+          anterior: totalReceitaAnterior,
+          anteriorAnoCompleto: totalReceitaAnteriorAnoCompleto,
+          variacaoPct: variacaoPct(totalReceitaAtual, totalReceitaAnterior)
+        },
+        inscricoes: {
+          atual: totalInscricoesAtual,
+          anterior: totalInscricoesAnterior,
+          anteriorAnoCompleto: totalInscricoesAnteriorAnoCompleto,
+          variacaoPct: variacaoPct(totalInscricoesAtual, totalInscricoesAnterior)
+        },
+        aulasConcluidas: {
+          atual: totalAulasAtual,
+          anterior: totalAulasAnterior,
+          anteriorAnoCompleto: totalAulasAnteriorAnoCompleto,
+          variacaoPct: variacaoPct(totalAulasAtual, totalAulasAnterior)
+        },
         taxaAprovacao: {
-          atual: taxaAprovAtual, anterior: taxaAprovAnterior,
+          atual: taxaAprovAtual,
+          anterior: taxaAprovAnterior,
           variacaoPP: (taxaAprovAtual != null && taxaAprovAnterior != null) ? +(taxaAprovAtual - taxaAprovAnterior).toFixed(1) : null
         }
       }
     };
+
+    // Montagem da comparação detalhada entre espaços
+    const todosEspacos = todosEspacosRes.recordset || [];
+    const espAlunosMap = new Map((espacoAlunosRes.recordset || []).map(r => [r.espaco_id, r]));
+    const espRecTotaisMap = new Map((espacoReceitaTotaisRes.recordset || []).map(r => [r.espaco_id, r]));
+    const espAulasMap = new Map((espacoAulasRes.recordset || []).map(r => [r.espaco_id, r]));
+    const espExamesMap = new Map((espacoExamesRes.recordset || []).map(r => [r.espaco_id, r]));
+
+    const espRecMensalMap = new Map();
+    (espacoReceitaMensalRes.recordset || []).forEach(r => {
+      const k = `${r.espaco_id}|${r.mes}`;
+      espRecMensalMap.set(k, +Number(r.total).toFixed(2));
+    });
+
+    const comparacaoEspacos = todosEspacos.map(esp => {
+      const al = espAlunosMap.get(esp.id) || {};
+      const rec = espRecTotaisMap.get(esp.id) || {};
+      const aul = espAulasMap.get(esp.id) || {};
+      const exm = espExamesMap.get(esp.id) || {};
+
+      const totalAlunos = Number(al.total_alunos || 0);
+      const alunosAtivos = Number(al.alunos_ativos || 0);
+      const alunosConcluidos = Number(al.alunos_concluidos || 0);
+      const inscricoesPeriodo = Number(al.inscricoes_periodo || 0);
+      const inscricoesHomologo = Number(al.inscricoes_homologo || 0);
+
+      const receitaPeriodo = +Number(rec.receita_periodo || 0).toFixed(2);
+      const receitaHomologa = +Number(rec.receita_homologa || 0).toFixed(2);
+      const receitaPendente = +Number(rec.receita_pendente || 0).toFixed(2);
+      const receitaMediaPorAluno = alunosAtivos ? +(receitaPeriodo / alunosAtivos).toFixed(2) : null;
+
+      const aulasPraticas = Number(aul.aulas_praticas || 0);
+      const aulasTeoricas = Number(aul.aulas_teoricas || 0);
+      const totalAulas = Number(aul.total_aulas || 0);
+
+      const totalExames = Number(exm.total_exames || 0);
+      const aprovados = Number(exm.aprovados || 0);
+      const reprovados = Number(exm.reprovados || 0);
+      const taxaAprovacaoGeral = totalExames ? +((aprovados / totalExames) * 100).toFixed(1) : null;
+      const examesTeoricos = Number(exm.exames_teoricos || 0);
+      const aprovadosTeoricos = Number(exm.aprovados_teoricos || 0);
+      const taxaAprovacaoTeorico = examesTeoricos ? +((aprovadosTeoricos / examesTeoricos) * 100).toFixed(1) : null;
+      const examesPraticos = Number(exm.exames_praticos || 0);
+      const aprovadosPraticos = Number(exm.aprovados_praticos || 0);
+      const taxaAprovacaoPratico = examesPraticos ? +((aprovadosPraticos / examesPraticos) * 100).toFixed(1) : null;
+
+      const receitaMensalEspaco = meses.map(m => espRecMensalMap.get(`${esp.id}|${m}`) || 0);
+
+      return {
+        id: esp.id,
+        nome: esp.nome,
+        serie: esp.serie || 'Padrão',
+        totalAlunos,
+        alunosAtivos,
+        alunosConcluidos,
+        inscricoesPeriodo,
+        inscricoesHomologo,
+        variacaoInscricoesPct: variacaoPct(inscricoesPeriodo, inscricoesHomologo),
+        receitaPeriodo,
+        receitaHomologa,
+        variacaoReceitaPct: variacaoPct(receitaPeriodo, receitaHomologa),
+        receitaPendente,
+        receitaMediaPorAluno,
+        aulasPraticas,
+        aulasTeoricas,
+        totalAulas,
+        totalExames,
+        aprovados,
+        reprovados,
+        taxaAprovacaoGeral,
+        taxaAprovacaoTeorico,
+        taxaAprovacaoPratico,
+        receitaMensal: receitaMensalEspaco
+      };
+    });
 
     // Anos disponíveis e comparativo anual
     const anosDisponiveis = (anosDisponiveisRes.recordset || [])
@@ -3922,6 +4123,10 @@ app.get('/api/estatisticas', async (req, res) => {
       modo,
       anoSelecionado: modo === 'anoCivil' ? anoQuery : null,
       anosDisponiveis,
+      isAnoEmCurso,
+      mesAtual: mesAtualStr,
+      mesesDecorridos: indicesDecorridos.length,
+      comparacaoEspacos,
       kpis,
       kpisAdicionais,
       comparacaoHomologa,
