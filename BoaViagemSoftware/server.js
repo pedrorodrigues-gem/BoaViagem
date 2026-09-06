@@ -1211,11 +1211,32 @@ app.use('/api/contratos', collectionRoutes('contratos', {
    10. Exames — marcações e estatísticas
    ------------------------------------------------------------ */
 
-app.get('/api/examesMarcacoes', (req, res) => {
-  const { tenant } = currentTenant(req);
-  const itens = (tenant.examesMarcacoes || []).slice()
-    .sort((a, b) => dstr(a.data).localeCompare(dstr(b.data)) || a.id - b.id);
-  ok(res, itens);
+app.get('/api/examesMarcacoes', async (req, res) => {
+  try {
+    const e = req.escolaId;
+    const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 200));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+
+    const result = await query(`
+      SELECT m.id, m.escola_id AS escolaId, m.aluno_id AS alunoId, m.tipo, m.data, m.hora,
+             m.hora_fim AS horaFim, m.duracao, m.local, m.estado, m.observacoes, m.resultado,
+             a.nome AS alunoNome
+      FROM exames_marcacoes m
+      LEFT JOIN alunos a ON a.id = m.aluno_id
+      WHERE m.escola_id = @e
+      ORDER BY m.data DESC, m.id DESC
+      OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
+    `, { e, offset, limit });
+
+    ok(res, result.recordset || []);
+  } catch (err) {
+    const { tenant } = currentTenant(req);
+    const limit = Math.max(1, Number(req.query.limit) || 200);
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const itens = (tenant.examesMarcacoes || []).slice()
+      .sort((a, b) => dstr(b.data).localeCompare(dstr(a.data)) || b.id - a.id);
+    ok(res, itens.slice(offset, offset + limit));
+  }
 });
 
 app.post('/api/examesMarcacoes', async (req, res) => {
@@ -2664,7 +2685,16 @@ app.get('/api/estatisticas', async (req, res) => {
 
     const tresMesesAtrasStr = meses[Math.max(0, meses.length - 3)] + '-01';
 
-    // Executar queries SQL paralelas no SQL Server
+    const safeQ = async (sqlText, params, label = '') => {
+      try {
+        return await query(sqlText, params);
+      } catch (err) {
+        console.error(`[Estatísticas SQL erro: ${label}]`, err.message);
+        return { recordset: [] };
+      }
+    };
+
+    // Executar queries SQL paralelas no SQL Server com tolerância a falhas
     const [
       receitaMensalRes,
       receitaHomologaRes,
@@ -2693,135 +2723,135 @@ app.get('/api/estatisticas', async (req, res) => {
       tempoMedioPraticaRes
     ] = await Promise.all([
       // 1. Receita mensal atual
-      query(`
-        SELECT FORMAT(data, 'yyyy-MM') AS mes, ISNULL(SUM(valor), 0) AS total
+      safeQ(`
+        SELECT FORMAT(TRY_CONVERT(date, data), 'yyyy-MM') AS mes, ISNULL(SUM(valor), 0) AS total
         FROM pagamentos
         WHERE escola_id = @e AND estado = 'Pago' AND data >= @inicioMes AND data <= @fimMes
-        GROUP BY FORMAT(data, 'yyyy-MM')
-      `, { e, inicioMes, fimMes }),
+        GROUP BY FORMAT(TRY_CONVERT(date, data), 'yyyy-MM')
+      `, { e, inicioMes, fimMes }, 'receitaMensal'),
 
       // 2. Receita período homólogo
-      query(`
-        SELECT FORMAT(data, 'yyyy-MM') AS mes, ISNULL(SUM(valor), 0) AS total
+      safeQ(`
+        SELECT FORMAT(TRY_CONVERT(date, data), 'yyyy-MM') AS mes, ISNULL(SUM(valor), 0) AS total
         FROM pagamentos
         WHERE escola_id = @e AND estado = 'Pago' AND data >= @inicioHomologo AND data <= @fimHomologo
-        GROUP BY FORMAT(data, 'yyyy-MM')
-      `, { e, inicioHomologo, fimHomologo }),
+        GROUP BY FORMAT(TRY_CONVERT(date, data), 'yyyy-MM')
+      `, { e, inicioHomologo, fimHomologo }, 'receitaHomologa'),
 
       // 3. Inscrições mensais atuais
-      query(`
-        SELECT FORMAT(data_inscricao, 'yyyy-MM') AS mes, COUNT(*) AS total
+      safeQ(`
+        SELECT FORMAT(TRY_CONVERT(date, data_inscricao), 'yyyy-MM') AS mes, COUNT(*) AS total
         FROM alunos
         WHERE escola_id = @e AND data_inscricao >= @inicioMes AND data_inscricao <= @fimMes
-        GROUP BY FORMAT(data_inscricao, 'yyyy-MM')
-      `, { e, inicioMes, fimMes }),
+        GROUP BY FORMAT(TRY_CONVERT(date, data_inscricao), 'yyyy-MM')
+      `, { e, inicioMes, fimMes }, 'inscricoesMensais'),
 
       // 4. Inscrições período homólogo
-      query(`
-        SELECT FORMAT(data_inscricao, 'yyyy-MM') AS mes, COUNT(*) AS total
+      safeQ(`
+        SELECT FORMAT(TRY_CONVERT(date, data_inscricao), 'yyyy-MM') AS mes, COUNT(*) AS total
         FROM alunos
         WHERE escola_id = @e AND data_inscricao >= @inicioHomologo AND data_inscricao <= @fimHomologo
-        GROUP BY FORMAT(data_inscricao, 'yyyy-MM')
-      `, { e, inicioHomologo, fimHomologo }),
+        GROUP BY FORMAT(TRY_CONVERT(date, data_inscricao), 'yyyy-MM')
+      `, { e, inicioHomologo, fimHomologo }, 'inscricoesHomologa'),
 
       // 5. Aulas individuais atuais (Prática / Teórica)
-      query(`
-        SELECT FORMAT(data, 'yyyy-MM') AS mes,
+      safeQ(`
+        SELECT FORMAT(TRY_CONVERT(date, data), 'yyyy-MM') AS mes,
                CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END AS tipo,
                COUNT(*) AS total
         FROM aulas
         WHERE escola_id = @e
           AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
           AND data >= @inicioMes AND data <= @fimMes
-        GROUP BY FORMAT(data, 'yyyy-MM'), CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END
-      `, { e, inicioMes, fimMes }),
+        GROUP BY FORMAT(TRY_CONVERT(date, data), 'yyyy-MM'), CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END
+      `, { e, inicioMes, fimMes }, 'aulasIndividuais'),
 
       // 6. Aulas individuais período homólogo
-      query(`
-        SELECT FORMAT(data, 'yyyy-MM') AS mes,
+      safeQ(`
+        SELECT FORMAT(TRY_CONVERT(date, data), 'yyyy-MM') AS mes,
                CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END AS tipo,
                COUNT(*) AS total
         FROM aulas
         WHERE escola_id = @e
           AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
           AND data >= @inicioHomologo AND data <= @fimHomologo
-        GROUP BY FORMAT(data, 'yyyy-MM'), CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END
-      `, { e, inicioHomologo, fimHomologo }),
+        GROUP BY FORMAT(TRY_CONVERT(date, data), 'yyyy-MM'), CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END
+      `, { e, inicioHomologo, fimHomologo }, 'aulasHomologas'),
 
       // 7. Turmas teóricas atuais
-      query(`
-        SELECT FORMAT(t.data, 'yyyy-MM') AS mes, COUNT(ti.aluno_id) AS total
+      safeQ(`
+        SELECT FORMAT(TRY_CONVERT(date, t.data), 'yyyy-MM') AS mes, COUNT(ti.aluno_id) AS total
         FROM turmas_teoricas t
         JOIN turma_inscritos ti ON ti.turma_id = t.id AND ti.presente = 1
         WHERE t.escola_id = @e
           AND t.estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
           AND t.data >= @inicioMes AND t.data <= @fimMes
-        GROUP BY FORMAT(t.data, 'yyyy-MM')
-      `, { e, inicioMes, fimMes }),
+        GROUP BY FORMAT(TRY_CONVERT(date, t.data), 'yyyy-MM')
+      `, { e, inicioMes, fimMes }, 'turmasTeoricas'),
 
       // 8. Turmas teóricas período homólogo
-      query(`
-        SELECT FORMAT(t.data, 'yyyy-MM') AS mes, COUNT(ti.aluno_id) AS total
+      safeQ(`
+        SELECT FORMAT(TRY_CONVERT(date, t.data), 'yyyy-MM') AS mes, COUNT(ti.aluno_id) AS total
         FROM turmas_teoricas t
         JOIN turma_inscritos ti ON ti.turma_id = t.id AND ti.presente = 1
         WHERE t.escola_id = @e
           AND t.estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
           AND t.data >= @inicioHomologo AND t.data <= @fimHomologo
-        GROUP BY FORMAT(t.data, 'yyyy-MM')
-      `, { e, inicioHomologo, fimHomologo }),
+        GROUP BY FORMAT(TRY_CONVERT(date, t.data), 'yyyy-MM')
+      `, { e, inicioHomologo, fimHomologo }, 'turmasHomologas'),
 
       // 9. Exames mensais atuais
-      query(`
-        SELECT FORMAT(data, 'yyyy-MM') AS mes, resultado, COUNT(*) AS total
+      safeQ(`
+        SELECT FORMAT(TRY_CONVERT(date, data), 'yyyy-MM') AS mes, resultado, COUNT(*) AS total
         FROM exames_marcacoes
         WHERE escola_id = @e AND resultado IN ('Aprovado', 'Reprovado')
           AND data >= @inicioMes AND data <= @fimMes
-        GROUP BY FORMAT(data, 'yyyy-MM'), resultado
-      `, { e, inicioMes, fimMes }),
+        GROUP BY FORMAT(TRY_CONVERT(date, data), 'yyyy-MM'), resultado
+      `, { e, inicioMes, fimMes }, 'examesMensais'),
 
       // 10. Exames período homólogo
-      query(`
-        SELECT FORMAT(data, 'yyyy-MM') AS mes, resultado, COUNT(*) AS total
+      safeQ(`
+        SELECT FORMAT(TRY_CONVERT(date, data), 'yyyy-MM') AS mes, resultado, COUNT(*) AS total
         FROM exames_marcacoes
         WHERE escola_id = @e AND resultado IN ('Aprovado', 'Reprovado')
           AND data >= @inicioHomologo AND data <= @fimHomologo
-        GROUP BY FORMAT(data, 'yyyy-MM'), resultado
-      `, { e, inicioHomologo, fimHomologo }),
+        GROUP BY FORMAT(TRY_CONVERT(date, data), 'yyyy-MM'), resultado
+      `, { e, inicioHomologo, fimHomologo }, 'examesHomologos'),
 
       // 11. Receita pendente total
-      query(`
+      safeQ(`
         SELECT ISNULL(SUM(valor), 0) AS total
         FROM pagamentos
         WHERE escola_id = @e AND estado = 'Pendente'
-      `, { e }),
+      `, { e }, 'receitaPendente'),
 
       // 12. Taxas gerais de exame
-      query(`
+      safeQ(`
         SELECT tipo, resultado, COUNT(*) AS total
         FROM exames_marcacoes
         WHERE escola_id = @e AND resultado IN ('Aprovado', 'Reprovado')
         GROUP BY tipo, resultado
-      `, { e }),
+      `, { e }, 'taxasExames'),
 
       // 13. Alunos por estado
-      query(`
+      safeQ(`
         SELECT ISNULL(estado, 'Ativo') AS estado, COUNT(*) AS total
         FROM alunos
         WHERE escola_id = @e
         GROUP BY estado
-      `, { e }),
+      `, { e }, 'alunosEstado'),
 
       // 14. Alunos por categoria
-      query(`
+      safeQ(`
         SELECT ISNULL(categoria, 'Sem categoria') AS categoria, COUNT(*) AS total
         FROM alunos
         WHERE escola_id = @e
         GROUP BY categoria
         ORDER BY total DESC
-      `, { e }),
+      `, { e }, 'alunosCategoria'),
 
       // 15. Carga por instrutor (3 meses)
-      query(`
+      safeQ(`
         SELECT i.id AS instrutorId, i.nome, COUNT(a.id) AS total
         FROM instrutores i
         JOIN (
@@ -2832,10 +2862,10 @@ app.get('/api/estatisticas', async (req, res) => {
         WHERE i.escola_id = @e
         GROUP BY i.id, i.nome
         ORDER BY total DESC
-      `, { e, tresMesesAtrasStr }),
+      `, { e, tresMesesAtrasStr }, 'cargaInstrutor'),
 
       // 16. Utilização de veículos (3 meses)
-      query(`
+      safeQ(`
         SELECT v.id AS veiculoId, v.matricula, COUNT(a.id) AS total
         FROM veiculos v
         JOIN aulas a ON a.veiculo_id = v.id
@@ -2844,48 +2874,48 @@ app.get('/api/estatisticas', async (req, res) => {
           AND a.data >= @tresMesesAtrasStr
         GROUP BY v.id, v.matricula
         ORDER BY total DESC
-      `, { e, tresMesesAtrasStr }),
+      `, { e, tresMesesAtrasStr }, 'usoVeiculos'),
 
       // 17. Receita por categoria
-      query(`
+      safeQ(`
         SELECT ISNULL(a.categoria, 'Sem categoria') AS categoria, ISNULL(SUM(p.valor), 0) AS total
         FROM pagamentos p
         LEFT JOIN alunos a ON a.id = p.aluno_id
         WHERE p.escola_id = @e AND p.estado = 'Pago'
         GROUP BY a.categoria
         ORDER BY total DESC
-      `, { e }),
+      `, { e }, 'receitaCategoria'),
 
       // 18. Aging de pagamentos pendentes
-      query(`
+      safeQ(`
         SELECT
-          ISNULL(SUM(CASE WHEN DATEDIFF(day, data, GETDATE()) <= 30 THEN valor ELSE 0 END), 0) AS f0_30,
-          ISNULL(SUM(CASE WHEN DATEDIFF(day, data, GETDATE()) BETWEEN 31 AND 60 THEN valor ELSE 0 END), 0) AS f31_60,
-          ISNULL(SUM(CASE WHEN DATEDIFF(day, data, GETDATE()) BETWEEN 61 AND 90 THEN valor ELSE 0 END), 0) AS f61_90,
-          ISNULL(SUM(CASE WHEN DATEDIFF(day, data, GETDATE()) > 90 THEN valor ELSE 0 END), 0) AS f90_plus
+          ISNULL(SUM(CASE WHEN DATEDIFF(day, TRY_CONVERT(date, data), GETDATE()) <= 30 THEN valor ELSE 0 END), 0) AS f0_30,
+          ISNULL(SUM(CASE WHEN DATEDIFF(day, TRY_CONVERT(date, data), GETDATE()) BETWEEN 31 AND 60 THEN valor ELSE 0 END), 0) AS f31_60,
+          ISNULL(SUM(CASE WHEN DATEDIFF(day, TRY_CONVERT(date, data), GETDATE()) BETWEEN 61 AND 90 THEN valor ELSE 0 END), 0) AS f61_90,
+          ISNULL(SUM(CASE WHEN DATEDIFF(day, TRY_CONVERT(date, data), GETDATE()) > 90 THEN valor ELSE 0 END), 0) AS f90_plus
         FROM pagamentos
         WHERE escola_id = @e AND estado = 'Pendente' AND data IS NOT NULL
-      `, { e }),
+      `, { e }, 'aging'),
 
       // 19. Funil de conversão
-      query(`
+      safeQ(`
         SELECT
           (SELECT COUNT(*) FROM alunos WHERE escola_id = @e) AS totalInscritos,
           (SELECT COUNT(DISTINCT aluno_id) FROM exames_marcacoes WHERE escola_id = @e AND tipo = 'Teórico' AND resultado = 'Aprovado') AS aprovadosTeorico,
           (SELECT COUNT(DISTINCT aluno_id) FROM exames_marcacoes WHERE escola_id = @e AND tipo = 'Prático' AND resultado = 'Aprovado') AS aprovadosPratico,
           (SELECT COUNT(*) FROM alunos WHERE escola_id = @e AND estado = 'Concluído') AS concluidos
-      `, { e }),
+      `, { e }, 'funil'),
 
       // 20. Exames para cálculo de tentativas médias
-      query(`
+      safeQ(`
         SELECT aluno_id, tipo, data, resultado
         FROM exames_marcacoes
         WHERE escola_id = @e AND aluno_id IS NOT NULL AND resultado IN ('Aprovado', 'Reprovado')
         ORDER BY aluno_id, tipo, data
-      `, { e }),
+      `, { e }, 'tentativas'),
 
-      // 21. Desempenho de instrutores
-      query(`
+      // 21. Desempenho de instrutores (com NULLIF para prevenir divisão por zero)
+      safeQ(`
         WITH AlunoInstrutorPrincipal AS (
           SELECT aluno_id, instrutor_id,
             ROW_NUMBER() OVER (PARTITION BY aluno_id ORDER BY COUNT(*) DESC) as rn
@@ -2904,22 +2934,24 @@ app.get('/api/estatisticas', async (req, res) => {
         WHERE m.escola_id = @e AND m.tipo = 'Prático' AND m.resultado IN ('Aprovado', 'Reprovado')
         GROUP BY i.id, i.nome
         HAVING COUNT(m.id) >= 3
-        ORDER BY (CAST(SUM(CASE WHEN m.resultado = 'Aprovado' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(m.id)) DESC
-      `, { e }),
+        ORDER BY (CAST(SUM(CASE WHEN m.resultado = 'Aprovado' THEN 1 ELSE 0 END) AS FLOAT) / NULLIF(COUNT(m.id), 0)) DESC
+      `, { e }, 'desempenhoInstrutores'),
 
       // 22. Tempo de espera teórico -> prático por aluno
-      query(`
+      safeQ(`
         WITH TeoricoAprovado AS (
-          SELECT aluno_id, MIN(data) AS dataExameAprovado
+          SELECT aluno_id, MIN(TRY_CONVERT(date, data)) AS dataExameAprovado
           FROM exames_marcacoes
           WHERE escola_id = @e AND tipo = 'Teórico' AND resultado = 'Aprovado'
+            AND TRY_CONVERT(date, data) IS NOT NULL
           GROUP BY aluno_id
         ),
         PrimeiraPratica AS (
-          SELECT aluno_id, MIN(data) AS dataAula1
+          SELECT aluno_id, MIN(TRY_CONVERT(date, data)) AS dataAula1
           FROM aulas
           WHERE escola_id = @e AND LOWER(tipo) LIKE '%prat%'
             AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
+            AND TRY_CONVERT(date, data) IS NOT NULL
           GROUP BY aluno_id
         )
         SELECT
@@ -2931,41 +2963,43 @@ app.get('/api/estatisticas', async (req, res) => {
         FROM TeoricoAprovado t
         JOIN PrimeiraPratica p ON p.aluno_id = t.aluno_id
         WHERE p.dataAula1 >= t.dataExameAprovado
-      `, { e }),
+      `, { e }, 'espera'),
 
       // 23. Anos disponíveis
-      query(`
+      safeQ(`
         SELECT DISTINCT ano FROM (
-          SELECT YEAR(data) AS ano FROM pagamentos WHERE escola_id = @e AND data IS NOT NULL
+          SELECT YEAR(TRY_CONVERT(date, data)) AS ano FROM pagamentos WHERE escola_id = @e AND data IS NOT NULL
           UNION
-          SELECT YEAR(data_inscricao) AS ano FROM alunos WHERE escola_id = @e AND data_inscricao IS NOT NULL
+          SELECT YEAR(TRY_CONVERT(date, data_inscricao)) AS ano FROM alunos WHERE escola_id = @e AND data_inscricao IS NOT NULL
           UNION
-          SELECT YEAR(data) AS ano FROM aulas WHERE escola_id = @e AND data IS NOT NULL
+          SELECT YEAR(TRY_CONVERT(date, data)) AS ano FROM aulas WHERE escola_id = @e AND data IS NOT NULL
           UNION
-          SELECT YEAR(data) AS ano FROM exames_marcacoes WHERE escola_id = @e AND data IS NOT NULL
+          SELECT YEAR(TRY_CONVERT(date, data)) AS ano FROM exames_marcacoes WHERE escola_id = @e AND data IS NOT NULL
         ) t WHERE ano >= 1990 AND ano <= 2100 ORDER BY ano
-      `, { e }),
+      `, { e }, 'anosDisponiveis'),
 
       // 24. Alunos totais por estado
-      query(`
+      safeQ(`
         SELECT
           (SELECT COUNT(*) FROM alunos WHERE escola_id = @e AND (estado = 'Ativo' OR estado IS NULL)) AS totalAlunosAtivos,
           (SELECT COUNT(*) FROM alunos WHERE escola_id = @e AND estado = 'Concluído') AS alunosConcluidos,
           (SELECT COUNT(*) FROM alunos WHERE escola_id = @e AND estado = 'Suspenso') AS alunosSuspensos
-      `, { e }),
+      `, { e }, 'alunosTotais'),
 
       // 25. Tempo médio até aprovação prática
-      query(`
+      safeQ(`
         SELECT AVG(CAST(dias AS FLOAT)) AS mediaDias
         FROM (
-          SELECT DATEDIFF(day, a.data_inscricao, MIN(m.data)) AS dias
+          SELECT DATEDIFF(day, TRY_CONVERT(date, a.data_inscricao), MIN(TRY_CONVERT(date, m.data))) AS dias
           FROM exames_marcacoes m
           JOIN alunos a ON a.id = m.aluno_id
           WHERE m.escola_id = @e AND m.tipo = 'Prático' AND m.resultado = 'Aprovado'
-            AND a.data_inscricao IS NOT NULL AND m.data >= a.data_inscricao
+            AND TRY_CONVERT(date, a.data_inscricao) IS NOT NULL
+            AND TRY_CONVERT(date, m.data) IS NOT NULL
+            AND TRY_CONVERT(date, m.data) >= TRY_CONVERT(date, a.data_inscricao)
           GROUP BY a.id, a.data_inscricao
         ) sub
-      `, { e })
+      `, { e }, 'tempoMedioPratica')
     ]);
 
     // Mapeamentos para garantir que todos os meses do período estão representados
@@ -3100,44 +3134,49 @@ app.get('/api/estatisticas', async (req, res) => {
     };
 
     // Anos disponíveis e comparativo anual
-    const anosDisponiveis = (anosDisponiveisRes.recordset || []).map(r => Number(r.ano)).sort((a, b) => a - b);
-    if (!anosDisponiveis.includes(new Date().getFullYear())) anosDisponiveis.push(new Date().getFullYear());
-    const anosComparacao = Math.max(2, Number(req.query.anosComparacao) || 5);
+    const anosDisponiveis = (anosDisponiveisRes.recordset || [])
+      .map(r => Number(r.ano))
+      .filter(a => Number.isInteger(a) && a >= 1990 && a <= 2100)
+      .sort((a, b) => a - b);
+    const currYear = new Date().getFullYear();
+    if (!anosDisponiveis.includes(currYear)) anosDisponiveis.push(currYear);
+    const anosComparacao = Math.max(2, Math.min(20, Number(req.query.anosComparacao) || 5));
     const anosParaComparar = anosDisponiveis.slice(-anosComparacao);
+    const validYears = anosParaComparar.filter(a => Number.isInteger(a) && a >= 1990 && a <= 2100);
+    const anosListStr = validYears.length ? validYears.join(',') : String(currYear);
 
-    const anosListStr = anosParaComparar.length ? anosParaComparar.join(',') : String(new Date().getFullYear());
     const [recAnualRes, inscAnualRes, aulasAnualRes, examesAnualRes] = await Promise.all([
-      query(`
-        SELECT YEAR(data) AS ano, ISNULL(SUM(valor), 0) AS total
+      safeQ(`
+        SELECT YEAR(TRY_CONVERT(date, data)) AS ano, ISNULL(SUM(valor), 0) AS total
         FROM pagamentos
-        WHERE escola_id = @e AND estado = 'Pago' AND YEAR(data) IN (${anosListStr})
-        GROUP BY YEAR(data)
-      `, { e }),
-      query(`
-        SELECT YEAR(data_inscricao) AS ano, COUNT(*) AS total
+        WHERE escola_id = @e AND estado = 'Pago' AND YEAR(TRY_CONVERT(date, data)) IN (${anosListStr})
+        GROUP BY YEAR(TRY_CONVERT(date, data))
+      `, { e }, 'recAnual'),
+      safeQ(`
+        SELECT YEAR(TRY_CONVERT(date, data_inscricao)) AS ano, COUNT(*) AS total
         FROM alunos
-        WHERE escola_id = @e AND YEAR(data_inscricao) IN (${anosListStr})
-        GROUP BY YEAR(data_inscricao)
-      `, { e }),
-      query(`
-        SELECT YEAR(data) AS ano, COUNT(*) AS total
+        WHERE escola_id = @e AND YEAR(TRY_CONVERT(date, data_inscricao)) IN (${anosListStr})
+        GROUP BY YEAR(TRY_CONVERT(date, data_inscricao))
+      `, { e }, 'inscAnual'),
+      safeQ(`
+        SELECT YEAR(TRY_CONVERT(date, data)) AS ano, COUNT(*) AS total
         FROM (
-          SELECT data FROM aulas WHERE escola_id = @e AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído') AND YEAR(data) IN (${anosListStr})
+          SELECT data FROM aulas WHERE escola_id = @e AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído') AND YEAR(TRY_CONVERT(date, data)) IN (${anosListStr})
           UNION ALL
           SELECT t.data FROM turmas_teoricas t
           JOIN turma_inscritos ti ON ti.turma_id = t.id AND ti.presente = 1
-          WHERE t.escola_id = @e AND t.estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído') AND YEAR(t.data) IN (${anosListStr})
+          WHERE t.escola_id = @e AND t.estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído') AND YEAR(TRY_CONVERT(date, t.data)) IN (${anosListStr})
         ) sub
-        GROUP BY YEAR(data)
-      `, { e }),
-      query(`
-        SELECT YEAR(data) AS ano,
+        GROUP BY YEAR(TRY_CONVERT(date, data))
+      `, { e }, 'aulasAnual'),
+      safeQ(`
+        SELECT YEAR(TRY_CONVERT(date, data)) AS ano,
                SUM(CASE WHEN resultado = 'Aprovado' THEN 1 ELSE 0 END) AS aprovados,
                SUM(CASE WHEN resultado = 'Reprovado' THEN 1 ELSE 0 END) AS reprovados
         FROM exames_marcacoes
-        WHERE escola_id = @e AND resultado IN ('Aprovado', 'Reprovado') AND YEAR(data) IN (${anosListStr})
-        GROUP BY YEAR(data)
-      `, { e })
+        WHERE escola_id = @e AND resultado IN ('Aprovado', 'Reprovado') AND YEAR(TRY_CONVERT(date, data)) IN (${anosListStr})
+        GROUP BY YEAR(TRY_CONVERT(date, data))
+      `, { e }, 'examesAnual')
     ]);
 
     const recAnualMap = new Map((recAnualRes.recordset || []).map(r => [Number(r.ano), +Number(r.total).toFixed(2)]));
@@ -3290,6 +3329,7 @@ app.get('/api/estatisticas', async (req, res) => {
       comparativoAnual
     });
   } catch (ex) {
+    console.error('[ERRO /api/estatisticas]:', ex);
     res.status(500).json({ success: false, error: `Falha ao carregar estatísticas: ${ex.message || ex}` });
   }
 });
