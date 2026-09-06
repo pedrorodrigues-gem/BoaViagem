@@ -1257,32 +1257,48 @@ app.use('/api/produtos', collectionRoutes('produtos', {
    (origem_contrato_id). */
 async function sincronizarItensContaContrato(req, contratoId, sync) {
   const { itensCarta, usaParcelasPersonalizadas, parcelasPersonalizadas, planoPagamento, numeroPrestacoes, categoria } = sync;
-  const contratoResult = await query('SELECT aluno_id FROM contratos WHERE id=@id', { id: contratoId });
-  const alunoId = contratoResult.recordset[0]?.aluno_id;
+  const contratoResult = await query('SELECT aluno_id, valor_total FROM contratos WHERE id=@id', { id: contratoId });
+  const row = contratoResult.recordset[0];
+  const alunoId = row?.aluno_id;
+  const valorTotalContrato = Number(row?.valor_total) || 0;
   await query('DELETE FROM itens_conta WHERE origem_contrato_id=@id', { id: contratoId });
 
   let novosItens;
-  if (usaParcelasPersonalizadas) {
+  if (usaParcelasPersonalizadas && Array.isArray(parcelasPersonalizadas) && parcelasPersonalizadas.length > 0) {
     novosItens = parcelasPersonalizadas.map((p, i) => ({
       descricao: p.descricao ? `Contrato ${categoria} — ${p.descricao}` : `Contrato ${categoria} — Parcela ${i + 1}`,
+      codigo: null,
       categoria: 'Diversos', valor: +(Number(p.valor) || 0).toFixed(2), taxaIva: null, ordem: i + 1, origemPlano: planoPagamento
     }));
   } else if (planoPagamento === 'Mensalidades') {
-    const valorCalculado = +itensCarta.reduce((s, i) => s + (Number(i.valor) || 0), 0).toFixed(2);
+    const valorCalculado = (Array.isArray(itensCarta) && itensCarta.length)
+      ? +itensCarta.reduce((s, i) => s + (Number(i.valor) || 0), 0).toFixed(2)
+      : valorTotalContrato;
     const n = Math.max(1, Number(numeroPrestacoes) || 1);
     const parcela = +(valorCalculado / n).toFixed(2);
     let acumulado = 0;
     novosItens = Array.from({ length: n }, (_, i) => {
       const valor = i < n - 1 ? parcela : +((valorCalculado - acumulado)).toFixed(2);
       acumulado = +(acumulado + valor).toFixed(2);
-      return { descricao: `Contrato ${categoria} — Mensalidade ${i + 1}/${n}`, categoria: 'Diversos', valor, taxaIva: null, ordem: i + 1, origemPlano: planoPagamento };
+      return { descricao: `Contrato ${categoria} — Mensalidade ${i + 1}/${n}`, codigo: null, categoria: 'Diversos', valor, taxaIva: null, ordem: i + 1, origemPlano: planoPagamento };
     });
-  } else {
+  } else if (Array.isArray(itensCarta) && itensCarta.length > 0) {
     novosItens = itensCarta.map((it, i) => ({
       descricao: `Contrato ${categoria} — ${it.descricao}`,
-      codigo: it.codigo || null, // NOVO
-      categoria: it.categoria, valor: it.valor, taxaIva: it.taxaIva ?? null, ordem: i + 1, origemPlano: planoPagamento || 'Pagamento único'
+      codigo: it.codigo || null,
+      categoria: it.categoria || 'Diversos', valor: Number(it.valor) || 0, taxaIva: it.taxaIva ?? null, ordem: i + 1, origemPlano: planoPagamento || 'Pagamento único'
     }));
+  } else {
+    // Fallback: se não houver itens específicos configurados, cria o item global de formação do contrato
+    novosItens = [{
+      descricao: `Contrato ${categoria} — Formação de Condução`,
+      codigo: null,
+      categoria: 'Diversos',
+      valor: valorTotalContrato > 0 ? valorTotalContrato : 0,
+      taxaIva: null,
+      ordem: 1,
+      origemPlano: planoPagamento || 'Pagamento único'
+    }];
   }
 
   for (const it of novosItens) {
@@ -2014,13 +2030,15 @@ app.post('/api/pagamentos/:id/recibo', (req, res) => handleEmissao(req, res, 'RE
 app.put('/api/contratos/:id/assinar', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { nomeDigitado, textoContrato, assinaturaImagem, nomeTutorDigitado, assinaturaTutorImagem } = req.body || {};
+    const { nomeDigitado, textoContrato, assinaturaImagem, nomeTutorDigitado, nomeDigitadoTutor, assinaturaTutorImagem, pdfBase64, filename } = req.body || {};
     if (!nomeDigitado) return badRequest(res, 'É necessário indicar o nome completo para confirmar a aceitação do contrato');
     if (!assinaturaImagem) return badRequest(res, 'É necessário desenhar a assinatura no ecrã antes de confirmar.');
 
     const existing = await query('SELECT * FROM contratos WHERE id=@id AND escola_id=@escolaId', { id, escolaId: req.escolaId });
     const contratoRow = existing.recordset[0];
     if (!contratoRow) return notFound(res);
+
+    const finalNomeTutor = nomeTutorDigitado || nomeDigitadoTutor || null;
 
     const base64Data = String(assinaturaImagem).includes(',') ? String(assinaturaImagem).split(',').pop() : assinaturaImagem;
     const imagemBuffer = Buffer.from(base64Data, 'base64');
@@ -2031,18 +2049,101 @@ app.put('/api/contratos/:id/assinar', async (req, res) => {
       tutorBuffer = Buffer.from(tutorBase64, 'base64');
     }
 
+    // Preparar/obter o buffer do PDF assinado
+    let pdfBuffer = null;
+    const nomeFicheiroPdf = filename || `contrato-${id}-assinado.pdf`;
+
+    if (pdfBase64) {
+      try {
+        const rawPdf = String(pdfBase64).includes(',') ? String(pdfBase64).split(',').pop() : pdfBase64;
+        pdfBuffer = Buffer.from(rawPdf, 'base64');
+      } catch (errPdf) {
+        console.error('Erro ao descodificar pdfBase64:', errPdf.message);
+      }
+    }
+
+    // Se não foi fornecido um PDF do cliente, gerar automaticamente o PDF com pdf-lib no backend
+    if (!pdfBuffer || pdfBuffer.length === 0) {
+      try {
+        const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+        const pdfDoc = await PDFDocument.create();
+        const page = pdfDoc.addPage([595.28, 841.89]);
+        const fontReg = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+        const escolaNome = req.escola?.nome || 'Escola de Condução';
+        page.drawText(escolaNome, { x: 50, y: 800, size: 16, font: fontBold, color: rgb(0.09, 0.14, 0.23) });
+        page.drawText(`CONTRATO DE FORMAÇÃO DE CONDUTORES N.º ${id}`, { x: 50, y: 780, size: 12, font: fontBold, color: rgb(0.3, 0.35, 0.45) });
+
+        page.drawText(`Categoria: ${contratoRow.categoria || '—'}  |  Valor Total: ${contratoRow.valor_total || 0} €`, { x: 50, y: 755, size: 10, font: fontReg, color: rgb(0.15, 0.15, 0.15) });
+        page.drawText(`Data de Aceitação: ${new Date().toLocaleString('pt-PT')}`, { x: 50, y: 740, size: 10, font: fontReg, color: rgb(0.15, 0.15, 0.15) });
+
+        // Desenhar resumo do contrato
+        page.drawText('Termos do Contrato:', { x: 50, y: 705, size: 11, font: fontBold, color: rgb(0.09, 0.14, 0.23) });
+        const resumoLinhas = [
+          '1. O presente contrato regula a prestação de serviços de ensino da condução.',
+          '2. O segundo outorgante aceitou os termos e condições gerais de formação.',
+          '3. O contrato entra em vigor na data da sua aceitação eletrónica.'
+        ];
+        let posY = 685;
+        resumoLinhas.forEach(l => {
+          page.drawText(l, { x: 50, y: posY, size: 9.5, font: fontReg, color: rgb(0.25, 0.25, 0.25) });
+          posY -= 18;
+        });
+
+        // Assinatura do formando
+        page.drawText('Assinatura do Formando:', { x: 50, y: 320, size: 10, font: fontBold, color: rgb(0.1, 0.1, 0.2) });
+        try {
+          const sigImg = await pdfDoc.embedPng(imagemBuffer);
+          page.drawImage(sigImg, { x: 50, y: 240, width: 140, height: 60 });
+        } catch (_) {}
+        page.drawText(`Aceite por: ${nomeDigitado}`, { x: 50, y: 220, size: 9, font: fontReg, color: rgb(0.3, 0.3, 0.3) });
+
+        // Assinatura do tutor se aplicável
+        if (tutorBuffer && finalNomeTutor) {
+          page.drawText('Assinatura do Encarregado / Tutor:', { x: 320, y: 320, size: 10, font: fontBold, color: rgb(0.1, 0.1, 0.2) });
+          try {
+            const tutorImg = await pdfDoc.embedPng(tutorBuffer);
+            page.drawImage(tutorImg, { x: 320, y: 240, width: 140, height: 60 });
+          } catch (_) {}
+          page.drawText(`Tutor: ${finalNomeTutor}`, { x: 320, y: 220, size: 9, font: fontReg, color: rgb(0.3, 0.3, 0.3) });
+        }
+
+        const pdfBytes = await pdfDoc.save();
+        pdfBuffer = Buffer.from(pdfBytes);
+      } catch (genErr) {
+        console.error('Erro ao sintetizar PDF com pdf-lib:', genErr.message);
+      }
+    }
+
+    // Gravar o ficheiro PDF no sistema de ficheiros
+    if (pdfBuffer) {
+      const dir = path.join(CONTRATOS_PDF_DIR, String(req.escolaId));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(contratoPdfPath(req.escolaId, id), pdfBuffer);
+    }
+
     const result = await query(
-      `UPDATE contratos SET estado='Assinado', texto_contrato=@textoContrato, assinatura_nome_digitado=@nomeDigitado,
-              assinatura_data_hora=SYSUTCDATETIME(), assinatura_imagem=@assinaturaImagem,
+      `UPDATE contratos SET
+              estado='Assinado',
+              texto_contrato=@textoContrato,
+              assinatura_nome_digitado=@nomeDigitado,
+              assinatura_data_hora=SYSUTCDATETIME(),
+              assinatura_imagem=@assinaturaImagem,
               assinatura_tutor_nome_digitado=@nomeTutorDigitado,
-              assinatura_tutor_imagem=@assinaturaTutorImagem
+              assinatura_tutor_imagem=@assinaturaTutorImagem,
+              pdf_assinado_filename=@pdfFilename,
+              pdf_assinado_uploaded_at=SYSUTCDATETIME(),
+              pdf_assinado_tamanho_bytes=@pdfTamanho
        OUTPUT inserted.*
        WHERE id=@id AND escola_id=@escolaId`,
       {
         id, escolaId: req.escolaId, textoContrato: textoContrato || contratoRow.texto_contrato, nomeDigitado,
         assinaturaImagem: { type: sql.VarBinary(sql.MAX), value: imagemBuffer },
-        nomeTutorDigitado: nomeTutorDigitado || null,
-        assinaturaTutorImagem: { type: sql.VarBinary(sql.MAX), value: tutorBuffer }
+        nomeTutorDigitado: finalNomeTutor,
+        assinaturaTutorImagem: { type: sql.VarBinary(sql.MAX), value: tutorBuffer },
+        pdfFilename: nomeFicheiroPdf,
+        pdfTamanho: pdfBuffer ? pdfBuffer.length : 0
       }
     );
     const contrato = dbRowToJs(result.recordset[0]);
@@ -2057,6 +2158,56 @@ app.put('/api/contratos/:id/assinar', async (req, res) => {
       imagemBase64: contrato.assinaturaTutorImagem ? `data:image/png;base64,${contrato.assinaturaTutorImagem}` : null
     } : null;
     delete contrato.assinaturaTutorImagem;
+    contrato.pdfAssinado = {
+      filename: contrato.pdfAssinadoFilename,
+      uploadedAt: contrato.pdfAssinadoUploadedAt,
+      size: contrato.pdfAssinadoTamanhoBytes
+    };
+
+    // Sincronizar automaticamente os itens à CC do aluno de acordo com o contrato assinado
+    const { tenant } = currentTenant(req);
+    const sync = calcularValoresContrato(contrato, tenant);
+    await sincronizarItensContaContrato(req, id, sync);
+    if (sync.usaParcelasPersonalizadas) {
+      const parcelasResult = await query('SELECT descricao, valor FROM contrato_parcelas_personalizadas WHERE contrato_id=@id ORDER BY ordem', { id });
+      await gravarParcelasPersonalizadas(id, parcelasResult.recordset);
+    }
+    await atualizarEstadosContaCorrente(req, contrato.alunoId);
+
+    // Se Primavera estiver ativa e aluno tiver NIF, emitir fatura de contrato automaticamente
+    nestEscolaPrimavera(req.escola);
+    if (req.escola.primavera && req.escola.primavera.ativo) {
+      const alunoResult = await query('SELECT * FROM alunos WHERE id=@id AND escola_id=@escolaId', { id: contrato.alunoId, escolaId: req.escolaId });
+      const alunoRow = alunoResult.recordset[0];
+      if (alunoRow && alunoRow.nif) {
+        const jaTemFatura = await query(`SELECT id FROM documentos_fiscais WHERE contrato_id=@id AND tipo IN ('FA','FR')`, { id });
+        if (!jaTemFatura.recordset.length) {
+          try {
+            const aluno = nestAlunoExtras(dbRowToJs(alunoRow));
+            contrato.itensCarta = itensCartaPorCategoria(tenant, contrato.categoria, Number(aluno.desconto || 0), contrato.planoCartaId);
+            const serieDoc = await obterSerieParaAluno(req, aluno);
+            const out = await invoicing.emitirFaturaContrato(req.escola, tenant, aluno, contrato, { serie: serieDoc });
+            if (out && out.resultado && out.resultado.sucesso) {
+              await query(
+                `INSERT INTO documentos_fiscais (escola_id, aluno_id, contrato_id, tipo, serie, numero, valor)
+                 VALUES (@escolaId, @alunoId, @contratoId, 'FA', @serie, @numero, @valor)`,
+                {
+                  escolaId: req.escolaId,
+                  alunoId: aluno.id,
+                  contratoId: id,
+                  serie: out.resultado.doc_serie || serieDoc,
+                  numero: out.resultado.doc_numero || null,
+                  valor: contrato.valorTotal || contrato.valorCartaCalculado || 0
+                }
+              );
+            }
+          } catch (ex) {
+            console.error('Aviso ao emitir fatura automática de contrato:', ex.message || ex);
+          }
+        }
+      }
+    }
+
     ok(res, contrato);
   } catch (ex) {
     res.status(503).json({ success: false, error: `Falha ao assinar contrato: ${ex.message || ex}` });
