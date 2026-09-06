@@ -147,14 +147,64 @@
       escola: escola,
       dashboard: dashboard
     });
+    rebuildIndexes();
     if (auth.user && auth.user.role === 'instrutor') {
       state.calendario.instrutorId = auth.user.instrutorId || (instrutores[0] && instrutores[0].id) || null;
     }
   }
 
-  function findAluno(id) { return state.alunos.find(function (a) { return a.id === id; }); }
-  function findInstrutor(id) { return state.instrutores.find(function (i) { return i.id === id; }); }
-  function findVeiculo(id) { return state.veiculos.find(function (v) { return v.id === id; }); }
+  var _alunosMap = new Map();
+  var _instrutoresMap = new Map();
+  var _veiculosMap = new Map();
+
+  function rebuildIndexes() {
+    _alunosMap.clear();
+    (state.alunos || []).forEach(function (a) {
+      if (a && a.id != null) _alunosMap.set(Number(a.id), a);
+    });
+    _instrutoresMap.clear();
+    (state.instrutores || []).forEach(function (i) {
+      if (i && i.id != null) _instrutoresMap.set(Number(i.id), i);
+    });
+    _veiculosMap.clear();
+    (state.veiculos || []).forEach(function (v) {
+      if (v && v.id != null) _veiculosMap.set(Number(v.id), v);
+    });
+  }
+
+  function findAluno(id) {
+    if (id == null) return undefined;
+    var numId = Number(id);
+    if (_alunosMap.has(numId)) return _alunosMap.get(numId);
+    return state.alunos.find(function (a) { return a.id === id || a.id === numId; });
+  }
+
+  function findInstrutor(id) {
+    if (id == null) return undefined;
+    var numId = Number(id);
+    if (_instrutoresMap.has(numId)) return _instrutoresMap.get(numId);
+    return state.instrutores.find(function (i) { return i.id === id || i.id === numId; });
+  }
+
+  function findVeiculo(id) {
+    if (id == null) return undefined;
+    var numId = Number(id);
+    if (_veiculosMap.has(numId)) return _veiculosMap.get(numId);
+    return state.veiculos.find(function (v) { return v.id === id || v.id === numId; });
+  }
+
+  function debounce(fn, delay) {
+    var timer = null;
+    return function () {
+      var context = this;
+      var args = arguments;
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        fn.apply(context, args);
+      }, delay || 250);
+    };
+  }
+
   function getEspacoNomeById(id) { return (state.espacos.find(function (e) { return e.id === id; }) || {}).nome || '—'; }
 
   function esc(str) {
@@ -187,7 +237,8 @@
     return m + 'min';
   }
   function getAlunoNomePorId(id) {
-    return state.alunos.find(function (a) { return a.id === id; })?.nome || '';
+    var a = findAluno(id);
+    return a ? a.nome : '';
   }
 
   /* ---------- Normalização de tipo/estado (mesma lógica do backend) ----------
@@ -223,7 +274,22 @@
   }
 
   function getAlunoContagens(aluno) {
-    var alunoId = Number(aluno && aluno.id);
+    if (!aluno) return { aulasTeoricas: 0, aulasPraticas: 0 };
+    // Se o registo já tem os valores calculados na query SQL, usa-os diretamente em O(1)
+    if (aluno.aulasTeoricasRealizadas != null && aluno.aulasPraticasRealizadas != null) {
+      return {
+        aulasTeoricas: Number(aluno.aulasTeoricasRealizadas) || 0,
+        aulasPraticas: Number(aluno.aulasPraticasRealizadas) || 0
+      };
+    }
+    if (aluno.aulas_teoricas_realizadas != null && aluno.aulas_praticas_realizadas != null) {
+      return {
+        aulasTeoricas: Number(aluno.aulas_teoricas_realizadas) || 0,
+        aulasPraticas: Number(aluno.aulas_praticas_realizadas) || 0
+      };
+    }
+
+    var alunoId = Number(aluno.id);
 
     var aulasTeoricasIndividuais = state.aulas.filter(function (a) {
       return a.alunoId === alunoId && isTipo(a, 'Teórica') && !isEstadoCancelada(a.estado);
@@ -467,14 +533,14 @@
     return '<div class="empty-state"><h4>' + esc(title) + '</h4><p>' + esc(text) + '</p></div>';
   }
 
-  let alunosSearchDebounce = null;
+  var _searchDebounceTimers = {};
   function updateSearchAndRerender(inputEl, chave, renderFn) {
-    clearTimeout(alunosSearchDebounce);
-    const valor = inputEl.value;
-    alunosSearchDebounce = setTimeout(() => {
+    if (_searchDebounceTimers[chave]) clearTimeout(_searchDebounceTimers[chave]);
+    var valor = inputEl.value;
+    _searchDebounceTimers[chave] = setTimeout(function () {
       state.search[chave] = valor;
       renderFn();
-    }, 180);
+    }, 200);
   }
 
   window.state = state;
@@ -509,4 +575,6 @@
   window.renderDashboard = renderDashboard;
   window.emptyState = emptyState;
   window.updateSearchAndRerender = updateSearchAndRerender;
+  window.rebuildIndexes = rebuildIndexes;
+  window.debounce = debounce;
 })();

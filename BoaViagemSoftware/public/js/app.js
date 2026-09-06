@@ -119,8 +119,34 @@ function renderGlobalSearchBox(containerId) {
  
   function esconder() { results.style.display = 'none'; results.innerHTML = ''; }
  
-  function mostrarResultados() {
-    itensAtuais = pesquisarGlobal(input.value);
+  async function mostrarResultados() {
+    const queryStr = input.value.trim();
+    if (!queryStr) { esconder(); return; }
+
+    try {
+      const res = await api('GET', `/api/pesquisa-global?q=${encodeURIComponent(queryStr)}`);
+      if (input.value.trim() !== queryStr) return;
+      if (res && Array.isArray(res.resultados) && res.resultados.length > 0) {
+        itensAtuais = res.resultados.map(r => ({
+          tipo: r.tipo,
+          label: r.label,
+          sub: r.sub,
+          acao: () => {
+            if (r.tipo === 'Aluno') { switchView('alunos'); setTimeout(() => openAlunoForm(r.id), 60); }
+            else if (r.tipo === 'Instrutor') { switchView('instrutores'); setTimeout(() => openInstrutorForm(r.id), 60); }
+            else if (r.tipo === 'Veículo') { switchView('veiculos'); setTimeout(() => openVeiculoForm(r.id), 60); }
+            else if (r.tipo === 'Contrato') { switchView('contratos'); }
+            else if (r.tipo === 'Turma teórica') { switchView('calendario'); setTimeout(() => abrirTurmaTeoricaDetalhe(r.id), 60); }
+            else { switchView('dashboard'); }
+          }
+        }));
+      } else {
+        itensAtuais = pesquisarGlobal(queryStr);
+      }
+    } catch (e) {
+      itensAtuais = pesquisarGlobal(queryStr);
+    }
+
     if (!itensAtuais.length) { esconder(); return; }
     results.innerHTML = itensAtuais.map((it, i) => `
       <div class="global-search-item" data-idx="${i}" style="padding:9px 12px; cursor:pointer; border-bottom:1px solid var(--border); font-size:13.5px">
@@ -142,7 +168,7 @@ function renderGlobalSearchBox(containerId) {
  
   input.addEventListener('input', () => {
     clearTimeout(timer);
-    timer = setTimeout(mostrarResultados, 150);
+    timer = setTimeout(mostrarResultados, 250);
   });
   input.addEventListener('focus', () => { if (input.value.trim()) mostrarResultados(); });
  
@@ -1675,22 +1701,9 @@ function montarFiltrosEstatisticasHTML(d) {
 
 /* ==================== VISTA DE ESTATÍSTICAS ==================== */
 
-async function renderEstatisticas() {
-  initChartTooltip(); // idempotente — pode chamar-se sempre que a vista renderiza
-  const el = document.getElementById('view-estatisticas');
-  el.innerHTML = `<div class="muted" style="padding:12px">A carregar estatísticas...</div>`;
-  
-  try {
-    const dados = await api('GET', '/api/estatisticas');
-    state.estatisticas = dados;
-    montarEstatisticasHTML(dados);
-  } catch (err) {
-    el.innerHTML = emptyState('Erro ao carregar estatísticas', err.message);
-  }
-}
-
 function montarEstatisticasHTML(d) {
-  const el = document.getElementById('view-estatisticas');
+  const el = document.getElementById('estatisticas-conteudo') || document.getElementById('view-estatisticas');
+  if (!el) return;
   if (!d) {
     el.innerHTML = emptyState('Sem dados', 'Não foram encontrados dados estatísticos.');
     return;
@@ -2666,7 +2679,7 @@ function renderInstrutores() {
 
   el.innerHTML = `
     <div class="toolbar">
-      <input class="search-input" placeholder="Pesquisar instrutor..." value="${esc(state.search.instrutores)}" oninput="state.search.instrutores=this.value; renderInstrutores();">
+      <input class="search-input" placeholder="Pesquisar instrutor..." value="${esc(state.search.instrutores)}" oninput="updateSearchAndRerender(this, 'instrutores', renderInstrutores)">
     </div>
     <div class="table-wrap">
       ${list.length ? `<table>
@@ -2784,7 +2797,7 @@ function renderVeiculos() {
 
   el.innerHTML = `
     <div class="toolbar">
-      <input class="search-input" placeholder="Pesquisar por matrícula ou modelo..." value="${esc(state.search.veiculos)}" oninput="state.search.veiculos=this.value; renderVeiculos();">
+      <input class="search-input" placeholder="Pesquisar por matrícula ou modelo..." value="${esc(state.search.veiculos)}" oninput="updateSearchAndRerender(this, 'veiculos', renderVeiculos)">
     </div>
     <div class="table-wrap">
       ${list.length ? `<table>
@@ -2887,7 +2900,7 @@ function renderAulasPraticasTab() {
 
   body.innerHTML = `
     <div class="toolbar">
-      <input class="search-input" placeholder="Pesquisar por nome do aluno..." value="${esc(state.search.aulas)}" oninput="state.search.aulas=this.value; renderAulas();">
+      <input class="search-input" placeholder="Pesquisar por nome do aluno..." value="${esc(state.search.aulas)}" oninput="updateSearchAndRerender(this, 'aulas', renderAulas)">
       <div class="filter-row">
         <button class="chip ${periodo === 'Futuras' ? 'active' : ''}" onclick="state.filter.aulasPeriodo='Futuras'; renderAulas();">Hoje e futuras</button>
         <button class="chip ${periodo === 'Historico' ? 'active' : ''}" onclick="state.filter.aulasPeriodo='Historico'; renderAulas();">Histórico</button>
@@ -3614,7 +3627,7 @@ function renderPagamentos() {
       </div>
     ` : ''}
     <div class="toolbar">
-      <input class="search-input" placeholder="Pesquisar por nome do aluno..." value="${esc(state.search.pagamentos)}" oninput="state.search.pagamentos=this.value; renderPagamentos();">
+      <input class="search-input" placeholder="Pesquisar por nome do aluno..." value="${esc(state.search.pagamentos)}" oninput="updateSearchAndRerender(this, 'pagamentos', renderPagamentos)">
     </div>
     <div class="table-wrap">
       ${list.length ? `<table>
@@ -4630,7 +4643,7 @@ function renderContratos() {
     </div>
 
     <div class="toolbar">
-      <input class="search-input" placeholder="Pesquisar contrato por nome do aluno..." value="${esc(state.search.contratos)}" oninput="state.search.contratos=this.value; renderContratos();">
+      <input class="search-input" placeholder="Pesquisar contrato por nome do aluno..." value="${esc(state.search.contratos)}" oninput="updateSearchAndRerender(this, 'contratos', renderContratos)">
     </div>
     <div class="table-wrap">
       ${list.length ? `<table>
