@@ -2456,46 +2456,95 @@ app.get('/api/relatorios/aluno/:id', (req, res) => {
   });
 });
 
-app.get('/api/relatorios/geral', (req, res) => {
-  const { tenant } = currentTenant(req);
-  const linhas = tenant.alunos.map(aluno => {
-    const minutosPratica = tenant.aulas
-      .filter(a => a.alunoId === aluno.id && isTipo(a, 'Prática') && isEstadoConcluida(a.estado))
-      .reduce((s, a) => s + (a.duracao || 50), 0);
+app.get('/api/relatorios/geral', async (req, res) => {
+  try {
+    const e = req.escolaId;
+    const result = await query(`
+      WITH AulasPraticas AS (
+        SELECT aluno_id,
+               SUM(ISNULL(duracao, 50)) AS minutosPratica,
+               SUM(ISNULL(km, 0)) AS kmTotal
+        FROM aulas
+        WHERE escola_id = @e
+          AND (LOWER(tipo) LIKE '%prat%')
+          AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
+        GROUP BY aluno_id
+      ),
+      AulasTeoricasIndividuais AS (
+        SELECT aluno_id,
+               SUM(ISNULL(duracao, 50)) AS minutosTeoricaInd
+        FROM aulas
+        WHERE escola_id = @e
+          AND (LOWER(tipo) LIKE '%teor%')
+          AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
+        GROUP BY aluno_id
+      ),
+      TurmasPresencas AS (
+        SELECT ti.aluno_id,
+               SUM(CASE WHEN ti.presente = 1 THEN DATEDIFF(minute, TRY_CONVERT(time, t.hora_inicio), TRY_CONVERT(time, t.hora_fim)) ELSE 0 END) AS minutosTeoricaTurma,
+               SUM(CASE WHEN ti.presente = 0 AND t.estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído') THEN 1 ELSE 0 END) AS faltasTeoricas
+        FROM turma_inscritos ti
+        JOIN turmas_teoricas t ON t.id = ti.turma_id
+        WHERE t.escola_id = @e
+        GROUP BY ti.aluno_id
+      )
+      SELECT TOP (300)
+        a.id AS alunoId,
+        a.nome,
+        a.categoria,
+        a.estado,
+        ROUND(ISNULL(ap.minutosPratica, 0) / 60.0, 2) AS horasPraticasRealizadas,
+        ROUND((ISNULL(ati.minutosTeoricaInd, 0) + ISNULL(tp.minutosTeoricaTurma, 0)) / 60.0, 2) AS horasTeoricasRealizadas,
+        r.horas_praticas_min AS horasPraticasMin,
+        r.horas_teoricas_min AS horasTeoricasMin,
+        ISNULL(ap.kmTotal, 0) AS kmTotalPercorridos,
+        r.km_pratica_min AS kmMin,
+        ISNULL(tp.faltasTeoricas, 0) AS faltasTeoricas
+      FROM alunos a
+      LEFT JOIN AulasPraticas ap ON ap.aluno_id = a.id
+      LEFT JOIN AulasTeoricasIndividuais ati ON ati.aluno_id = a.id
+      LEFT JOIN TurmasPresencas tp ON tp.aluno_id = a.id
+      LEFT JOIN requisitos r ON r.escola_id = @e AND r.categoria = a.categoria
+      WHERE a.escola_id = @e AND (a.estado = 'Ativo' OR a.estado IS NULL)
+      ORDER BY a.nome
+    `, { e });
 
-    const minutosTeoricaIndividual = tenant.aulas
-      .filter(a => a.alunoId === aluno.id && isTipo(a, 'Teórica') && isEstadoConcluida(a.estado))
-      .reduce((s, a) => s + (a.duracao || 50), 0);
-
-    const minutosTeoricaTurma = tenant.turmasTeoricas
-      .filter(t => (t.inscritos || []).includes(aluno.id) && !!(t.presencas || {})[aluno.id])
-      .reduce((s, t) => s + minutosEntre(t.horaInicio, t.horaFim), 0);
-
-    const faltasTeoricas = tenant.turmasTeoricas
-      .filter(t => (t.inscritos || []).includes(aluno.id) && isEstadoConcluida(t.estado) && (t.presencas || {})[aluno.id] === false)
-      .length;
-
-    const kmTotalPercorridos = tenant.aulas
-      .filter(a => a.alunoId === aluno.id && isTipo(a, 'Prática') && isEstadoConcluida(a.estado))
-      .reduce((s, a) => s + (Number(a.km) || 0), 0);
-
-    const requisito = tenant.requisitos.find(r => r.categoria === aluno.categoria) || {};
-
-    return {
-      alunoId: aluno.id,
-      nome: aluno.nome,
-      categoria: aluno.categoria,
-      estado: aluno.estado,
-      horasPraticasRealizadas: +(minutosPratica / 60).toFixed(2),
-      horasTeoricasRealizadas: +((minutosTeoricaIndividual + minutosTeoricaTurma) / 60).toFixed(2),
-      horasPraticasMin: requisito.horasPraticasMin ?? null,
-      horasTeoricasMin: requisito.horasTeoricasMin ?? null,
-      kmTotalPercorridos,
-      kmMin: requisito.kmPraticaMin ?? null,
-      faltasTeoricas
-    };
-  });
-  ok(res, linhas);
+    ok(res, result.recordset || []);
+  } catch (err) {
+    const { tenant } = currentTenant(req);
+    const linhas = (tenant.alunos || []).slice(0, 100).map(aluno => {
+      const minutosPratica = (tenant.aulas || [])
+        .filter(a => a.alunoId === aluno.id && isTipo(a, 'Prática') && isEstadoConcluida(a.estado))
+        .reduce((s, a) => s + (a.duracao || 50), 0);
+      const minutosTeoricaIndividual = (tenant.aulas || [])
+        .filter(a => a.alunoId === aluno.id && isTipo(a, 'Teórica') && isEstadoConcluida(a.estado))
+        .reduce((s, a) => s + (a.duracao || 50), 0);
+      const minutosTeoricaTurma = (tenant.turmasTeoricas || [])
+        .filter(t => (t.inscritos || []).includes(aluno.id) && !!(t.presencas || {})[aluno.id])
+        .reduce((s, t) => s + minutosEntre(t.horaInicio, t.horaFim), 0);
+      const faltasTeoricas = (tenant.turmasTeoricas || [])
+        .filter(t => (t.inscritos || []).includes(aluno.id) && isEstadoConcluida(t.estado) && (t.presencas || {})[aluno.id] === false)
+        .length;
+      const kmTotalPercorridos = (tenant.aulas || [])
+        .filter(a => a.alunoId === aluno.id && isTipo(a, 'Prática') && isEstadoConcluida(a.estado))
+        .reduce((s, a) => s + (Number(a.km) || 0), 0);
+      const requisito = (tenant.requisitos || []).find(r => r.categoria === aluno.categoria) || {};
+      return {
+        alunoId: aluno.id,
+        nome: aluno.nome,
+        categoria: aluno.categoria,
+        estado: aluno.estado,
+        horasPraticasRealizadas: +(minutosPratica / 60).toFixed(2),
+        horasTeoricasRealizadas: +((minutosTeoricaIndividual + minutosTeoricaTurma) / 60).toFixed(2),
+        horasPraticasMin: requisito.horasPraticasMin ?? null,
+        horasTeoricasMin: requisito.horasTeoricasMin ?? null,
+        kmTotalPercorridos,
+        kmMin: requisito.kmPraticaMin ?? null,
+        faltasTeoricas
+      };
+    });
+    ok(res, linhas);
+  }
 });
 
 app.get('/api/relatorios/espera-teorica-pratica', async (req, res) => {
@@ -3386,21 +3435,41 @@ app.get('/api/dashboard', async (req, res) => {
 
   const alertas = [];
 
-  tenant.alunos.forEach(a => {
-    const est = estadoValidade(a.atestadoMedico?.dataValidade);
-    if (est === 'expirado') alertas.push({ tipo: 'Atestado médico', gravidade: 'alta', texto: `Atestado médico de ${a.nome} está expirado.` });
-    else if (est === 'a_expirar') alertas.push({ tipo: 'Atestado médico', gravidade: 'media', texto: `Atestado médico de ${a.nome} expira em breve.` });
+  // Alunos com documentos expirados ou a expirar (diretamente do SQL para suportar 500k alunos sem loop em memória)
+  try {
+    const alunosAlertasRes = await query(`
+      SELECT TOP (30) id, nome, atestado_data_validade, psicotecnico_aplicavel, psicotecnico_data_validade, imt_data_validade
+      FROM alunos
+      WHERE escola_id = @e AND (estado = 'Ativo' OR estado IS NULL)
+        AND (
+          (atestado_data_validade IS NOT NULL AND atestado_data_validade <= DATEADD(day, 30, GETDATE())) OR
+          (psicotecnico_aplicavel = 1 AND psicotecnico_data_validade IS NOT NULL AND psicotecnico_data_validade <= DATEADD(day, 30, GETDATE())) OR
+          (imt_data_validade IS NOT NULL AND imt_data_validade <= DATEADD(day, 30, GETDATE()))
+        )
+    `, { e: req.escolaId });
 
-    if (a.examePsicotecnico?.aplicavel) {
-      const estP = estadoValidade(a.examePsicotecnico?.dataValidade);
-      if (estP === 'expirado') alertas.push({ tipo: 'Exame psicotécnico', gravidade: 'alta', texto: `Exame psicotécnico de ${a.nome} está expirado.` });
-      else if (estP === 'a_expirar') alertas.push({ tipo: 'Exame psicotécnico', gravidade: 'media', texto: `Exame psicotécnico de ${a.nome} expira em breve.` });
-    }
+    (alunosAlertasRes.recordset || []).forEach(a => {
+      const estAtestado = estadoValidade(dstr(a.atestado_data_validade).slice(0, 10));
+      if (estAtestado === 'expirado') alertas.push({ tipo: 'Atestado médico', gravidade: 'alta', texto: `Atestado médico de ${a.nome} está expirado.` });
+      else if (estAtestado === 'a_expirar') alertas.push({ tipo: 'Atestado médico', gravidade: 'media', texto: `Atestado médico de ${a.nome} expira em breve.` });
 
-    const estProc = estadoValidade(a.processoIMT?.dataValidade);
-    if (estProc === 'expirado') alertas.push({ tipo: 'Processo IMT', gravidade: 'alta', texto: `Licença de aprendizagem de ${a.nome} está expirada.` });
-    else if (estProc === 'a_expirar') alertas.push({ tipo: 'Processo IMT', gravidade: 'media', texto: `Licença de aprendizagem de ${a.nome} expira em breve.` });
-  });
+      if (a.psicotecnico_aplicavel) {
+        const estP = estadoValidade(dstr(a.psicotecnico_data_validade).slice(0, 10));
+        if (estP === 'expirado') alertas.push({ tipo: 'Exame psicotécnico', gravidade: 'alta', texto: `Exame psicotécnico de ${a.nome} está expirado.` });
+        else if (estP === 'a_expirar') alertas.push({ tipo: 'Exame psicotécnico', gravidade: 'media', texto: `Exame psicotécnico de ${a.nome} expira em breve.` });
+      }
+
+      const estIMT = estadoValidade(dstr(a.imt_data_validade).slice(0, 10));
+      if (estIMT === 'expirado') alertas.push({ tipo: 'Processo IMT', gravidade: 'alta', texto: `Licença de aprendizagem de ${a.nome} está expirada.` });
+      else if (estIMT === 'a_expirar') alertas.push({ tipo: 'Processo IMT', gravidade: 'media', texto: `Licença de aprendizagem de ${a.nome} expira em breve.` });
+    });
+  } catch (err) {
+    (tenant.alunos || []).slice(0, 50).forEach(a => {
+      const est = estadoValidade(a.atestadoMedico?.dataValidade);
+      if (est === 'expirado') alertas.push({ tipo: 'Atestado médico', gravidade: 'alta', texto: `Atestado médico de ${a.nome} está expirado.` });
+      else if (est === 'a_expirar') alertas.push({ tipo: 'Atestado médico', gravidade: 'media', texto: `Atestado médico de ${a.nome} expira em breve.` });
+    });
+  }
 
   tenant.instrutores.forEach(i => {
     const est = estadoValidade(i.tituloProfissionalValidade);
@@ -3419,18 +3488,36 @@ app.get('/api/dashboard', async (req, res) => {
     else if (estSeg === 'a_expirar') alertas.push({ tipo: 'Seguro de instrução', gravidade: 'media', texto: `Seguro de instrução do veículo ${v.matricula} expira em breve.` });
   });
 
-  tenant.pagamentos.forEach(p => {
-    if (p.estado !== 'Pendente') return;
-    const dias = diasPassados(p.data);
-    if (dias === null || dias >= 7) {
-      const aluno = tenant.alunos.find(a => a.id === Number(p.alunoId));
+  try {
+    const pagamentosAtrasoRes = await query(`
+      SELECT TOP (20) p.id, p.data, a.nome AS alunoNome
+      FROM pagamentos p
+      LEFT JOIN alunos a ON a.id = p.aluno_id
+      WHERE p.escola_id = @e AND p.estado = 'Pendente' AND p.data <= DATEADD(day, -7, GETDATE())
+      ORDER BY p.data ASC
+    `, { e: req.escolaId });
+
+    (pagamentosAtrasoRes.recordset || []).forEach(p => {
       alertas.push({
         tipo: 'Pagamento em atraso',
         gravidade: 'alta',
-        texto: `${aluno?.nome || 'Aluno'} tem um pagamento pendente desde ${p.data ? formatarDataPt(p.data) : 'data não definida'}.`
+        texto: `${p.alunoNome || 'Aluno'} tem um pagamento pendente desde ${p.data ? formatarDataPt(dstr(p.data).slice(0, 10)) : 'data não definida'}.`
       });
-    }
-  });
+    });
+  } catch (err) {
+    tenant.pagamentos.forEach(p => {
+      if (p.estado !== 'Pendente') return;
+      const dias = diasPassados(p.data);
+      if (dias === null || dias >= 7) {
+        const aluno = tenant.alunos.find(a => a.id === Number(p.alunoId));
+        alertas.push({
+          tipo: 'Pagamento em atraso',
+          gravidade: 'alta',
+          texto: `${aluno?.nome || 'Aluno'} tem um pagamento pendente desde ${p.data ? formatarDataPt(p.data) : 'data não definida'}.`
+        });
+      }
+    });
+  }
 
   tenant.preInscricoes.forEach(p => {
     if (p.estado !== 'Pendente') return;
