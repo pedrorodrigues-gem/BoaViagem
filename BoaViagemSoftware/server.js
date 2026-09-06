@@ -3884,7 +3884,7 @@ app.get('/api/estatisticas', async (req, res) => {
       espRecMensalMap.set(k, +Number(r.total).toFixed(2));
     });
 
-    const comparacaoEspacos = todosEspacos.map(esp => {
+    const espacosFinais = todosEspacos.map(esp => {
       const al = espAlunosMap.get(esp.id) || {};
       const rec = espRecTotaisMap.get(esp.id) || {};
       const aul = espAulasMap.get(esp.id) || {};
@@ -3945,6 +3945,17 @@ app.get('/api/estatisticas', async (req, res) => {
         receitaMensal: receitaMensalEspaco
       };
     });
+
+    const nomesMesesPt = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+    const nomeMesAtual = nomesMesesPt[mesAtual - 1] || '';
+    const comparacaoEspacos = {
+      ativo: espacosFinais.length >= 2,
+      periodoRotulo: isAnoEmCurso ? `Ano em Curso (Jan a ${nomeMesAtual} ${anoQuery})` : (modo === 'anoCivil' ? `Ano ${anoQuery}` : 'Últimos 12 Meses'),
+      isAnoEmCurso,
+      mesAtualStr,
+      mesesLabels: meses,
+      espacos: espacosFinais
+    };
 
     // Anos disponíveis e comparativo anual
     const anosDisponiveis = (anosDisponiveisRes.recordset || [])
@@ -4125,6 +4136,7 @@ app.get('/api/estatisticas', async (req, res) => {
       anosDisponiveis,
       isAnoEmCurso,
       mesAtual: mesAtualStr,
+      mesAtualStr: mesAtualStr,
       mesesDecorridos: indicesDecorridos.length,
       comparacaoEspacos,
       kpis,
