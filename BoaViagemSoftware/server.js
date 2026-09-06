@@ -51,6 +51,40 @@ function contratoPdfPath(escolaId, contratoId) {
   return path.join(CONTRATOS_PDF_DIR, String(escolaId), `contrato-${contratoId}.pdf`);
 }
 
+async function ensureSchemaColumns() {
+  try {
+    await query(`
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('espacos') AND name = 'serie')
+        ALTER TABLE espacos ADD serie NVARCHAR(20) NULL;
+
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('pagamentos') AND name = 'modo_pagamento')
+        ALTER TABLE pagamentos ADD modo_pagamento NVARCHAR(10) NOT NULL DEFAULT 'PGNUM';
+
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'assinatura_tutor_nome_digitado')
+        ALTER TABLE contratos ADD assinatura_tutor_nome_digitado NVARCHAR(200) NULL;
+
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'assinatura_tutor_imagem')
+        ALTER TABLE contratos ADD assinatura_tutor_imagem VARBINARY(MAX) NULL;
+    `);
+  } catch (err) {
+    console.warn('Aviso ao verificar colunas da BD:', err.message || err);
+  }
+}
+ensureSchemaColumns();
+
+async function obterSerieParaAluno(req, aluno) {
+  if (aluno && (aluno.espacoId || aluno.espaco_id)) {
+    const espacoId = aluno.espacoId || aluno.espaco_id;
+    try {
+      const espacoRes = await query('SELECT serie FROM espacos WHERE id=@id AND escola_id=@escolaId', { id: espacoId, escolaId: req.escolaId });
+      const serieEspaco = espacoRes.recordset[0]?.serie;
+      if (serieEspaco && String(serieEspaco).trim()) return String(serieEspaco).trim();
+    } catch (e) { /* fallback */ }
+  }
+  nestEscolaPrimavera(req.escola);
+  return req.escola?.primavera?.serie || null;
+}
+
 /* ------------------------------------------------------------
    2. Helpers genéricos
    ------------------------------------------------------------ */
@@ -210,14 +244,14 @@ const COLUMNS_BY_TABLE = {
   alunos: ['pessoa_id', 'espaco_id', 'numero_aluno', 'nome', 'email', 'telefone', 'categoria', 'estado', 'data_inscricao', 'aulas_teoricas', 'aulas_praticas', 'notas', 'data_nascimento', 'nif', 'tipo_documento', 'numero_documento', 'validade_documento', 'morada', 'codigo_postal', 'localidade', 'dispensa_modulos', 'desconto', 'foto', 'atestado_data_emissao', 'atestado_data_validade', 'atestado_apto', 'psicotecnico_aplicavel', 'psicotecnico_data_emissao', 'psicotecnico_data_validade', 'imt_numero', 'imt_data_emissao', 'imt_data_validade'],
   instrutores: ['pessoa_id', 'nome', 'email', 'telefone', 'estado', 'cargo', 'nif', 'titulo_profissional_numero', 'titulo_profissional_validade', 'foto'],
   pessoas: ['nome', 'tipo_pessoa', 'origem_collection', 'origem_id', 'email', 'telefone', 'estado'],
-  espacos: ['nome', 'observacoes'],
+  espacos: ['nome', 'observacoes', 'serie'],
   veiculos: ['matricula', 'marca', 'modelo', 'categoria', 'estado', 'inspecao_valida', 'seguro_instrucao_validade', 'data_afetacao_escola'],
   aulas: ['aluno_id', 'instrutor_id', 'veiculo_id', 'espaco_id', 'data', 'hora', 'hora_fim', 'duracao', 'km', 'tipo', 'modulo', 'estado', 'notas'],
   turmas_teoricas: ['espaco_id', 'instrutor_id', 'tema', 'data', 'hora_inicio', 'hora_fim', 'sala', 'estado'],
   requisitos: ['categoria', 'horas_teoricas_min', 'horas_praticas_min', 'km_pratica_min'],
   produtos: ['codigo', 'descricao', 'categoria', 'valor', 'descontavel', 'taxa_iva'],
-  contratos: ['aluno_id', 'categoria', 'plano_carta_id', 'plano_pagamento', 'numero_prestacoes', 'estado', 'valor_carta_calculado', 'desconto_aplicado', 'valor_total', 'texto_contrato'],
-  pagamentos: ['aluno_id', 'valor', 'data', 'descricao', 'taxa_iva', 'estado'],
+  contratos: ['aluno_id', 'categoria', 'plano_carta_id', 'plano_pagamento', 'numero_prestacoes', 'estado', 'valor_carta_calculado', 'desconto_aplicado', 'valor_total', 'texto_contrato', 'assinatura_nome_digitado', 'assinatura_data_hora', 'assinatura_tutor_nome_digitado'],
+  pagamentos: ['aluno_id', 'valor', 'data', 'descricao', 'taxa_iva', 'estado', 'modo_pagamento'],
   itens_conta: ['aluno_id', 'origem_contrato_id', 'codigo', 'descricao', 'categoria', 'valor', 'taxa_iva', 'estado', 'origem_plano', 'ordem'],  pre_inscricoes: ['nome', 'email', 'categoria', 'desconto', 'estado', 'observacoes', 'data_pre_inscricao', 'data_inscricao', 'aluno_id'],
   exames_marcacoes: ['aluno_id', 'tipo', 'data', 'hora', 'hora_fim', 'duracao', 'local', 'estado', 'observacoes', 'resultado']
 };
@@ -229,9 +263,7 @@ function jsToDbRow(table, row, extra = {}) {
     if (key === 'id' || key === 'escolaId') continue;
     const dbKey = camelToSnake(key);
     if (allowed && !allowed.includes(dbKey)) continue;
-    if (dbKey === 'foto') {
-      // Marca sempre o tipo explicitamente — incluindo quando é null —
-      // para o driver não tentar inferir NVarChar numa coluna VARBINARY.
+    if (dbKey === 'foto' || dbKey === 'assinatura_imagem' || dbKey === 'assinatura_tutor_imagem') {
       out[dbKey] = { type: require('mssql').VarBinary(require('mssql').MAX), value: fotoParaBuffer(value) };
     } else {
       out[dbKey] = value;
@@ -493,8 +525,12 @@ function collectionRoutes(name, { validate, onCreate, onUpdate, onDelete, onAfte
       const { tenant } = currentTenant(req);
       const atual = (tenant[name] || []).find(x => x.id === Number(req.params.id)) || await fetchItemFromSql(req, name, req.params.id);
       if (onDelete && atual) {
-        const err = await onDelete(atual, tenant, req);
-        if (err) return badRequest(res, err);
+        const resultOrErr = await onDelete(atual, tenant, req, res);
+        if (res.headersSent) return;
+        if (typeof resultOrErr === 'string') return badRequest(res, resultOrErr);
+        if (resultOrErr && resultOrErr.convertedToNC) {
+          return ok(res, resultOrErr);
+        }
       }
       const removed = await deleteItemFromSql(req, name, req.params.id);
       if (!removed) return notFound(res);
@@ -826,7 +862,14 @@ app.get('/api/alunos/lista', async (req, res) => {
 });
 
 app.use('/api/alunos', collectionRoutes('alunos', {
-  validate: (p, tenant) => { /* ...igual... */ },
+  validate: (p) => {
+    if (!p.nome || !String(p.nome).trim()) return 'O nome do aluno é obrigatório.';
+    const doc = p.numeroDocumento || p.numero_documento;
+    if (!doc || !String(doc).trim()) return 'O número do documento de identificação (CC / Passaporte) é obrigatório.';
+    const espaco = p.espacoId || p.espaco_id;
+    if (!espaco) return 'O espaço físico da escola é obrigatório.';
+    return null;
+  },
   onCreate: (item, tenant) => { /* ...igual... */ },
   onAfterCreate: async (saved, tenant, req) => {
     const pessoaId = await criarPessoaSql(req, { nome: saved.nome, tipoPessoa: 'aluno', origemCollection: 'alunos', origemId: saved.id, email: saved.email, telefone: saved.telefone, estado: saved.estado });
@@ -1032,13 +1075,147 @@ app.use('/api/requisitos', collectionRoutes('requisitos', {
 }));
 app.use('/api/pagamentos', collectionRoutes('pagamentos', {
   validate: (p) => (!p.alunoId || !p.valor ? 'Aluno e valor são obrigatórios' : null),
-  onCreate: async (item, tenant, req) => { await tentarEmitirReciboAutomatico(item, tenant, req); },
+  onCreate: async (item, tenant, req) => {
+    if (!item.modoPagamento && !item.modo_pagamento) item.modoPagamento = 'PGNUM';
+    await tentarEmitirReciboAutomatico(item, tenant, req);
+  },
   onAfterCreate: async (saved, tenant, req) => { await atualizarEstadosContaCorrente(req, saved.alunoId); return saved; },
   onUpdate: async (atualizado, anterior, tenant, req) => {
+    if (!atualizado.modoPagamento && !atualizado.modo_pagamento) atualizado.modoPagamento = anterior?.modoPagamento || 'PGNUM';
     if (atualizado.estado === 'Pago' && anterior.estado !== 'Pago') await tentarEmitirReciboAutomatico(atualizado, tenant, req);
   },
   onAfterUpdate: async (saved, tenant, req) => { await atualizarEstadosContaCorrente(req, saved.alunoId); return saved; },
-  onAfterDelete: async (removed, tenant, req) => { await atualizarEstadosContaCorrente(req, removed.alunoId); }
+  onDelete: async (atual, tenant, req) => {
+    // Verificar se o pagamento já possui emissão fiscal associada
+    const docResult = await query(
+      `SELECT TOP 1 * FROM documentos_fiscais WHERE pagamento_id=@id AND tipo IN ('FA', 'FR', 'RE') ORDER BY data_emissao DESC`,
+      { id: atual.id }
+    );
+    const docRow = docResult.recordset[0];
+    const estaFaturado = !!(atual.faturacaoNumero || (atual.faturacao && atual.faturacao.numero) || docRow);
+
+    if (estaFaturado) {
+      // O pagamento já foi faturado -> CONVERTER EM NOTA DE CRÉDITO (NC)
+      const alunoResult = await query('SELECT * FROM alunos WHERE id=@id AND escola_id=@escolaId', { id: atual.alunoId, escolaId: req.escolaId });
+      const alunoRow = alunoResult.recordset[0];
+      const aluno = alunoRow ? nestAlunoExtras(dbRowToJs(alunoRow)) : null;
+
+      const docTipo = docRow ? docRow.tipo : (atual.faturacaoTipo || atual.faturacao?.tipo || 'FA');
+      const docSerie = docRow ? docRow.serie : (atual.faturacaoSerie || atual.faturacao?.serie || req.escola.primavera?.serie);
+      const docNumero = docRow ? docRow.numero : (atual.faturacaoNumero || atual.faturacao?.numero || '');
+
+      nestEscolaPrimavera(req.escola);
+      let ncResultado = { sucesso: true, doc_tipo: 'NC', doc_serie: docSerie, doc_numero: `NC-${atual.id}` };
+
+      if (req.escola.primavera && req.escola.primavera.ativo && aluno && aluno.nif) {
+        try {
+          const serieDoc = await obterSerieParaAluno(req, aluno);
+          const out = await invoicing.emitirNotaCredito(req.escola, tenant, aluno, atual, {
+            docOriginalTipo: docTipo,
+            docOriginalSerie: docSerie,
+            docOriginalNumero: docNumero,
+            motivo: '001',
+            serie: serieDoc
+          });
+          if (out && out.resultado) {
+            ncResultado = out.resultado;
+          }
+        } catch (ex) {
+          console.warn('Aviso ao emitir NC na Primavera:', ex.message || ex);
+        }
+      }
+
+      await query(
+        `INSERT INTO documentos_fiscais (escola_id, aluno_id, pagamento_id, tipo, serie, numero, valor, doc_original_tipo, doc_original_serie, doc_original_numero)
+         VALUES (@escolaId, @alunoId, @pagamentoId, 'NC', @serie, @numero, @valor, @docOrigTipo, @docOrigSerie, @docOrigNumero)`,
+        {
+          escolaId: req.escolaId,
+          alunoId: atual.alunoId,
+          pagamentoId: atual.id,
+          serie: ncResultado.doc_serie || docSerie || null,
+          numero: ncResultado.doc_numero || null,
+          valor: atual.valor,
+          docOrigTipo: docTipo,
+          docOrigSerie: docSerie,
+          docOrigNumero: String(docNumero)
+        }
+      );
+
+      await query(
+        `UPDATE pagamentos
+         SET estado='Anulado',
+             faturacao_tipo='NC',
+             faturacao_serie=@ncSerie,
+             faturacao_numero=@ncNumero,
+             faturacao_data_emissao=SYSUTCDATETIME()
+         WHERE id=@id AND escola_id=@escolaId`,
+        {
+          id: atual.id,
+          escolaId: req.escolaId,
+          ncSerie: ncResultado.doc_serie || docSerie || null,
+          ncNumero: ncResultado.doc_numero || null
+        }
+      );
+
+      await historicoFaturacaoInsert(atual.id, {
+        tipo: 'NC',
+        sucesso: !!ncResultado.sucesso,
+        doc_numero: ncResultado.doc_numero,
+        doc_serie: ncResultado.doc_serie,
+        erro: ncResultado.erro
+      });
+
+      await atualizarEstadosContaCorrente(req, atual.alunoId);
+
+      const list = tenant.pagamentos || [];
+      const pos = list.findIndex(p => p.id === atual.id);
+      if (pos >= 0) {
+        list[pos].estado = 'Anulado';
+        list[pos].faturacaoTipo = 'NC';
+        list[pos].faturacaoSerie = ncResultado.doc_serie || docSerie;
+        list[pos].faturacaoNumero = ncResultado.doc_numero;
+        list[pos].faturacao = {
+          tipo: 'NC',
+          serie: ncResultado.doc_serie || docSerie,
+          numero: ncResultado.doc_numero,
+          dataEmissao: new Date().toISOString()
+        };
+      }
+
+      return {
+        convertedToNC: true,
+        message: `O pagamento já estava faturado e foi convertido em Nota de Crédito (NC ${ncResultado.doc_serie || ''}/${ncResultado.doc_numero || ''}) com sucesso.`,
+        pagamentoId: atual.id
+      };
+    }
+
+    return null;
+  },
+  onAfterDelete: async (removed, tenant, req) => { await atualizarEstadosContaCorrente(req, removed.alunoId); },
+  transformOut: async (row, tenant, req) => {
+    if (row.faturacaoNumero || row.faturacaoTipo) {
+      row.faturacao = {
+        tipo: row.faturacaoTipo,
+        serie: row.faturacaoSerie,
+        numero: row.faturacaoNumero,
+        entidade: row.faturacaoEntidade,
+        dataEmissao: row.faturacaoDataEmissao
+      };
+    } else {
+      const docResult = await query(`SELECT TOP 1 * FROM documentos_fiscais WHERE pagamento_id=@id ORDER BY data_emissao DESC`, { id: row.id });
+      if (docResult.recordset[0]) {
+        row.faturacao = dbRowToJs(docResult.recordset[0]);
+      } else {
+        row.faturacao = null;
+      }
+    }
+    const histResult = await query(`SELECT * FROM pagamento_historico_faturacao WHERE pagamento_id=@id ORDER BY data_hora DESC`, { id: row.id });
+    row.historicoFaturacao = histResult.recordset.map(dbRowToJs);
+    if (!row.modoPagamento) {
+      row.modoPagamento = row.modo_pagamento || 'PGNUM';
+    }
+    return row;
+  }
 }));
 app.use('/api/itensConta', collectionRoutes('itensConta', {
   validate: (p) => {
@@ -1196,6 +1373,11 @@ app.use('/api/contratos', collectionRoutes('contratos', {
       imagemBase64: row.assinaturaImagem ? `data:image/png;base64,${row.assinaturaImagem}` : null
     } : null;
     delete row.assinaturaImagem;
+    row.assinaturaTutor = row.assinaturaTutorNomeDigitado ? {
+      nomeDigitado: row.assinaturaTutorNomeDigitado,
+      imagemBase64: row.assinaturaTutorImagem ? `data:image/png;base64,${row.assinaturaTutorImagem}` : null
+    } : null;
+    delete row.assinaturaTutorImagem;
     row.pdfAssinado = row.pdfAssinadoFilename ? { filename: row.pdfAssinadoFilename, uploadedAt: row.pdfAssinadoUploadedAt, size: row.pdfAssinadoTamanhoBytes } : null;
     const aluno = (tenant.alunos || []).find(a => a.id === row.alunoId);
     row.itensCarta = itensCartaPorCategoria(tenant, row.categoria, Number(aluno?.desconto ?? row.descontoAplicado ?? 0), row.planoCartaId);
@@ -1741,14 +1923,15 @@ async function tentarEmitirReciboAutomatico(item, tenant, req) {
   contrato.faturacao = faturaRow ? { tipo: faturaRow.tipo, serie: faturaRow.serie, numero: faturaRow.numero } : null;
 
   try {
-    const out = await invoicing.emitirReciboContrato(req.escola, tenant, aluno, contrato, item);
+    const serieDoc = await obterSerieParaAluno(req, aluno);
+    const out = await invoicing.emitirReciboContrato(req.escola, tenant, aluno, contrato, item, { serie: serieDoc });
     if (out.resultado.sucesso) {
       await query(
         `INSERT INTO documentos_fiscais (escola_id, aluno_id, contrato_id, pagamento_id, tipo, serie, numero, valor, doc_original_tipo, doc_original_serie, doc_original_numero)
          VALUES (@escolaId, @alunoId, @contratoId, @pagamentoId, 'RE', @serie, @numero, @valor, @docTipo, @docSerie, @docNumero)`,
         {
           escolaId: req.escolaId, alunoId: aluno.id, contratoId: contrato.id, pagamentoId: item.id || null,
-          serie: out.resultado.doc_serie || null, numero: out.resultado.doc_numero || null, valor: Number(item.valor) || 0,
+          serie: out.resultado.doc_serie || serieDoc || null, numero: out.resultado.doc_numero || null, valor: Number(item.valor) || 0,
           docTipo: contrato.faturacao?.tipo || null, docSerie: contrato.faturacao?.serie || null, docNumero: contrato.faturacao?.numero || null
         }
       );
@@ -1778,12 +1961,14 @@ async function handleEmissao(req, res, tipo) {
     const pagamento = dbRowToJs(pagamentoRow);
     const { tenant } = currentTenant(req);
 
+    const serieDoc = await obterSerieParaAluno(req, aluno);
+    const options = { serie: serieDoc, ...(req.body || {}) };
     let out;
     try {
-      if (tipo === 'FA') out = await invoicing.emitirFatura(req.escola, tenant, aluno, pagamento);
-      else if (tipo === 'FR') out = await invoicing.emitirFaturaRecibo(req.escola, tenant, aluno, pagamento);
-      else if (tipo === 'NC') out = await invoicing.emitirNotaCredito(req.escola, tenant, aluno, pagamento, req.body || {});
-      else if (tipo === 'RE') out = await invoicing.emitirRecibo(req.escola, tenant, aluno, pagamento, req.body || {});
+      if (tipo === 'FA') out = await invoicing.emitirFatura(req.escola, tenant, aluno, pagamento, options);
+      else if (tipo === 'FR') out = await invoicing.emitirFaturaRecibo(req.escola, tenant, aluno, pagamento, options);
+      else if (tipo === 'NC') out = await invoicing.emitirNotaCredito(req.escola, tenant, aluno, pagamento, options);
+      else if (tipo === 'RE') out = await invoicing.emitirRecibo(req.escola, tenant, aluno, pagamento, options);
     } catch (ex) {
       return res.status(502).json({ success: false, error: `Erro inesperado a comunicar com a Cegid Primavera: ${ex.message || ex}` });
     }
@@ -1829,7 +2014,7 @@ app.post('/api/pagamentos/:id/recibo', (req, res) => handleEmissao(req, res, 'RE
 app.put('/api/contratos/:id/assinar', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { nomeDigitado, textoContrato, assinaturaImagem } = req.body || {};
+    const { nomeDigitado, textoContrato, assinaturaImagem, nomeTutorDigitado, assinaturaTutorImagem } = req.body || {};
     if (!nomeDigitado) return badRequest(res, 'É necessário indicar o nome completo para confirmar a aceitação do contrato');
     if (!assinaturaImagem) return badRequest(res, 'É necessário desenhar a assinatura no ecrã antes de confirmar.');
 
@@ -1840,16 +2025,24 @@ app.put('/api/contratos/:id/assinar', async (req, res) => {
     const base64Data = String(assinaturaImagem).includes(',') ? String(assinaturaImagem).split(',').pop() : assinaturaImagem;
     const imagemBuffer = Buffer.from(base64Data, 'base64');
 
+    let tutorBuffer = null;
+    if (assinaturaTutorImagem) {
+      const tutorBase64 = String(assinaturaTutorImagem).includes(',') ? String(assinaturaTutorImagem).split(',').pop() : assinaturaTutorImagem;
+      tutorBuffer = Buffer.from(tutorBase64, 'base64');
+    }
+
     const result = await query(
       `UPDATE contratos SET estado='Assinado', texto_contrato=@textoContrato, assinatura_nome_digitado=@nomeDigitado,
-              assinatura_data_hora=SYSUTCDATETIME(), assinatura_imagem=@assinaturaImagem
+              assinatura_data_hora=SYSUTCDATETIME(), assinatura_imagem=@assinaturaImagem,
+              assinatura_tutor_nome_digitado=@nomeTutorDigitado,
+              assinatura_tutor_imagem=@assinaturaTutorImagem
        OUTPUT inserted.*
        WHERE id=@id AND escola_id=@escolaId`,
       {
         id, escolaId: req.escolaId, textoContrato: textoContrato || contratoRow.texto_contrato, nomeDigitado,
-        // Mesma técnica usada na foto do aluno: tipo explícito VarBinary,
-        // para o driver não tentar gravar como NVarChar.
-        assinaturaImagem: { type: sql.VarBinary(sql.MAX), value: imagemBuffer }
+        assinaturaImagem: { type: sql.VarBinary(sql.MAX), value: imagemBuffer },
+        nomeTutorDigitado: nomeTutorDigitado || null,
+        assinaturaTutorImagem: { type: sql.VarBinary(sql.MAX), value: tutorBuffer }
       }
     );
     const contrato = dbRowToJs(result.recordset[0]);
@@ -1858,7 +2051,12 @@ app.put('/api/contratos/:id/assinar', async (req, res) => {
       dataHora: contrato.assinaturaDataHora,
       imagemBase64: contrato.assinaturaImagem ? `data:image/png;base64,${contrato.assinaturaImagem}` : null
     };
-    delete contrato.assinaturaImagem; // já vai dentro de "assinatura", não precisa duplicado
+    delete contrato.assinaturaImagem;
+    contrato.assinaturaTutor = contrato.assinaturaTutorNomeDigitado ? {
+      nomeDigitado: contrato.assinaturaTutorNomeDigitado,
+      imagemBase64: contrato.assinaturaTutorImagem ? `data:image/png;base64,${contrato.assinaturaTutorImagem}` : null
+    } : null;
+    delete contrato.assinaturaTutorImagem;
     ok(res, contrato);
   } catch (ex) {
     res.status(503).json({ success: false, error: `Falha ao assinar contrato: ${ex.message || ex}` });
@@ -1871,7 +2069,6 @@ app.post('/api/contratos/:id/pdf-assinado', async (req, res) => {
     const existing = await query('SELECT * FROM contratos WHERE id=@id AND escola_id=@escolaId', { id, escolaId: req.escolaId });
     const contratoRow = existing.recordset[0];
     if (!contratoRow) return notFound(res, 'Contrato não encontrado');
-    if (contratoRow.estado !== 'Assinado') return badRequest(res, 'Só é possível submeter o PDF depois de o contrato estar assinado.');
 
     const { pdfBase64, filename } = req.body || {};
     if (!pdfBase64) return badRequest(res, 'É necessário enviar o ficheiro PDF do contrato assinado.');
@@ -1892,13 +2089,58 @@ app.post('/api/contratos/:id/pdf-assinado', async (req, res) => {
 
     const nomeFicheiro = filename || `contrato-${id}.pdf`;
     const result = await query(
-      `UPDATE contratos SET pdf_assinado_filename=@filename, pdf_assinado_uploaded_at=SYSUTCDATETIME(), pdf_assinado_tamanho_bytes=@tamanho
+      `UPDATE contratos SET estado='Assinado', pdf_assinado_filename=@filename, pdf_assinado_uploaded_at=SYSUTCDATETIME(), pdf_assinado_tamanho_bytes=@tamanho
        OUTPUT inserted.*
        WHERE id=@id AND escola_id=@escolaId`,
       { id, escolaId: req.escolaId, filename: nomeFicheiro, tamanho: buffer.length }
     );
     const contrato = dbRowToJs(result.recordset[0]);
     contrato.pdfAssinado = { filename: contrato.pdfAssinadoFilename, uploadedAt: contrato.pdfAssinadoUploadedAt, size: contrato.pdfAssinadoTamanhoBytes };
+
+    // Sincronizar automaticamente os itens à CC do aluno após a submissão
+    const { tenant } = currentTenant(req);
+    const sync = calcularValoresContrato(contrato, tenant);
+    await sincronizarItensContaContrato(req, id, sync);
+    if (sync.usaParcelasPersonalizadas) {
+      const parcelasResult = await query('SELECT descricao, valor FROM contrato_parcelas_personalizadas WHERE contrato_id=@id ORDER BY ordem', { id });
+      await gravarParcelasPersonalizadas(id, parcelasResult.recordset);
+    }
+    await atualizarEstadosContaCorrente(req, contrato.alunoId);
+
+    // Se Primavera estiver ativa e aluno tiver NIF, emitir fatura de contrato automaticamente
+    nestEscolaPrimavera(req.escola);
+    if (req.escola.primavera && req.escola.primavera.ativo) {
+      const alunoResult = await query('SELECT * FROM alunos WHERE id=@id AND escola_id=@escolaId', { id: contrato.alunoId, escolaId: req.escolaId });
+      const alunoRow = alunoResult.recordset[0];
+      if (alunoRow && alunoRow.nif) {
+        const jaTemFatura = await query(`SELECT id FROM documentos_fiscais WHERE contrato_id=@id AND tipo IN ('FA','FR')`, { id });
+        if (!jaTemFatura.recordset.length) {
+          try {
+            const aluno = nestAlunoExtras(dbRowToJs(alunoRow));
+            contrato.itensCarta = itensCartaPorCategoria(tenant, contrato.categoria, Number(aluno.desconto || 0), contrato.planoCartaId);
+            const serieDoc = await obterSerieParaAluno(req, aluno);
+            const out = await invoicing.emitirFaturaContrato(req.escola, tenant, aluno, contrato, { serie: serieDoc });
+            if (out && out.resultado && out.resultado.sucesso) {
+              await query(
+                `INSERT INTO documentos_fiscais (escola_id, aluno_id, contrato_id, tipo, serie, numero, valor)
+                 VALUES (@escolaId, @alunoId, @contratoId, 'FA', @serie, @numero, @valor)`,
+                {
+                  escolaId: req.escolaId,
+                  alunoId: aluno.id,
+                  contratoId: id,
+                  serie: out.resultado.doc_serie || serieDoc,
+                  numero: out.resultado.doc_numero || null,
+                  valor: contrato.valorTotal || contrato.valorCartaCalculado || 0
+                }
+              );
+            }
+          } catch (ex) {
+            console.error('Aviso ao emitir fatura automática de contrato:', ex.message || ex);
+          }
+        }
+      }
+    }
+
     ok(res, { contrato });
   } catch (ex) {
     res.status(503).json({ success: false, error: `Falha ao guardar PDF do contrato: ${ex.message || ex}` });
@@ -2692,6 +2934,92 @@ app.get('/api/relatorios/fluxo-caixa', async (req, res) => {
   } catch (err) {
     console.error('Erro ao gerar relatório de fluxo de caixa:', err);
     res.status(500).json({ success: false, error: 'Erro ao gerar relatório de fluxo de caixa.' });
+  }
+});
+
+app.get('/api/relatorios/folha-caixa-diaria', async (req, res) => {
+  try {
+    const data = req.query.data || new Date().toISOString().slice(0, 10);
+    const result = await query(`
+      SELECT
+        p.id, p.aluno_id, p.valor, p.data, p.descricao, p.estado,
+        COALESCE(p.modo_pagamento, 'PGNUM') AS modo_pagamento,
+        p.faturacao_tipo, p.faturacao_serie, p.faturacao_numero,
+        a.nome AS aluno_nome, a.numero_aluno, a.espaco_id,
+        COALESCE(e.nome, 'Sem espaço atribuído') AS espaco_nome
+      FROM pagamentos p
+      INNER JOIN alunos a ON a.id = p.aluno_id
+      LEFT JOIN espacos e ON e.id = a.espaco_id
+      WHERE p.escola_id = @e
+        AND p.data = @data
+        AND p.estado = 'Pago'
+      ORDER BY espaco_nome, a.nome
+    `, { e: req.escolaId, data });
+
+    const rows = result.recordset || [];
+    const espacosMap = new Map();
+
+    const todosEspacosRes = await query('SELECT id, nome FROM espacos WHERE escola_id = @e ORDER BY nome', { e: req.escolaId });
+    for (const esp of (todosEspacosRes.recordset || [])) {
+      espacosMap.set(esp.nome, {
+        espacoId: esp.id,
+        espacoNome: esp.nome,
+        totalNumerario: 0,
+        totalCartaoTransferencia: 0,
+        totalGeral: 0,
+        pagamentos: []
+      });
+    }
+
+    for (const r of rows) {
+      const espacoNome = r.espaco_nome;
+      if (!espacosMap.has(espacoNome)) {
+        espacosMap.set(espacoNome, {
+          espacoId: r.espaco_id || null,
+          espacoNome,
+          totalNumerario: 0,
+          totalCartaoTransferencia: 0,
+          totalGeral: 0,
+          pagamentos: []
+        });
+      }
+      const item = espacosMap.get(espacoNome);
+      const val = Number(r.valor) || 0;
+      const modo = String(r.modo_pagamento || 'PGNUM').toUpperCase();
+      if (modo === 'PGTR') {
+        item.totalCartaoTransferencia = +(item.totalCartaoTransferencia + val).toFixed(2);
+      } else {
+        item.totalNumerario = +(item.totalNumerario + val).toFixed(2);
+      }
+      item.totalGeral = +(item.totalGeral + val).toFixed(2);
+      item.pagamentos.push({
+        id: r.id,
+        alunoId: r.aluno_id,
+        alunoNome: r.aluno_nome,
+        numeroAluno: r.numero_aluno,
+        descricao: r.descricao,
+        valor: val,
+        modoPagamento: modo,
+        faturacao: r.faturacao_numero ? { tipo: r.faturacao_tipo, serie: r.faturacao_serie, numero: r.faturacao_numero } : null
+      });
+    }
+
+    const espacos = Array.from(espacosMap.values());
+    const totalGeralNumerario = +espacos.reduce((s, e) => s + e.totalNumerario, 0).toFixed(2);
+    const totalGeralCartaoTransferencia = +espacos.reduce((s, e) => s + e.totalCartaoTransferencia, 0).toFixed(2);
+    const totalGeralDia = +(totalGeralNumerario + totalGeralCartaoTransferencia).toFixed(2);
+
+    ok(res, {
+      data,
+      escolaNome: req.escola?.nome || 'Escola de Condução',
+      espacos,
+      totalGeralNumerario,
+      totalGeralCartaoTransferencia,
+      totalGeralDia
+    });
+  } catch (ex) {
+    console.error('Erro ao gerar folha de caixa diária:', ex);
+    res.status(500).json({ success: false, error: `Falha ao gerar folha de caixa diária: ${ex.message || ex}` });
   }
 });
 
