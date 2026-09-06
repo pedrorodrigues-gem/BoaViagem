@@ -1291,7 +1291,10 @@ const CHART_CORES = {
 };
 
 function chartMesLabelCurto(chaveMes) {
-  const [ano, mes] = chaveMes.split('-');
+  if (!chaveMes || typeof chaveMes !== 'string') return '';
+  const partes = chaveMes.split('-');
+  if (partes.length < 2) return chaveMes;
+  const [ano, mes] = partes;
   const rotulo = new Date(Number(ano), Number(mes) - 1, 1).toLocaleDateString('pt-PT', { month: 'short' });
   return rotulo.replace('.', '').charAt(0).toUpperCase() + rotulo.replace('.', '').slice(1);
 }
@@ -1727,13 +1730,14 @@ function montarFiltrosEstatisticasHTML(d) {
 /* ==================== VISTA DE ESTATÍSTICAS ==================== */
 
 function renderComparacaoEspacosHTML(ce) {
-  if (!ce || !ce.espacos || !ce.espacos.length) {
-    return '';
-  }
-  const espacos = ce.espacos;
+  if (!ce) return '';
+  const espacos = Array.isArray(ce) ? ce : (ce.espacos || []);
+  if (!espacos.length) return '';
   const isDois = espacos.length === 2;
   const e1 = espacos[0];
   const e2 = espacos[1];
+  const periodoRotulo = (!Array.isArray(ce) && ce.periodoRotulo) ? ce.periodoRotulo : 'Período Selecionado';
+  const mesesLabels = (!Array.isArray(ce) && Array.isArray(ce.mesesLabels)) ? ce.mesesLabels : [];
 
   const totalReceita = espacos.reduce((s, e) => s + (e.receitaTotal || 0), 0);
   const totalAtivos = espacos.reduce((s, e) => s + (e.alunosAtivos || 0), 0);
@@ -1765,7 +1769,7 @@ function renderComparacaoEspacosHTML(ce) {
             <span>🏢</span> Comparação entre Espaços da Escola
           </h3>
           <p class="muted" style="margin-top:3px; font-size:12.5px">
-            Desempenho comparativo de faturação, volume de formação, alunos e eficácia de exames · <strong>${esc(ce.periodoRotulo || 'Período Selecionado')}</strong>
+            Desempenho comparativo de faturação, volume de formação, alunos e eficácia de exames · <strong>${esc(periodoRotulo)}</strong>
           </p>
         </div>
         <div>
@@ -1980,14 +1984,14 @@ function renderComparacaoEspacosHTML(ce) {
       </div>
 
       <!-- GRÁFICO COMPARATIVO DE RECEITA MENSAL ENTRE ESPAÇOS -->
-      ${isDois && ce.mesesLabels && ce.mesesLabels.length ? `
+      ${isDois && mesesLabels && mesesLabels.length ? `
         <div style="margin-top:24px; padding-top:16px; border-top:1px solid var(--border)">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
             <h4 style="font-size:0.95rem; margin:0">Evolução Mensal de Receita: ${esc(e1.nome)} vs ${esc(e2.nome)}</h4>
             <span class="muted" style="font-size:12px">Comparativo de faturação mensal recebida</span>
           </div>
           ${svgBarChartDuplo(
-            ce.mesesLabels.map(m => chartMesLabelCurto(m)),
+            mesesLabels.map(m => chartMesLabelCurto(m)),
             e1.receitaMensal || [],
             e2.receitaMensal || [],
             {
@@ -2014,8 +2018,10 @@ function montarEstatisticasHTML(d) {
 
   // --- Extração e Resolução Segura de Dados ---
   const kpis = d.kpis || {};
-  const labelsMes = (d.receitaMensal || []).map(m => chartMesLabelCurto(m.mes));
+  const labelsMes = (d.receitaMensal || []).map(m => chartMesLabelCurto(m && m.mes));
   const conclusoes = gerarConclusoes(d);
+  const mesAtualRef = d.mesAtualStr || d.mesAtual || (d.receitaMensal && d.receitaMensal.length ? d.receitaMensal[d.receitaMensal.length - 1]?.mes : null) || new Date().toISOString().slice(0, 7);
+  const rotuloMesAtual = chartMesLabelCurto(mesAtualRef);
 
   // Dados de comparação homóloga e do funil com fallbacks de segurança
   const h = d.comparacaoHomologa || kpis.comparacaoHomologa || {
@@ -2158,12 +2164,12 @@ function montarEstatisticasHTML(d) {
         <div>
           <h3 style="margin:0">Comparação com o ano anterior (período homólogo)</h3>
           <div class="muted" style="font-size:12.5px; margin-top:2px">
-            ${d.isAnoEmCurso ? `Ano em curso (${d.anoSelecionado}): comparação rigorosa dos meses decorridos (${chartMesLabelCurto(d.mesAtualStr)}) contra os mesmos meses homólogos do ano anterior` : 'Comparativo entre o período selecionado e o ano anterior correspondente'}
+            ${d.isAnoEmCurso ? `Ano em curso (${d.anoSelecionado}): comparação rigorosa dos meses decorridos (${rotuloMesAtual}) contra os mesmos meses homólogos do ano anterior` : 'Comparativo entre o período selecionado e o ano anterior correspondente'}
           </div>
         </div>
         ${d.isAnoEmCurso ? `
           <span class="badge" style="background:#e0f2fe; color:#0369a1; font-weight:700; font-size:12px; padding:4px 10px">
-            📅 Análise Homóloga YTD (Jan a ${chartMesLabelCurto(d.mesAtualStr)})
+            📅 Análise Homóloga YTD (Jan a ${rotuloMesAtual})
           </span>
         ` : ''}
       </div>
