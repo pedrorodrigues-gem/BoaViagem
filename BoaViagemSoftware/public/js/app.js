@@ -2512,14 +2512,14 @@ function openAlunoForm(id) {
         </div>
       </div>
       <div class="form-grid">
-        <div class="form-field full"><label>Nome completo</label><input name="nome" required value="${esc(item?.nome || '')}"></div>
+        <div class="form-field full"><label>Nome completo *</label><input name="nome" required value="${esc(item?.nome || '')}"></div>
         <div class="form-field"><label>Data de nascimento</label><input name="dataNascimento" type="date" value="${item?.dataNascimento || ''}"></div>
         <div class="form-field"><label>NIF</label><input name="nif" value="${esc(item?.nif || '')}" maxlength="9" placeholder="123456789"></div>
         <div class="form-field">
           <label>Tipo de documento</label>
           <select name="tipoDocumento">${['CC', 'Passaporte'].map(t => `<option ${item?.tipoDocumento === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
         </div>
-        <div class="form-field"><label>N.º do documento</label><input name="numeroDocumento" value="${esc(item?.numeroDocumento || '')}"></div>
+        <div class="form-field"><label>N.º do documento (CC / Passaporte) *</label><input name="numeroDocumento" required placeholder="Ex: 12345678" value="${esc(item?.numeroDocumento || '')}"></div>
         <div class="form-field"><label>Validade do documento</label><input name="validadeDocumento" type="date" value="${item?.validadeDocumento || ''}"></div>
         <div class="form-field full"><label>Morada</label><input name="morada" value="${esc(item?.morada || '')}"></div>
         <div class="form-field"><label>Código postal</label><input name="codigoPostal" value="${esc(item?.codigoPostal || '')}" placeholder="0000-000"></div>
@@ -2527,8 +2527,9 @@ function openAlunoForm(id) {
         <div class="form-field"><label>Email</label><input name="email" type="email" value="${esc(item?.email || '')}"></div>
         <div class="form-field"><label>Telefone</label><input name="telefone" value="${esc(item?.telefone || '')}"></div>
         <div class="form-field">
-          <label>Espaço físico</label>
+          <label>Espaço físico *</label>
           <select name="espacoId" required>
+            ${!item ? '<option value="">Selecionar espaço...</option>' : ''}
             ${state.espacos.map(e => `<option value="${e.id}" ${item?.espacoId === e.id ? 'selected' : ''}>${esc(e.nome)}</option>`).join('')}
           </select>
         </div>
@@ -3597,6 +3598,13 @@ function abrirPagamentoContaForm(alunoId) {
         <div class="form-field"><label>Data</label><input name="data" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
         <div class="form-field full"><label>Descrição (opcional)</label><input name="descricao" placeholder="Ex: Depósito inicial"></div>
         <div class="form-field">
+          <label>Modo de Pagamento</label>
+          <select name="modoPagamento">
+            <option value="PGNUM">PGNUM (Numerário)</option>
+            <option value="PGTR">PGTR (Cartão / Transferência)</option>
+          </select>
+        </div>
+        <div class="form-field">
           <label>Estado</label>
           <select name="estado">
             <option value="Pago">Pago (aplica já ao saldo)</option>
@@ -3620,6 +3628,7 @@ function abrirPagamentoContaForm(alunoId) {
       valor: Number(fd.get('valor')),
       data: fd.get('data'),
       descricao: fd.get('descricao') || 'Depósito',
+      modoPagamento: fd.get('modoPagamento') || 'PGNUM',
       estado: fd.get('estado'),
       taxaIva: state.escola?.primavera?.taxaIvaDefault ?? 18
     };
@@ -3649,28 +3658,39 @@ function renderPagamentos() {
     ` : ''}
     <div class="toolbar">
       <input class="search-input" placeholder="Pesquisar por nome do aluno..." value="${esc(state.search.pagamentos)}" oninput="updateSearchAndRerender(this, 'pagamentos', renderPagamentos)">
+      <div style="display:flex; gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="abrirModalFolhaCaixa()"><span class="icon">🖨️</span> Imprimir Folha de Caixa</button>
+        <button class="btn btn-accent btn-sm" onclick="openPagamentoForm()">+ Registar Pagamento</button>
+      </div>
     </div>
     <div class="table-wrap">
       ${list.length ? `<table>
-        <thead><tr><th>Aluno</th><th>Descrição</th><th>Data</th><th>Valor</th><th>Estado</th><th>Faturação</th><th></th></tr></thead>
+        <thead><tr><th>Aluno</th><th>Descrição</th><th>Data</th><th>Modo Pag.</th><th>Valor</th><th>Estado</th><th>Faturação</th><th></th></tr></thead>
         <tbody>
           ${list.map(p => {
     const aluno = findAluno(p.alunoId);
     const fat = p.faturacao;
+    const isAnulado = p.estado === 'Anulado';
+    const modoTag = p.modoPagamento === 'PGTR'
+      ? `<span class="badge" style="background:#e0f2fe; color:#0369a1; font-size:11px" title="Cartão / Transferência">PGTR</span>`
+      : `<span class="badge" style="background:#fef3c7; color:#92400e; font-size:11px" title="Numerário">PGNUM</span>`;
     return `
-            <tr>
+            <tr style="${isAnulado ? 'opacity:0.65; background:#f8fafc;' : ''}">
               <td class="cell-primary">${esc(aluno?.nome || '—')} ${aluno ? `<span class="muted" style="font-size:12px">· Nº ${aluno.numeroAluno ?? aluno.id}</span>` : ''}</td>
               <td>${esc(p.descricao || '—')}</td>
               <td>${fmtDate(p.data)}</td>
+              <td>${modoTag}</td>
               <td class="cell-primary">${fmtMoney(p.valor)}</td>
               <td><span class="${badgeClass(p.estado)}">${esc(p.estado || '—')}</span></td>
               <td>${fat ? `<span class="tag" style="background:var(--info-soft); color:var(--info)">${esc(fat.tipo)} ${esc(fat.serie || '')}/${esc(fat.numero || '')}</span>` : '<span class="muted" style="font-size:12px">Por emitir</span>'}</td>
               <td>
                 <div class="row-actions">
                   ${aluno ? `<button class="btn btn-ghost btn-sm" onclick="abrirContaCorrente(${aluno.id})">Conta Corrente</button>` : ''}
-                  <button class="btn btn-ghost btn-sm" onclick="openPagamentoForm(${p.id})">Editar</button>
-                  <button class="btn btn-accent btn-sm" onclick="abrirFaturacaoModal(${p.id})">Faturar</button>
-                  <button class="btn btn-danger-ghost btn-sm" onclick="deleteItem('pagamentos', ${p.id}, 'este pagamento')">Remover</button>
+                  ${isAnulado ? `<span class="muted" style="font-size:12px; font-style:italic; padding:4px 6px">Anulado (NC)</span>` : `
+                    <button class="btn btn-ghost btn-sm" onclick="openPagamentoForm(${p.id})">Editar</button>
+                    <button class="btn btn-accent btn-sm" onclick="abrirFaturacaoModal(${p.id})">Faturar</button>
+                    <button class="btn btn-danger-ghost btn-sm" onclick="deleteItem('pagamentos', ${p.id}, 'este pagamento')">Remover</button>
+                  `}
                 </div>
               </td>
             </tr>`;
@@ -3695,7 +3715,14 @@ function openPagamentoForm(id) {
           </select>
         </div>
         <div class="form-field"><label>Valor (€)</label><input name="valor" type="number" step="0.01" min="0" required value="${item?.valor ?? ''}"></div>
-        <div class="form-field"><label>Data</label><input name="data" type="date" value="${item?.data || ''}"></div>
+        <div class="form-field"><label>Data</label><input name="data" type="date" value="${item?.data || new Date().toISOString().slice(0, 10)}"></div>
+        <div class="form-field">
+          <label>Modo de Pagamento</label>
+          <select name="modoPagamento">
+            <option value="PGNUM" ${(!item || item.modoPagamento === 'PGNUM') ? 'selected' : ''}>PGNUM (Numerário)</option>
+            <option value="PGTR" ${(item?.modoPagamento === 'PGTR') ? 'selected' : ''}>PGTR (Cartão / Transferência)</option>
+          </select>
+        </div>
         <div class="form-field"><label>Taxa de IVA (%)</label><input name="taxaIva" type="number" min="0" max="100" value="${item?.taxaIva ?? state.escola?.primavera?.taxaIvaDefault ?? 18}"></div>
         <div class="form-field">
           <label>Estado</label>
@@ -3724,6 +3751,7 @@ function openPagamentoForm(id) {
       descricao: fd.get('descricao'),
       valor: Number(fd.get('valor')),
       data: fd.get('data'),
+      modoPagamento: fd.get('modoPagamento') || 'PGNUM',
       taxaIva: Number(fd.get('taxaIva') || 18),
       estado: fd.get('estado')
     };
@@ -3764,6 +3792,23 @@ function openPrimaveraConfigForm() {
         <div class="form-field"><label>Armazém</label><input name="armazem" value="${esc(cfg.armazem || 'A1')}"></div>
         <div class="form-field"><label>Código do artigo</label><input name="artigoFormacao" value="${esc(cfg.artigoFormacao || 'FORMACAO')}" placeholder="Código do artigo configurado no ERP"></div>
         <div class="form-field"><label>Taxa de IVA por omissão (%)</label><input name="taxaIvaDefault" type="number" min="0" max="100" value="${cfg.taxaIvaDefault ?? 18}"></div>
+        <div class="form-field full" style="margin-top:10px">
+          <label style="font-weight:600">Séries de Faturação por Espaço (opcional)</label>
+          <p class="muted" style="margin-top:2px; font-size:12.5px">Define uma série específica para cada espaço/polo. Se deixares em branco, é usada a série geral acima (${esc(cfg.serie || '1')}).</p>
+          <div class="table-wrap" style="box-shadow:none; margin-top:8px">
+            <table>
+              <thead><tr><th>Espaço</th><th style="min-width:140px">Série de Faturação</th></tr></thead>
+              <tbody>
+                ${state.espacos.map(e => `
+                  <tr>
+                    <td><strong>${esc(e.nome)}</strong></td>
+                    <td><input name="serie_espaco_${e.id}" value="${esc(e.serie || '')}" placeholder="${esc(cfg.serie || '1')}" style="padding:4px 8px; font-size:12.5px; max-width:160px"></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
@@ -3791,10 +3836,20 @@ function openPrimaveraConfigForm() {
     };
     try {
       await api('PUT', '/api/escola/primavera', payload);
-      await refreshCollections(['escola']);
+      for (const e of state.espacos) {
+        const val = fd.get(`serie_espaco_${e.id}`);
+        if (val !== null) {
+          const trimmed = val.trim();
+          if (trimmed !== (e.serie || '')) {
+            await api('PUT', `/api/espacos/${e.id}`, { ...e, serie: trimmed || null });
+          }
+        }
+      }
+      await refreshCollections(['escola', 'espacos']);
       closeModal();
       renderPagamentos();
-      toast('Configuração de faturação guardada.');
+      if (typeof renderConfig === 'function') renderConfig();
+      toast('Configuração de faturação e séries guardadas.');
     } catch (err) { toast(err.message, 'error'); }
   });
 }
@@ -3826,16 +3881,10 @@ function abrirFaturacaoModal(pagamentoId) {
     ${fat ? `<div class="inline-alert inline-alert-info" style="margin-bottom:16px">Último documento emitido: <strong>${esc(fat.tipo)} ${esc(fat.serie || '')}/${esc(fat.numero || '')}</strong>, em ${new Date(fat.dataEmissao).toLocaleString('pt-PT')}.</div>` : ''}
 
     <div id="faturacaoAcoes" style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px">
-      <!-- FATURA (FA) — desativada temporariamente, só se emite Fatura-Recibo
       <button class="btn btn-accent" ${avisos.length ? 'disabled' : ''} onclick="emitirDocumentoPagamento(${p.id}, 'fatura')">Emitir Fatura (FA)</button>
-      -->
       <button class="btn btn-accent" ${avisos.length ? 'disabled' : ''} onclick="emitirDocumentoPagamento(${p.id}, 'fatura-recibo')">Emitir Fatura-Recibo (FR)</button>
-      <!-- RECIBO (RE) — desativado temporariamente
       <button class="btn btn-ghost" ${avisos.length || !fat ? 'disabled' : ''} onclick="abrirReciboForm(${p.id})">Emitir Recibo a liquidar documento (RE)</button>
-      -->
-      <!-- NOTA DE CRÉDITO (NC) — desativada temporariamente
       <button class="btn btn-danger-ghost" ${avisos.length || !fat ? 'disabled' : ''} onclick="abrirNotaCreditoForm(${p.id})">Emitir Nota de Crédito (NC)</button>
-      -->
     </div>
 
     ${historico.length ? `
@@ -3870,7 +3919,7 @@ async function emitirDocumentoPagamento(pagamentoId, tipo) {
   }
 }
 
-/* ------- RECIBO (RE) — função inteira desativada temporariamente -------
+/* ------- RECIBO (RE) ------- */
 function abrirReciboForm(pagamentoId) {
   const p = state.pagamentos.find(x => x.id === pagamentoId);
   if (!p || !p.faturacao) return;
@@ -3901,16 +3950,15 @@ function abrirReciboForm(pagamentoId) {
         docOriginalNumero: fd.get('docOriginalNumero'),
         numPrestacao: Number(fd.get('numPrestacao') || 1)
       });
-      await loadAll();
+      await refreshCollections(['pagamentos']);
       renderPagamentos();
       abrirFaturacaoModal(pagamentoId);
       toast('Recibo emitido com sucesso.');
     } catch (err) { toast(err.message, 'error'); }
   });
 }
-*/
 
-/* ------- NOTA DE CRÉDITO (NC) — função inteira desativada temporariamente -------
+/* ------- NOTA DE CRÉDITO (NC) ------- */
 function abrirNotaCreditoForm(pagamentoId) {
   const p = state.pagamentos.find(x => x.id === pagamentoId);
   if (!p || !p.faturacao) return;
@@ -3941,14 +3989,156 @@ function abrirNotaCreditoForm(pagamentoId) {
         docOriginalNumero: fd.get('docOriginalNumero'),
         motivo: fd.get('motivo')
       });
-      await loadAll();
+      await refreshCollections(['pagamentos']);
       renderPagamentos();
       abrirFaturacaoModal(pagamentoId);
       toast('Nota de crédito emitida com sucesso.');
     } catch (err) { toast(err.message, 'error'); }
   });
 }
-*/
+
+/* ------- FOLHA DE CAIXA DIÁRIA ------- */
+async function abrirModalFolhaCaixa(dataEscolhida) {
+  const dataRef = dataEscolhida || new Date().toISOString().slice(0, 10);
+  try {
+    toast('A carregar dados da folha de caixa…');
+    const dados = await api('GET', `/api/relatorios/folha-caixa-diaria?data=${dataRef}`);
+    
+    openModal(`Folha de Caixa Diária · ${fmtDate(dados.data)}`, `
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px">
+        <div style="display:flex; align-items:center; gap:8px">
+          <label style="margin:0; font-weight:600">Data:</label>
+          <input type="date" id="dataFolhaCaixa" value="${dados.data}" onchange="abrirModalFolhaCaixa(this.value)" style="padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius-sm)">
+        </div>
+        <button class="btn btn-accent btn-sm" onclick="exportarFolhaCaixaPdf('${dados.data}')">
+          <span class="icon">📄</span> Descarregar / Imprimir PDF
+        </button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Espaço</th>
+              <th>Série</th>
+              <th style="text-align:right">Numerário (PGNUM)</th>
+              <th style="text-align:right">Cartão / Transf. (PGTR)</th>
+              <th style="text-align:right">Total do Espaço</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${dados.espacos.length ? dados.espacos.map(e => `
+              <tr>
+                <td class="cell-primary">${esc(e.nome)}</td>
+                <td><span class="badge" style="background:#f1f5f9; color:#475569">${esc(e.serie || 'Padrão')}</span></td>
+                <td style="text-align:right; font-weight:500">${fmtMoney(e.pgnum)}</td>
+                <td style="text-align:right; font-weight:500">${fmtMoney(e.pgtr)}</td>
+                <td style="text-align:right; font-weight:700; color:var(--ink)">${fmtMoney(e.total)}</td>
+              </tr>
+            `).join('') : `<tr><td colspan="5" class="muted" style="text-align:center">Nenhum espaço registado.</td></tr>`}
+          </tbody>
+          <tfoot>
+            <tr style="background:var(--surface-hover); font-weight:700">
+              <td>TOTAIS DO DIA</td>
+              <td>—</td>
+              <td style="text-align:right; color:#92400e">${fmtMoney(dados.totais.pgnum)}</td>
+              <td style="text-align:right; color:#0369a1">${fmtMoney(dados.totais.pgtr)}</td>
+              <td style="text-align:right; font-size:1.05em; color:var(--accent-dark)">${fmtMoney(dados.totais.geral)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <p class="muted" style="margin-top:12px; font-size:12.5px">
+        * Total de ${dados.totais.quantidade} pagamento(s) recebido(s) nesta data. Os valores excluem pagamentos anulados.
+      </p>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Fechar</button>
+      </div>
+    `);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function exportarFolhaCaixaPdf(dataStr) {
+  try {
+    const dataRef = dataStr || new Date().toISOString().slice(0, 10);
+    toast('A preparar documento para impressão/PDF…');
+    const dados = await api('GET', `/api/relatorios/folha-caixa-diaria?data=${dataRef}`);
+    const nomeEscola = state.escola?.nome || 'Escola de Condução';
+    const html = `
+      <div class="print-doc">
+        <div class="print-head" style="margin-bottom:24px; border-bottom:2px solid #16233B; padding-bottom:12px">
+          <h1 style="font-size:22px; margin:0 0 6px">${esc(nomeEscola)}</h1>
+          <h2 style="font-size:16px; margin:0 0 4px; color:#556170">Folha de Caixa Diária · Fecho de Turno</h2>
+          <p class="muted" style="margin:0; font-size:12px">Data de referência: <strong>${fmtDate(dados.data)}</strong> · Emitido em ${new Date().toLocaleString('pt-PT')}</p>
+        </div>
+
+        <div style="display:flex; gap:16px; margin-bottom:24px">
+          <div style="flex:1; border:1px solid #d2dcea; border-radius:8px; padding:12px; background:#f8fafc">
+            <span style="font-size:11px; text-transform:uppercase; color:#556170; font-weight:600">Numerário (PGNUM)</span>
+            <div style="font-size:18px; font-weight:700; color:#92400e; margin-top:4px">${fmtMoney(dados.totais.pgnum)}</div>
+          </div>
+          <div style="flex:1; border:1px solid #d2dcea; border-radius:8px; padding:12px; background:#f8fafc">
+            <span style="font-size:11px; text-transform:uppercase; color:#556170; font-weight:600">Cartão / Transferência (PGTR)</span>
+            <div style="font-size:18px; font-weight:700; color:#0369a1; margin-top:4px">${fmtMoney(dados.totais.pgtr)}</div>
+          </div>
+          <div style="flex:1; border:1px solid #d2dcea; border-radius:8px; padding:12px; background:#f0fdf4">
+            <span style="font-size:11px; text-transform:uppercase; color:#166534; font-weight:600">Total Recebido</span>
+            <div style="font-size:20px; font-weight:700; color:#15803d; margin-top:4px">${fmtMoney(dados.totais.geral)}</div>
+          </div>
+        </div>
+
+        <div class="table-wrap" style="margin-bottom:30px">
+          <table style="width:100%; border-collapse:collapse">
+            <thead>
+              <tr style="background:#f1f5f9">
+                <th style="padding:8px 10px; border:1px solid #d2dcea">Espaço / Posto</th>
+                <th style="padding:8px 10px; border:1px solid #d2dcea">Série</th>
+                <th style="padding:8px 10px; border:1px solid #d2dcea; text-align:right">Numerário (PGNUM)</th>
+                <th style="padding:8px 10px; border:1px solid #d2dcea; text-align:right">Cartão / Transf. (PGTR)</th>
+                <th style="padding:8px 10px; border:1px solid #d2dcea; text-align:right">Total do Espaço</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${dados.espacos.map(e => `
+                <tr>
+                  <td style="padding:8px 10px; border:1px solid #d2dcea"><strong>${esc(e.nome)}</strong></td>
+                  <td style="padding:8px 10px; border:1px solid #d2dcea">${esc(e.serie || '—')}</td>
+                  <td style="padding:8px 10px; border:1px solid #d2dcea; text-align:right">${fmtMoney(e.pgnum)}</td>
+                  <td style="padding:8px 10px; border:1px solid #d2dcea; text-align:right">${fmtMoney(e.pgtr)}</td>
+                  <td style="padding:8px 10px; border:1px solid #d2dcea; text-align:right"><strong>${fmtMoney(e.total)}</strong></td>
+                </tr>
+              `).join('')}
+            </tbody>
+            <tfoot>
+              <tr style="background:#f8fafc; font-weight:bold">
+                <td style="padding:10px; border:1px solid #d2dcea">TOTAL GERAL (${dados.totais.quantidade} recebimentos)</td>
+                <td style="padding:10px; border:1px solid #d2dcea">—</td>
+                <td style="padding:10px; border:1px solid #d2dcea; text-align:right; color:#92400e">${fmtMoney(dados.totais.pgnum)}</td>
+                <td style="padding:10px; border:1px solid #d2dcea; text-align:right; color:#0369a1">${fmtMoney(dados.totais.pgtr)}</td>
+                <td style="padding:10px; border:1px solid #d2dcea; text-align:right; font-size:1.1em; color:#15803d">${fmtMoney(dados.totais.geral)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <div class="print-sign" style="display:flex; justify-content:space-between; margin-top:60px; gap:40px">
+          <div style="flex:1; text-align:center; font-size:12px; color:#556170">
+            <div class="sign-line" style="border-top:1px solid #16233B; margin-bottom:6px; height:40px"></div>
+            <span>Responsável de Caixa / Receção</span>
+          </div>
+          <div style="flex:1; text-align:center; font-size:12px; color:#556170">
+            <div class="sign-line" style="border-top:1px solid #16233B; margin-bottom:6px; height:40px"></div>
+            <span>Direção / Administração</span>
+          </div>
+        </div>
+      </div>
+    `;
+    exportarHtmlParaPdf(html, `folha-caixa-${dataRef}.pdf`);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
 
 function renderRelatorioAlunoHTML(rel) {
   const { aluno, requisito, resumo, praticas, teoricasIndividuais, turmasTeoricas, alertasDocumentais } = rel;
@@ -4237,6 +4427,16 @@ function renderConfig() {
     </div>
     <div class="panel" style="margin-bottom:20px">
       <div class="panel-head">
+        <h3>Séries de Faturação por Espaço</h3>
+        <p class="muted">Configura a série de faturação da Cegid Primavera específica para cada espaço/polo da escola. Quando for emitido um documento fiscal para um aluno associado a esse espaço, será utilizada esta série específica em vez da série geral da escola (${esc(state.escola?.primavera?.serie || '1')}).</p>
+      </div>
+      <div id="seriesEspacosBox"></div>
+      <div class="form-actions" style="margin-top:12px">
+        <button type="button" class="btn btn-accent" id="btnGuardarSeriesEspacos" onclick="guardarSeriesEspacos()">Guardar séries dos espaços</button>
+      </div>
+    </div>
+    <div class="panel" style="margin-bottom:20px">
+      <div class="panel-head">
         <h3>Produtos / Serviços (conta corrente)</h3>
         <p class="muted">Catálogo de itens pré-definidos (código, descrição, categoria e valor) para compor o preço de cada categoria de carta ou lançar rapidamente na conta corrente de um aluno. Os produtos marcados como <strong>Descontável</strong> (tipicamente os módulos de lições práticas/teóricas) são os únicos que recebem o desconto do aluno — todos os outros (inscrição, taxas de exame, viatura de exame, emissão, etc.) mantêm sempre o valor de catálogo.</p>
       </div>
@@ -4265,6 +4465,7 @@ function renderConfig() {
   `;
 
   renderEspacosList();
+  renderSeriesEspacosBox();
   renderProdutosList();
 
   composicaoCartaEdit = JSON.parse(JSON.stringify(state.config?.composicaoCarta || {}));
@@ -4393,13 +4594,14 @@ function renderEspacosList() {
   el.innerHTML = state.espacos.length ? `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Espaço</th><th>Observações</th><th>Alunos atribuídos</th><th></th></tr></thead>
+        <thead><tr><th>Espaço</th><th>Série Faturação</th><th>Observações</th><th>Alunos atribuídos</th><th></th></tr></thead>
         <tbody>
           ${state.espacos.map(e => {
     const c = contagem(e.id);
     return `
             <tr>
               <td><strong>${esc(e.nome)}</strong></td>
+              <td>${e.serie ? `<span class="tag" style="background:#e0f2fe; color:#0369a1">${esc(e.serie)}</span>` : `<span class="muted" style="font-size:12px">${esc(state.escola?.primavera?.serie || 'Padrão da escola')}</span>`}</td>
               <td>${esc(e.observacoes || '—')}</td>
               <td>${c.alunos} aluno(s) · ${c.aulas} aula(s) · ${c.turmas} turma(s)</td>
               <td>
@@ -4416,12 +4618,61 @@ function renderEspacosList() {
   ` : emptyState('Nenhum espaço configurado', 'Cria pelo menos um espaço para poderes inscrever alunos.');
 }
 
+function renderSeriesEspacosBox() {
+  const el = document.getElementById('seriesEspacosBox');
+  if (!el) return;
+  const serieGlobal = state.escola?.primavera?.serie || '1';
+  el.innerHTML = state.espacos.length ? `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Espaço</th><th style="min-width:180px">Série Própria</th><th>Série em Vigor na Faturação</th></tr></thead>
+        <tbody>
+          ${state.espacos.map(e => `
+            <tr>
+              <td class="cell-primary"><strong>${esc(e.nome)}</strong></td>
+              <td>
+                <input type="text" id="serie_espaco_${e.id}" value="${esc(e.serie || '')}" placeholder="Ex: 2026A" style="max-width:160px; padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius-sm)">
+              </td>
+              <td>
+                ${e.serie ? `<span class="badge badge-ativo">Série própria (${esc(e.serie)})</span>` : `<span class="badge" style="background:#f1f5f9; color:#64748b">Série geral da escola (${esc(serieGlobal)})</span>`}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  ` : emptyState('Nenhum espaço configurado', 'Cria pelo menos um espaço acima.');
+}
+
+async function guardarSeriesEspacos() {
+  try {
+    let alterados = 0;
+    for (const e of state.espacos) {
+      const inp = document.getElementById(`serie_espaco_${e.id}`);
+      if (inp) {
+        const novaSerie = inp.value.trim();
+        if (novaSerie !== (e.serie || '')) {
+          await api('PUT', `/api/espacos/${e.id}`, { ...e, serie: novaSerie || null });
+          alterados++;
+        }
+      }
+    }
+    await refreshCollections(['espacos', 'escola']);
+    renderEspacosList();
+    renderSeriesEspacosBox();
+    toast(alterados ? 'Séries de faturação dos espaços guardadas com sucesso.' : 'Nenhuma alteração às séries dos espaços.');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
 function openEspacoForm(id) {
   const item = id ? state.espacos.find(e => e.id === id) : null;
   openModal(item ? 'Editar espaço' : 'Novo espaço', `
     <form id="entityForm">
       <div class="form-grid">
         <div class="form-field"><label>Nome</label><input name="nome" required value="${esc(item?.nome || '')}"></div>
+        <div class="form-field"><label>Série de Faturação (Primavera)</label><input name="serie" placeholder="Ex: 2026A (vazio = padrão da escola)" value="${esc(item?.serie || '')}"></div>
         <div class="form-field full"><label>Observações</label><input name="observacoes" value="${esc(item?.observacoes || '')}"></div>
       </div>
       <div class="form-actions">
@@ -4689,12 +4940,15 @@ function renderContratos() {
               <td>${esc(c.categoria || '—')}</td>
               <td>${fmtMoney(c.valorTotal)}</td>
               <td>${esc(c.planoPagamento || '—')}</td>
-              <td><span class="${badgeClass(c.estado)}">${esc(c.estado || '—')}</span></td>
+              <td>
+                <span class="${badgeClass(c.estado)}">${esc(c.estado || '—')}</span>
+                ${c.pdfAssinado || c.pdfAssinadoFilename ? `<span class="badge" style="background:#ecfdf5; color:#047857; margin-left:4px; font-size:11px" title="PDF assinado e submetido">✓ Submetido</span>` : ''}
+              </td>
               <td>
                 <div class="row-actions">
                   ${c.estado === 'Pendente' ? `<button class="btn btn-ghost btn-sm" onclick="openContratoForm(${c.id})">Editar</button>` : ''}
                   ${c.estado === 'Pendente' ? `<button class="btn btn-accent btn-sm" onclick="abrirAssinaturaContrato(${c.id})">Assinar</button>` : ''}
-                  ${c.estado === 'Assinado' ? `<button class="btn btn-ghost btn-sm" onclick="abrirDocumentoContrato(${c.id})">${c.faturacao ? 'PDF / Fatura' : 'Submeter PDF'}</button>` : ''}
+                  ${c.estado === 'Assinado' ? `<button class="btn btn-ghost btn-sm" onclick="abrirDocumentoContrato(${c.id})">${(c.pdfAssinado || c.pdfAssinadoFilename) ? 'Ver PDF / Fatura' : (c.faturacao ? 'PDF / Fatura' : 'Submeter PDF')}</button>` : ''}
                   <button class="btn btn-ghost btn-sm" onclick="imprimirContrato(${c.id})">${c.estado === 'Assinado' ? 'Baixar PDF' : 'Pré-visualizar PDF'}</button>
                   <button class="btn btn-danger-ghost btn-sm" onclick="deleteItem('contratos', ${c.id}, 'este contrato')">Remover</button>
                 </div>
@@ -5155,8 +5409,9 @@ function renderSignaturePadHTML() {
 /* Liga um <canvas> a eventos de "pointer" (cobre rato, dedo e caneta ao
    mesmo tempo) para desenhar a assinatura. Devolve helpers para saber se
    já foi desenhado algo e para extrair a imagem final em base64. */
-function bindSignaturePad(canvasId) {
+function bindSignaturePad(canvasId, clearBtnId = 'btnLimparAssinatura') {
   const canvas = document.getElementById(canvasId);
+  if (!canvas) return { temAssinatura: () => false, obterImagemBase64: () => null, limpar: () => {} };
   const ctx = canvas.getContext('2d');
   let desenhando = false;
   let temTraco = false;
@@ -5214,7 +5469,9 @@ function bindSignaturePad(canvasId) {
     ctx.clearRect(0, 0, rect.width, rect.height);
     temTraco = false;
   }
-  document.getElementById('btnLimparAssinatura')?.addEventListener('click', limpar);
+  if (clearBtnId) {
+    document.getElementById(clearBtnId)?.addEventListener('click', limpar);
+  }
 
   return {
     temAssinatura: () => temTraco,
@@ -5223,11 +5480,23 @@ function bindSignaturePad(canvasId) {
   };
 }
 
+function calcularIdadeAluno(aluno) {
+  if (!aluno || !aluno.dataNascimento) return null;
+  const hoje = new Date();
+  const nasc = new Date(aluno.dataNascimento);
+  let idade = hoje.getFullYear() - nasc.getFullYear();
+  const m = hoje.getMonth() - nasc.getMonth();
+  if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade--;
+  return idade;
+}
+
 function abrirAssinaturaContrato(id) {
   const contrato = state.contratos.find(c => c.id === id);
   if (!contrato) return;
   const aluno = findAluno(contrato.alunoId);
   const texto = gerarTextoContrato(contrato);
+  const idade = calcularIdadeAluno(aluno);
+  const eMenor = idade !== null && idade < 18;
 
   openModal('Aceitação do Contrato', `
     <div style="max-height:240px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius-sm); padding:16px; font-size:13.5px; line-height:1.6; margin-bottom:16px">
@@ -5235,42 +5504,142 @@ function abrirAssinaturaContrato(id) {
     </div>
     <form id="assinaturaForm">
       <p class="muted" style="margin-bottom:10px">Podes entregar o telemóvel ou tablet ao formando para ler e assinar diretamente no ecrã — não é preciso imprimir antes. Depois de confirmado, o contrato fica submetido e pode ser impresso a qualquer momento.</p>
+      
       <div class="form-field full">
         <label>Nome completo do Formando (para confirmar aceitação)</label>
-        <input name="nomeDigitado" required placeholder="${esc(aluno?.nome || '')}">
+        <input name="nomeDigitado" required placeholder="${esc(aluno?.nome || '')}" value="${esc(aluno?.nome || '')}">
       </div>
       ${renderSignaturePadHTML()}
+
+      ${eMenor ? `
+        <div class="inline-alert inline-alert-warning" style="margin:16px 0 10px">
+          <strong>Aluno menor de idade (${idade} anos):</strong> É obrigatória a identificação e assinatura do encarregado de educação / tutor legal abaixo.
+        </div>
+        <div class="form-field full">
+          <label>Nome completo do Encarregado de Educação / Tutor</label>
+          <input name="nomeDigitadoTutor" id="nomeDigitadoTutor" required placeholder="Nome completo do tutor">
+        </div>
+        <div class="form-field full" style="margin-bottom:10px">
+          <label>Assinatura do Encarregado de Educação / Tutor</label>
+          <div style="border:2px dashed var(--border); border-radius:10px; overflow:hidden; touch-action:none; background:#fff">
+            <canvas id="assinaturaTutorCanvas" style="width:100%; height:200px; display:block; cursor:crosshair"></canvas>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px">
+            <span class="muted" style="font-size:12px">Assina dentro da caixa acima.</span>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnLimparAssinaturaTutor">Limpar</button>
+          </div>
+        </div>
+      ` : ''}
+
       <label style="display:flex; align-items:center; gap:8px; text-transform:none; font-weight:500; color:var(--ink); margin:12px 0">
         <input type="checkbox" name="aceite" required> Li e aceito os termos e condições descritos acima.
       </label>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
-        <button type="submit" class="btn btn-accent">Confirmar aceitação</button>
+        <button type="submit" class="btn btn-accent" id="btnConfirmarAssinatura">Confirmar aceitação e submeter PDF</button>
       </div>
     </form>
   `);
   alargarModal();
 
-  const pad = bindSignaturePad('assinaturaCanvas');
+  const pad = bindSignaturePad('assinaturaCanvas', 'btnLimparAssinatura');
+  const padTutor = eMenor ? bindSignaturePad('assinaturaTutorCanvas', 'btnLimparAssinaturaTutor') : null;
+
   const form = document.getElementById('assinaturaForm');
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!pad.temAssinatura()) {
-      toast('É necessário desenhar a assinatura no ecrã antes de confirmar.', 'error');
+      toast('É necessário desenhar a assinatura do formando antes de confirmar.', 'error');
       return;
     }
+    if (eMenor && padTutor && !padTutor.temAssinatura()) {
+      toast('É necessário desenhar a assinatura do encarregado de educação / tutor legal.', 'error');
+      return;
+    }
+    const btnSub = document.getElementById('btnConfirmarAssinatura');
+    if (btnSub) { btnSub.disabled = true; btnSub.textContent = 'A processar…'; }
+
     const fd = new FormData(form);
+    const nomeDigitado = fd.get('nomeDigitado');
+    const nomeDigitadoTutor = eMenor ? fd.get('nomeDigitadoTutor') : null;
+    const sigFormando = pad.obterImagemBase64();
+    const sigTutor = (eMenor && padTutor) ? padTutor.obterImagemBase64() : null;
+
     try {
+      toast('A preparar documento assinado…');
+      let docTexto = texto;
+      if (sigFormando) {
+        docTexto = docTexto.replace(
+          '<div class="assinatura-slot" data-slot="segundo" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;"></div>',
+          `<div class="assinatura-slot" data-slot="segundo" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
+             <img src="${sigFormando}" style="max-width:170px; max-height:60px; display:block; margin:0 auto">
+           </div>`
+        );
+      }
+      if (sigTutor) {
+        docTexto = docTexto.replace(
+          '<div class="assinatura-slot" data-slot="tutor" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;"></div>',
+          `<div class="assinatura-slot" data-slot="tutor" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
+             <img src="${sigTutor}" style="max-width:170px; max-height:60px; display:block; margin:0 auto">
+           </div>`
+        );
+      }
+
+      let pdfBase64 = null;
+      if (window.html2pdf) {
+        const tempDiv = document.createElement('div');
+        tempDiv.style.position = 'fixed';
+        tempDiv.style.left = '-9999px';
+        tempDiv.style.top = '0';
+        tempDiv.style.width = '790px';
+        tempDiv.innerHTML = `
+          <div style="font-family:Inter, Arial, sans-serif; font-size:12px; line-height:1.45; color:#16233B; padding:12px 16px;">
+            ${docTexto}
+            <div style="margin-top:20px; font-size:11.5px; border-top:1px solid #d2dcea; padding-top:10px">
+              <p><strong>Aceite eletronicamente por:</strong> ${esc(nomeDigitado)}</p>
+              ${nomeDigitadoTutor ? `<p><strong>Tutor / Encarregado de Educação:</strong> ${esc(nomeDigitadoTutor)}</p>` : ''}
+              <p><strong>Data/hora:</strong> ${new Date().toLocaleString('pt-PT')}</p>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(tempDiv);
+        try {
+          const opt = {
+            margin: [8, 8, 8, 8],
+            filename: `contrato-${id}-assinado.pdf`,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2, useCORS: true, logging: false },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+          };
+          pdfBase64 = await window.html2pdf().set(opt).from(tempDiv).output('datauristring');
+        } catch (pdfErr) {
+          console.warn('html2pdf client-side falhou, backend usará pdf-lib:', pdfErr);
+        } finally {
+          if (tempDiv.parentNode) tempDiv.remove();
+        }
+      }
+
+      // Guardar assinaturas, submeter PDF e sincronizar itens da conta corrente
+      toast('A registar assinatura e submeter contrato…');
       await api('PUT', `/api/contratos/${id}/assinar`, {
-        nomeDigitado: fd.get('nomeDigitado'),
-        textoContrato: texto,
-        assinaturaImagem: pad.obterImagemBase64()
+        nomeDigitado,
+        textoContrato: docTexto,
+        assinaturaImagem: sigFormando,
+        nomeDigitadoTutor,
+        assinaturaTutorImagem: sigTutor,
+        pdfBase64,
+        filename: `contrato-${id}-assinado.pdf`
       });
-      await refreshCollections(['contratos']);
+
+      await refreshCollections(['contratos', 'pagamentos', 'dashboard']);
       closeModal();
       renderContratos();
-      toast('Contrato aceite e assinado.');
-    } catch (err) { toast(err.message, 'error'); }
+      renderDashboard();
+      toast('Contrato assinado, PDF submetido e itens adicionados à Conta Corrente com sucesso!');
+    } catch (err) {
+      if (btnSub) { btnSub.disabled = false; btnSub.textContent = 'Confirmar aceitação e submeter PDF'; }
+      toast(err.message, 'error');
+    }
   });
 }
 
@@ -5290,6 +5659,14 @@ function imprimirContrato(id) {
        </div>`
     );
   }
+  if (contrato.assinaturaTutor?.imagemBase64) {
+    texto = texto.replace(
+      '<div class="assinatura-slot" data-slot="tutor" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;"></div>',
+      `<div class="assinatura-slot" data-slot="tutor" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
+         <img src="${contrato.assinaturaTutor.imagemBase64}" style="max-width:170px; max-height:60px; display:block; margin:0 auto">
+       </div>`
+    );
+  }
 
   const html = `
     <div class="print-doc">
@@ -5297,6 +5674,7 @@ function imprimirContrato(id) {
       ${contrato.assinatura ? `
         <div style="margin-top:24px; font-size:13px">
           <p><strong>Aceite eletronicamente por:</strong> ${esc(contrato.assinatura.nomeDigitado)}</p>
+          ${contrato.assinaturaTutor ? `<p><strong>Tutor / Encarregado de Educação:</strong> ${esc(contrato.assinaturaTutor.nomeDigitado)}</p>` : ''}
           <p><strong>Data/hora:</strong> ${new Date(contrato.assinatura.dataHora).toLocaleString('pt-PT')}</p>
         </div>
       ` : ''}
@@ -5397,14 +5775,18 @@ function bindForm(collection, id, numberFields, rerender) {
 async function deleteItem(collection, id, label) {
   if (!confirm(`Tens a certeza que queres remover ${label}?`)) return;
   try {
-    await api('DELETE', `/api/${collection}/${id}`);
+    const resDel = await api('DELETE', `/api/${collection}/${id}`);
     const tarefas = [refreshCollections([collection, 'dashboard'])];
     if (collection === 'alunos' && typeof ensureAlunosAtivos === 'function') {
       tarefas.push(ensureAlunosAtivos({ force: true }));
     }
     await Promise.all(tarefas);
     render();
-    toast('Registo removido.');
+    if (resDel && resDel.convertedToNC) {
+      toast(resDel.message || 'Pagamento faturado foi convertido em Nota de Crédito (NC).');
+    } else {
+      toast('Registo removido.');
+    }
   } catch (err) { toast(err.message, 'error'); }
 }
 

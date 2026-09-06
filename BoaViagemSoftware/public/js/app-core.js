@@ -422,6 +422,15 @@
       box.appendChild(b);
     }
     if (view === 'pagamentos' && !isInstructor) {
+      var bCaixa = document.createElement('button');
+      bCaixa.className = 'btn btn-ghost';
+      bCaixa.style.marginRight = '8px';
+      bCaixa.innerHTML = '<span class="icon">🖨️</span> Imprimir Folha de Caixa';
+      bCaixa.onclick = function () {
+        if (typeof abrirModalFolhaCaixa === 'function') abrirModalFolhaCaixa();
+      };
+      box.appendChild(bCaixa);
+
       var b2 = document.createElement('button');
       b2.className = 'btn btn-accent';
       b2.textContent = '+ Novo Pagamento';
