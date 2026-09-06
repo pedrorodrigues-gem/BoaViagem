@@ -5,16 +5,16 @@
   }
 
   const COLLECTION_LOADERS = {
-    alunos: () => window.fetchCollectionAll('/api/alunos', { limit: 500, maxPages: 200 }),
+    alunos: () => window.fetchCollectionAll('/api/alunos', { limit: 500, maxPages: 30 }),
     instrutores: () => api('GET', '/api/instrutores'),
     veiculos: () => api('GET', '/api/veiculos'),
-    aulas: () => window.fetchCollectionAll('/api/aulas', { limit: 500, maxPages: 200 }),
-    turmasTeoricas: () => window.fetchCollectionAll('/api/turmasTeoricas', { limit: 500, maxPages: 200 }),
+    aulas: () => window.fetchCollectionAll('/api/aulas', { limit: 500, maxPages: 30 }),
+    turmasTeoricas: () => window.fetchCollectionAll('/api/turmasTeoricas', { limit: 500, maxPages: 30 }),
     requisitos: () => api('GET', '/api/requisitos'),
-    pagamentos: () => window.fetchCollectionAll('/api/pagamentos', { limit: 500, maxPages: 200 }),
-    contratos: () => window.fetchCollectionAll('/api/contratos', { limit: 500, maxPages: 200 }),
-    preInscricoes: () => window.fetchCollectionAll('/api/preinscricoes', { limit: 500, maxPages: 200 }),
-    examesMarcacoes: () => window.fetchCollectionAll('/api/examesMarcacoes', { limit: 500, maxPages: 200 }),
+    pagamentos: () => window.fetchCollectionAll('/api/pagamentos', { limit: 500, maxPages: 30 }),
+    contratos: () => window.fetchCollectionAll('/api/contratos', { limit: 500, maxPages: 30 }),
+    preInscricoes: () => window.fetchCollectionAll('/api/preinscricoes', { limit: 500, maxPages: 30 }),
+    examesMarcacoes: () => window.fetchCollectionAll('/api/examesMarcacoes', { limit: 500, maxPages: 30 }),
     espacos: () => api('GET', '/api/espacos'),
     produtos: () => api('GET', '/api/produtos'),
     escola: () => api('GET', '/api/escola'),
@@ -53,6 +53,9 @@
         state[name] = data;
         loaded[name] = true;
         delete inFlight[name];
+        if (name === 'alunos' || name === 'instrutores' || name === 'veiculos') {
+          if (window.rebuildIndexes) window.rebuildIndexes();
+        }
         return data;
       })
       .catch((err) => {
@@ -113,6 +116,7 @@
         if (!loaded.alunos) {
           state.alunos = res.alunos;
         }
+        if (window.rebuildIndexes) window.rebuildIndexes();
         return res.alunos;
       })
       .catch((err) => {
