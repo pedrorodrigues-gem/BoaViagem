@@ -33,7 +33,7 @@ const sql = require('mssql');
 const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
 const { query, escolaPublic, defaultPrimaveraConfig, nestEscolaPrimavera } = require('./db');
-const { requireAuth, setAuthCookie, clearAuthCookie, registarEscola, autenticar } = require('./auth');
+const { requireAuth, setAuthCookie, clearAuthCookie, registarEscola, autenticar, invalidateTenantCache } = require('./auth');
 const invoicing = require('./invoicing');
 
 const app = express();
@@ -345,6 +345,7 @@ async function insertItemToSql(req, name, payload) {
     `INSERT INTO ${table} (${columns.join(', ')}) OUTPUT inserted.* VALUES (${values.join(', ')})`,
     record
   );
+  invalidateTenantCache(req.escolaId);
   return dbRowToJs(result.recordset[0]);
 }
 
@@ -361,6 +362,7 @@ async function updateItemToSql(req, name, id, payload) {
     `UPDATE ${table} SET ${assignments} OUTPUT inserted.* WHERE id = @id AND escola_id = @escolaId`,
     params
   );
+  invalidateTenantCache(req.escolaId);
   return result.recordset[0] ? dbRowToJs(result.recordset[0]) : null;
 }
 
@@ -375,6 +377,7 @@ async function deleteItemFromSql(req, name, id) {
     escolaId: req.escolaId,
     id: Number(id)
   });
+  invalidateTenantCache(req.escolaId);
   return item;
 }
 
@@ -683,8 +686,94 @@ async function sincronizarUsernameAlunoSql(req, aluno) {
   await query('UPDATE users SET username=@username WHERE id=@id', { username, id: user.id });
 }
 
+/* Endpoint de pesquisa global rápida via SQL */
+app.get('/api/pesquisa-global', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (!q) return ok(res, []);
+    const termo = `%${q}%`;
+    const params = { escolaId: req.escolaId, termo };
+
+    const [alunosRes, instrutoresRes, veiculosRes, contratosRes, turmasRes] = await Promise.all([
+      query(`
+        SELECT TOP 8 id, nome, numero_aluno AS numeroAluno, categoria, estado
+        FROM alunos
+        WHERE escola_id = @escolaId AND (nome LIKE @termo OR email LIKE @termo OR nif LIKE @termo OR CAST(numero_aluno AS NVARCHAR) LIKE @termo)
+        ORDER BY nome
+      `, params),
+      query(`
+        SELECT TOP 5 id, nome, cargo, estado
+        FROM instrutores
+        WHERE escola_id = @escolaId AND (nome LIKE @termo OR email LIKE @termo OR nif LIKE @termo)
+        ORDER BY nome
+      `, params),
+      query(`
+        SELECT TOP 5 id, matricula, marca, modelo, categoria, estado
+        FROM veiculos
+        WHERE escola_id = @escolaId AND (matricula LIKE @termo OR marca LIKE @termo OR modelo LIKE @termo)
+        ORDER BY matricula
+      `, params),
+      query(`
+        SELECT TOP 5 c.id, c.categoria, c.estado, a.nome AS alunoNome
+        FROM contratos c
+        JOIN alunos a ON a.id = c.aluno_id
+        WHERE c.escola_id = @escolaId AND (a.nome LIKE @termo OR c.categoria LIKE @termo)
+        ORDER BY c.id DESC
+      `, params),
+      query(`
+        SELECT TOP 5 id, tema, data, hora_inicio AS horaInicio
+        FROM turmas_teoricas
+        WHERE escola_id = @escolaId AND (tema LIKE @termo)
+        ORDER BY data DESC
+      `, params)
+    ]);
+
+    const results = [];
+    (alunosRes.recordset || []).forEach(a => results.push({
+      id: a.id,
+      tipo: 'Aluno',
+      label: a.nome,
+      sub: `Nº ${a.numeroAluno ?? a.id} · ${a.categoria || '—'} · ${a.estado || ''}`,
+      view: 'alunos'
+    }));
+    (instrutoresRes.recordset || []).forEach(i => results.push({
+      id: i.id,
+      tipo: 'Instrutor',
+      label: i.nome,
+      sub: i.cargo || 'Instrutor',
+      view: 'instrutores'
+    }));
+    (veiculosRes.recordset || []).forEach(v => results.push({
+      id: v.id,
+      tipo: 'Veículo',
+      label: v.matricula,
+      sub: `${v.marca || ''} ${v.modelo || ''}`.trim() || '—',
+      view: 'veiculos'
+    }));
+    (contratosRes.recordset || []).forEach(c => results.push({
+      id: c.id,
+      tipo: 'Contrato',
+      label: `Contrato · ${c.alunoNome || 'Aluno'}`,
+      sub: `${c.categoria || '—'} · ${c.estado || ''}`,
+      view: 'contratos'
+    }));
+    (turmasRes.recordset || []).forEach(t => results.push({
+      id: t.id,
+      tipo: 'Turma teórica',
+      label: t.tema,
+      sub: `${t.data ? String(t.data).slice(0, 10) : ''} · ${t.horaInicio || ''}`,
+      view: 'calendario'
+    }));
+
+    ok(res, results.slice(0, 20));
+  } catch (ex) {
+    res.status(500).json({ success: false, error: `Falha na pesquisa global: ${ex.message || ex}` });
+  }
+});
+
 /* Endpoint otimizado: filtra por estado e pesquisa (nome/email/NIF/nº aluno)
-   diretamente no SQL Server, e devolve só as colunas leves (sem foto).
+   diretamente no SQL Server, e devolve só as colunas leves (sem foto) com
+   contagens agregadas de aulas teóricas e práticas realizadas.
    TEM DE ESTAR REGISTADO ANTES do app.use('/api/alunos', collectionRoutes(...))
    porque esse router define GET /api/alunos/:id, que caso contrário
    intercetaria "/api/alunos/lista" tratando "lista" como um id. */
@@ -695,26 +784,37 @@ app.get('/api/alunos/lista', async (req, res) => {
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
     const offset = Math.max(0, Number(req.query.offset) || 0);
 
-    const colunas = `id, escola_id, ${LISTAGEM_SEM_FOTO.alunos}`;
-    const condicoes = ['escola_id = @escolaId'];
+    const condicoes = ['a.escola_id = @escolaId'];
     const params = { escolaId: req.escolaId, limit, offset };
 
     if (estado && estado !== 'Todos') {
-      condicoes.push('estado = @estado');
+      condicoes.push('a.estado = @estado');
       params.estado = estado;
     }
     if (q) {
-      condicoes.push('(nome LIKE @q OR email LIKE @q OR nif LIKE @q OR CAST(numero_aluno AS NVARCHAR) LIKE @q)');
+      condicoes.push('(a.nome LIKE @q OR a.email LIKE @q OR a.nif LIKE @q OR CAST(a.numero_aluno AS NVARCHAR) LIKE @q)');
       params.q = `%${q}%`;
     }
 
     const where = condicoes.join(' AND ');
-    const countResult = await query(`SELECT COUNT(*) AS total FROM alunos WHERE ${where}`, params);
+    const countResult = await query(`SELECT COUNT(*) AS total FROM alunos a WHERE ${where}`, params);
     const total = countResult.recordset[0]?.total || 0;
 
+    const colunasComContagens = `
+      a.id, a.escola_id, a.pessoa_id, a.espaco_id, a.numero_aluno, a.nome, a.email, a.telefone, a.categoria,
+      a.estado, a.data_inscricao, a.aulas_teoricas, a.aulas_praticas, a.notas, a.data_nascimento, a.nif,
+      a.tipo_documento, a.numero_documento, a.validade_documento, a.morada, a.codigo_postal, a.localidade,
+      a.dispensa_modulos, a.desconto, a.atestado_data_emissao, a.atestado_data_validade, a.atestado_apto,
+      a.psicotecnico_aplicavel, a.psicotecnico_data_emissao, a.psicotecnico_data_validade, a.imt_numero,
+      a.imt_data_emissao, a.imt_data_validade,
+      (SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = a.id AND au.tipo = 'Prática' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) AS aulas_praticas_realizadas,
+      ((SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = a.id AND au.tipo = 'Teórica' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) +
+       (SELECT COUNT(*) FROM turma_inscritos ti JOIN turmas_teoricas tt ON tt.id = ti.turma_id WHERE ti.aluno_id = a.id AND ti.presente = 1 AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AS aulas_teoricas_realizadas
+    `;
+
     const result = await query(
-      `SELECT ${colunas} FROM alunos WHERE ${where}
-       ORDER BY nome
+      `SELECT ${colunasComContagens} FROM alunos a WHERE ${where}
+       ORDER BY a.nome
        OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`,
       params
     );
@@ -1150,53 +1250,71 @@ app.post('/api/examesMarcacoes', async (req, res) => {
   }
 });
 
-app.get('/api/examesMarcacoes/estatisticas', (req, res) => {
-  const { tenant } = currentTenant(req);
-  const todosComResultado = (tenant.examesMarcacoes || []).filter(m => m.resultado === 'Aprovado' || m.resultado === 'Reprovado');
+app.get('/api/examesMarcacoes/estatisticas', async (req, res) => {
+  try {
+    const params = { escolaId: req.escolaId };
+    const [statsRes, countRes] = await Promise.all([
+      query(`
+        SELECT
+          m.tipo,
+          FORMAT(m.data, 'yyyy-MM') AS mes,
+          FORMAT(m.data, 'yyyy') AS ano,
+          ISNULL(CAST(a.espaco_id AS NVARCHAR), 'sem-espaco') AS espacoChave,
+          ISNULL(e.nome, 'Sem espaço definido') AS espacoNome,
+          m.resultado,
+          COUNT(*) AS total
+        FROM exames_marcacoes m
+        LEFT JOIN alunos a ON a.id = m.aluno_id
+        LEFT JOIN espacos e ON e.id = a.espaco_id
+        WHERE m.escola_id = @escolaId AND m.resultado IN ('Aprovado', 'Reprovado') AND m.data IS NOT NULL
+        GROUP BY m.tipo, FORMAT(m.data, 'yyyy-MM'), FORMAT(m.data, 'yyyy'), a.espaco_id, e.nome, m.resultado
+      `, params),
+      query(`
+        SELECT COUNT(*) AS total FROM exames_marcacoes WHERE escola_id = @escolaId
+      `, params)
+    ]);
 
-  function agrupar(lista, chaveFn, rotuloFn) {
-    const mapa = new Map();
-    lista.forEach(m => {
-      const chave = chaveFn(m);
-      if (chave === null || chave === undefined) return;
-      if (!mapa.has(chave)) mapa.set(chave, { chave, rotulo: rotuloFn(chave, m), aprovados: 0, reprovados: 0 });
-      const entrada = mapa.get(chave);
-      if (m.resultado === 'Aprovado') entrada.aprovados++; else entrada.reprovados++;
+    const rows = statsRes.recordset || [];
+    const totalMarcacoes = countRes.recordset[0]?.total || 0;
+
+    function agruparRows(subRows, chaveProp, rotuloProp) {
+      const mapa = new Map();
+      subRows.forEach(r => {
+        const chave = r[chaveProp];
+        if (!chave) return;
+        const rotulo = rotuloProp ? r[rotuloProp] : chave;
+        if (!mapa.has(chave)) mapa.set(chave, { chave, rotulo, aprovados: 0, reprovados: 0 });
+        const entry = mapa.get(chave);
+        if (r.resultado === 'Aprovado') entry.aprovados += r.total;
+        else if (r.resultado === 'Reprovado') entry.reprovados += r.total;
+      });
+      return [...mapa.values()]
+        .map(e => ({
+          ...e,
+          total: e.aprovados + e.reprovados,
+          taxaAprovacao: (e.aprovados + e.reprovados) ? +((e.aprovados / (e.aprovados + e.reprovados)) * 100).toFixed(1) : 0
+        }))
+        .sort((a, b) => String(a.chave).localeCompare(String(b.chave)));
+    }
+
+    function construirBloco(subRows) {
+      return {
+        porMes: agruparRows(subRows, 'mes'),
+        porAno: agruparRows(subRows, 'ano'),
+        porEspaco: agruparRows(subRows, 'espacoChave', 'espacoNome'),
+        total: subRows.reduce((s, r) => s + r.total, 0)
+      };
+    }
+
+    ok(res, {
+      geral: construirBloco(rows),
+      teorico: construirBloco(rows.filter(r => r.tipo === 'Teórico')),
+      pratico: construirBloco(rows.filter(r => r.tipo === 'Prático')),
+      totalMarcacoes
     });
-    return [...mapa.values()]
-      .map(e => ({
-        ...e,
-        total: e.aprovados + e.reprovados,
-        taxaAprovacao: (e.aprovados + e.reprovados) ? +((e.aprovados / (e.aprovados + e.reprovados)) * 100).toFixed(1) : 0
-      }))
-      .sort((a, b) => String(a.chave).localeCompare(String(b.chave)));
+  } catch (ex) {
+    res.status(500).json({ success: false, error: `Falha ao obter estatísticas de exames: ${ex.message || ex}` });
   }
-
-  const espacoRotulo = (chave) => {
-    if (chave === 'sem-espaco') return 'Sem espaço definido';
-    const espaco = tenant.espacos.find(e => e.id === Number(chave));
-    return espaco ? espaco.nome : `Espaço #${chave}`;
-  };
-  const espacoChave = (m) => {
-    const aluno = tenant.alunos.find(a => a.id === Number(m.alunoId));
-    return aluno?.espacoId ?? 'sem-espaco';
-  };
-
-  function construirBloco(lista) {
-    return {
-      porMes: agrupar(lista, m => (m.data || '').slice(0, 7), (chave) => chave),
-      porAno: agrupar(lista, m => (m.data || '').slice(0, 4), (chave) => chave),
-      porEspaco: agrupar(lista, espacoChave, espacoRotulo),
-      total: lista.length
-    };
-  }
-
-  ok(res, {
-    geral: construirBloco(todosComResultado),
-    teorico: construirBloco(todosComResultado.filter(m => m.tipo === 'Teórico')),
-    pratico: construirBloco(todosComResultado.filter(m => m.tipo === 'Prático')),
-    totalMarcacoes: (tenant.examesMarcacoes || []).length
-  });
 });
 
 app.put('/api/examesMarcacoes/:id', async (req, res) => {
@@ -2359,442 +2477,166 @@ app.get('/api/relatorios/geral', (req, res) => {
   ok(res, linhas);
 });
 
-app.get('/api/relatorios/espera-teorica-pratica', (req, res) => {
-  const { tenant } = currentTenant(req);
-  ok(res, calcularEsperaTeoricaPratica(tenant));
-});
+app.get('/api/relatorios/espera-teorica-pratica', async (req, res) => {
+  try {
+    const result = await query(`
+      WITH TeoricoAprovado AS (
+        SELECT aluno_id, MIN(data) AS dataExameAprovado
+        FROM exames_marcacoes
+        WHERE escola_id = @e AND tipo = 'Teórico' AND resultado = 'Aprovado'
+        GROUP BY aluno_id
+      ),
+      PrimeiraPratica AS (
+        SELECT aluno_id, MIN(data) AS dataAula1
+        FROM aulas
+        WHERE escola_id = @e AND LOWER(tipo) LIKE '%prat%'
+          AND estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+        GROUP BY aluno_id
+      )
+      SELECT
+        a.id AS alunoId,
+        a.nome,
+        a.espaco_id AS espacoId,
+        ISNULL(e.nome, '—') AS espacoNome,
+        t.dataExameAprovado,
+        p.dataAula1,
+        DATEDIFF(day, t.dataExameAprovado, p.dataAula1) AS diasEspera
+      FROM TeoricoAprovado t
+      JOIN PrimeiraPratica p ON p.aluno_id = t.aluno_id
+      JOIN alunos a ON a.id = t.aluno_id
+      LEFT JOIN espacos e ON e.id = a.espaco_id
+      WHERE a.escola_id = @e AND p.dataAula1 >= t.dataExameAprovado
+      ORDER BY diasEspera DESC
+    `, { e: req.escolaId });
 
-app.get('/api/relatorios/inscricoes-espaco', (req, res) => {
-  const { tenant } = currentTenant(req);
-  const porEspaco = (tenant.espacos || []).map(espaco => {
-    const alunosDoEspaco = tenant.alunos.filter(a => a.espacoId === espaco.id && a.dataInscricao);
-    const mesesMap = new Map();
-    const anosMap = new Map();
-    alunosDoEspaco.forEach(a => {
-      const mes = a.dataInscricao.slice(0, 7);
-      const ano = a.dataInscricao.slice(0, 4);
-      mesesMap.set(mes, (mesesMap.get(mes) || 0) + 1);
-      anosMap.set(ano, (anosMap.get(ano) || 0) + 1);
-    });
-    return {
-      espacoId: espaco.id,
-      espacoNome: espaco.nome,
-      totalAlunos: alunosDoEspaco.length,
-      porMes: [...mesesMap.entries()].map(([mes, total]) => ({ mes, total })).sort((a, b) => a.mes.localeCompare(b.mes)),
-      porAno: [...anosMap.entries()].map(([ano, total]) => ({ ano, total })).sort((a, b) => a.ano.localeCompare(b.ano))
-    };
-  });
-  ok(res, { porEspaco });
-});
-
-app.get('/api/relatorios/fluxo-caixa', (req, res) => {
-  const { tenant } = currentTenant(req);
-  const pagamentosPagos = (tenant.pagamentos || []).filter(p => p.estado === 'Pago' && p.data);
-
-  function agruparPorChave(lista, chaveFn) {
-    const mapa = new Map();
-    lista.forEach(p => {
-      const chave = chaveFn(p);
-      mapa.set(chave, +(((mapa.get(chave) || 0) + (Number(p.valor) || 0)).toFixed(2)));
-    });
-    return [...mapa.entries()].map(([chave, total]) => ({ chave, total })).sort((a, b) => a.chave.localeCompare(b.chave));
+    const linhas = (result.recordset || []).map(r => ({
+      alunoId: r.alunoId,
+      nome: r.nome,
+      espacoId: r.espacoId,
+      espacoNome: r.espacoNome,
+      dataExameAprovado: r.dataExameAprovado ? (r.dataExameAprovado instanceof Date ? r.dataExameAprovado.toISOString().slice(0, 10) : String(r.dataExameAprovado).slice(0, 10)) : '',
+      dataAula1: r.dataAula1 ? (r.dataAula1 instanceof Date ? r.dataAula1.toISOString().slice(0, 10) : String(r.dataAula1).slice(0, 10)) : '',
+      diasEspera: r.diasEspera
+    }));
+    ok(res, linhas);
+  } catch (ex) {
+    res.status(500).json({ success: false, error: `Falha ao carregar relatório de espera: ${ex.message || ex}` });
   }
+});
 
-  const global = {
-    porMes: agruparPorChave(pagamentosPagos, p => p.data.slice(0, 7)),
-    porAno: agruparPorChave(pagamentosPagos, p => p.data.slice(0, 4)),
-    total: +pagamentosPagos.reduce((s, p) => s + (Number(p.valor) || 0), 0).toFixed(2)
-  };
+app.get('/api/relatorios/inscricoes-espaco', async (req, res) => {
+  try {
+    const [espacosRes, alunosRes] = await Promise.all([
+      query(`SELECT id, nome FROM espacos WHERE escola_id = @e ORDER BY id`, { e: req.escolaId }),
+      query(`
+        SELECT espaco_id AS espacoId, FORMAT(data_inscricao, 'yyyy-MM') AS mes, FORMAT(data_inscricao, 'yyyy') AS ano, COUNT(*) AS total
+        FROM alunos
+        WHERE escola_id = @e AND data_inscricao IS NOT NULL
+        GROUP BY espaco_id, FORMAT(data_inscricao, 'yyyy-MM'), FORMAT(data_inscricao, 'yyyy')
+      `, { e: req.escolaId })
+    ]);
 
-  const porEspaco = (tenant.espacos || []).map(espaco => {
-    const pagamentosEspaco = pagamentosPagos.filter(p => {
-      const aluno = tenant.alunos.find(a => a.id === Number(p.alunoId));
-      return aluno && aluno.espacoId === espaco.id;
+    const espacos = espacosRes.recordset || [];
+    const agrupados = alunosRes.recordset || [];
+
+    const porEspaco = espacos.map(espaco => {
+      const doEspaco = agrupados.filter(r => r.espacoId === espaco.id);
+      const totalAlunos = doEspaco.reduce((s, r) => s + r.total, 0);
+      const mesesMap = new Map();
+      const anosMap = new Map();
+      doEspaco.forEach(r => {
+        mesesMap.set(r.mes, (mesesMap.get(r.mes) || 0) + r.total);
+        anosMap.set(r.ano, (anosMap.get(r.ano) || 0) + r.total);
+      });
+      return {
+        espacoId: espaco.id,
+        espacoNome: espaco.nome,
+        totalAlunos,
+        porMes: [...mesesMap.entries()].map(([mes, total]) => ({ mes, total })).sort((a, b) => a.mes.localeCompare(b.mes)),
+        porAno: [...anosMap.entries()].map(([ano, total]) => ({ ano, total })).sort((a, b) => a.ano.localeCompare(b.ano))
+      };
     });
-    return {
-      espacoId: espaco.id,
-      espacoNome: espaco.nome,
-      total: +pagamentosEspaco.reduce((s, p) => s + (Number(p.valor) || 0), 0).toFixed(2),
-      porMes: agruparPorChave(pagamentosEspaco, p => p.data.slice(0, 7)),
-      porAno: agruparPorChave(pagamentosEspaco, p => p.data.slice(0, 4))
-    };
-  });
 
-  ok(res, { global, porEspaco });
+    ok(res, { porEspaco });
+  } catch (ex) {
+    res.status(500).json({ success: false, error: `Falha ao carregar inscrições por espaço: ${ex.message || ex}` });
+  }
+});
+
+app.get('/api/relatorios/fluxo-caixa', async (req, res) => {
+  try {
+    const [espacosRes, pagamentosRes] = await Promise.all([
+      query(`SELECT id, nome FROM espacos WHERE escola_id = @e ORDER BY id`, { e: req.escolaId }),
+      query(`
+        SELECT
+          ISNULL(a.espaco_id, 0) AS espacoId,
+          FORMAT(p.data, 'yyyy-MM') AS mes,
+          FORMAT(p.data, 'yyyy') AS ano,
+          ISNULL(SUM(p.valor), 0) AS total
+        FROM pagamentos p
+        LEFT JOIN alunos a ON a.id = p.aluno_id
+        WHERE p.escola_id = @e AND p.estado = 'Pago' AND p.data IS NOT NULL
+        GROUP BY a.espaco_id, FORMAT(p.data, 'yyyy-MM'), FORMAT(p.data, 'yyyy')
+      `, { e: req.escolaId })
+    ]);
+
+    const espacos = espacosRes.recordset || [];
+    const rows = pagamentosRes.recordset || [];
+
+    const mesesGlobais = new Map();
+    const anosGlobais = new Map();
+    let totalGlobal = 0;
+
+    rows.forEach(r => {
+      totalGlobal = +(totalGlobal + Number(r.total)).toFixed(2);
+      mesesGlobais.set(r.mes, +((mesesGlobais.get(r.mes) || 0) + Number(r.total)).toFixed(2));
+      anosGlobais.set(r.ano, +((anosGlobais.get(r.ano) || 0) + Number(r.total)).toFixed(2));
+    });
+
+    const global = {
+      porMes: [...mesesGlobais.entries()].map(([chave, total]) => ({ chave, total })).sort((a, b) => a.chave.localeCompare(b.chave)),
+      porAno: [...anosGlobais.entries()].map(([chave, total]) => ({ chave, total })).sort((a, b) => a.chave.localeCompare(b.chave)),
+      total: totalGlobal
+    };
+
+    const porEspaco = espacos.map(espaco => {
+      const rowsEspaco = rows.filter(r => r.espacoId === espaco.id);
+      const mesesEspaco = new Map();
+      const anosEspaco = new Map();
+      let totalEspaco = 0;
+      rowsEspaco.forEach(r => {
+        totalEspaco = +(totalEspaco + Number(r.total)).toFixed(2);
+        mesesEspaco.set(r.mes, +((mesesEspaco.get(r.mes) || 0) + Number(r.total)).toFixed(2));
+        anosEspaco.set(r.ano, +((anosEspaco.get(r.ano) || 0) + Number(r.total)).toFixed(2));
+      });
+      return {
+        espacoId: espaco.id,
+        espacoNome: espaco.nome,
+        porMes: [...mesesEspaco.entries()].map(([chave, total]) => ({ chave, total })).sort((a, b) => a.chave.localeCompare(b.chave)),
+        porAno: [...anosEspaco.entries()].map(([chave, total]) => ({ chave, total })).sort((a, b) => a.chave.localeCompare(b.chave)),
+        total: totalEspaco
+      };
+    });
+
+    res.json({ global, porEspaco });
+  } catch (err) {
+    console.error('Erro ao gerar relatório de fluxo de caixa:', err);
+    res.status(500).json({ error: 'Erro ao gerar relatório de fluxo de caixa.' });
+  }
 });
 
 /* ------------------------------------------------------------
-   20. Estatísticas agregadas (/api/estatisticas)
+   20. Estatísticas agregadas (/api/estatisticas) — Calculadas via SQL
    ------------------------------------------------------------ */
-
-function anoMesChave(dataISO) {
-  if (!dataISO) return '';
-  if (dataISO instanceof Date) {
-    return isNaN(dataISO.getTime()) ? '' : dataISO.toISOString().slice(0, 7);
-  }
-  return String(dataISO).trim().slice(0, 7);
-}
-
-function anoChave(dataISO) {
-  if (!dataISO) return '';
-  if (dataISO instanceof Date) {
-    return isNaN(dataISO.getTime()) ? '' : String(dataISO.getFullYear());
-  }
-  return String(dataISO).trim().slice(0, 4);
-}
 
 function mesesDoAnoCivil(ano) {
   if (!ano) return [];
   return Array.from({ length: 12 }, (_, i) => `${ano}-${String(i + 1).padStart(2, '0')}`);
 }
 
-function listarAnosComDados(tenant) {
-  const anosSet = new Set();
-
-  const extrairAno = (data) => {
-    const anoStr = anoChave(data);
-    const anoNum = parseInt(anoStr, 10);
-    if (!isNaN(anoNum) && anoNum >= 1900 && anoNum <= 2100) {
-      anosSet.add(anoNum);
-    }
-  };
-
-  (tenant?.pagamentos || []).forEach(p => extrairAno(p?.data));
-  (tenant?.alunos || []).forEach(a => extrairAno(a?.dataInscricao || a?.createdAt));
-  (tenant?.aulas || []).forEach(a => extrairAno(a?.data));
-  (tenant?.examesMarcacoes || []).forEach(m => extrairAno(m?.data));
-
-  anosSet.add(new Date().getFullYear());
-  return Array.from(anosSet).sort((a, b) => a - b);
-}
-
-function construirReceitaMensal(meses, pagamentosPagos) {
-  const mapa = new Map();
-  (pagamentosPagos || []).forEach(p => {
-    if (!p?.data) return;
-    const chave = anoMesChave(p.data);
-    if (!chave) return;
-    mapa.set(chave, +(((mapa.get(chave) || 0) + (Number(p.valor) || 0)).toFixed(2)));
-  });
-  return (meses || []).map(m => ({ mes: m, total: mapa.get(m) || 0 }));
-}
-
-function construirInscricoesMensais(meses, alunos) {
-  const mapa = new Map();
-  (alunos || []).forEach(a => {
-    if (!a?.dataInscricao) return;
-    const chave = anoMesChave(a.dataInscricao);
-    if (!chave) return;
-    mapa.set(chave, (mapa.get(chave) || 0) + 1);
-  });
-  return (meses || []).map(m => ({ mes: m, total: mapa.get(m) || 0 }));
-}
-
-// CORRIGIDO: isTipo / isEstadoConcluida em vez de comparação estrita.
-function construirAulasMensais(meses, aulas, turmasTeoricas) {
-  const mapa = new Map();
-
-  (aulas || [])
-    .filter(a => isEstadoConcluida(a?.estado) && a?.data)
-    .forEach(a => {
-      const chaveAnoMes = anoMesChave(a.data);
-      if (!chaveAnoMes) return;
-      const chave = `${chaveAnoMes}|${isTipo(a, 'Teórica') ? 'Teórica' : 'Prática'}`;
-      mapa.set(chave, (mapa.get(chave) || 0) + 1);
-    });
-
-  (turmasTeoricas || [])
-    .filter(t => isEstadoConcluida(t?.estado) && t?.data)
-    .forEach(t => {
-      const chaveAnoMes = anoMesChave(t.data);
-      if (!chaveAnoMes) return;
-      const presentes = Object.values(t.presencas || {}).filter(Boolean).length;
-      const chave = `${chaveAnoMes}|Teórica`;
-      mapa.set(chave, (mapa.get(chave) || 0) + presentes);
-    });
-
-  return (meses || []).map(m => ({
-    mes: m,
-    praticas: mapa.get(`${m}|Prática`) || 0,
-    teoricas: mapa.get(`${m}|Teórica`) || 0
-  }));
-}
-
-function construirExamesMensais(meses, examesComResultado) {
-  const mapa = new Map();
-  (examesComResultado || []).forEach(m => {
-    if (!m?.data) return;
-    const chave = anoMesChave(m.data);
-    if (!chave) return;
-
-    if (!mapa.has(chave)) mapa.set(chave, { aprovados: 0, reprovados: 0 });
-    const entry = mapa.get(chave);
-    if (m.resultado === 'Aprovado') entry.aprovados++;
-    else entry.reprovados++;
-  });
-
-  return (meses || []).map(m => {
-    const entry = mapa.get(m) || { aprovados: 0, reprovados: 0 };
-    return { mes: m, ...entry };
-  });
-}
-
-// CORRIGIDO: isEstadoConcluida em vez de `=== 'Concluída'` estrito.
-function construirComparativoAnual(tenant, anos) {
-  const pagamentosPagos = (tenant?.pagamentos || []).filter(p => p?.estado === 'Pago' && p?.data);
-  const examesComResultado = (tenant?.examesMarcacoes || []).filter(m => m?.data && (m.resultado === 'Aprovado' || m.resultado === 'Reprovado'));
-
-  const base = (anos || []).map(ano => {
-    const chaveAno = String(ano);
-
-    const receita = +pagamentosPagos
-      .filter(p => anoChave(p.data) === chaveAno)
-      .reduce((s, p) => s + (Number(p.valor) || 0), 0)
-      .toFixed(2);
-
-    const inscricoes = (tenant?.alunos || []).filter(a => a?.dataInscricao && anoChave(a.dataInscricao) === chaveAno).length;
-
-    const aulasConcluidas =
-      (tenant?.aulas || []).filter(a => isEstadoConcluida(a?.estado) && a?.data && anoChave(a.data) === chaveAno).length +
-      (tenant?.turmasTeoricas || []).filter(t => isEstadoConcluida(t?.estado) && t?.data && anoChave(t.data) === chaveAno)
-        .reduce((s, t) => s + Object.values(t.presencas || {}).filter(Boolean).length, 0);
-
-    const examesAno = examesComResultado.filter(m => anoChave(m.data) === chaveAno);
-    const examesAprovados = examesAno.filter(m => m.resultado === 'Aprovado').length;
-    const examesReprovados = examesAno.filter(m => m.resultado === 'Reprovado').length;
-    const taxaAprovacao = examesAno.length ? +((examesAprovados / examesAno.length) * 100).toFixed(1) : null;
-
-    return { ano, receita, inscricoes, aulasConcluidas, examesAprovados, examesReprovados, taxaAprovacao };
-  });
-
-  return base.map((item, i) => {
-    const anterior = base[i - 1];
-    return {
-      ...item,
-      variacaoReceitaPct: anterior && anterior.receita ? +(((item.receita - anterior.receita) / anterior.receita) * 100).toFixed(1) : null,
-      variacaoInscricoesPct: anterior && anterior.inscricoes ? +(((item.inscricoes - anterior.inscricoes) / anterior.inscricoes) * 100).toFixed(1) : null
-    };
-  });
-}
-
-function construirFunilConversao(tenant) {
-  const alunos = tenant?.alunos || [];
-  const totalInscritos = alunos.length;
-
-  const idsComTeoricoAprovado = new Set(
-    (tenant?.examesMarcacoes || [])
-      .filter(m => m?.tipo === 'Teórico' && m?.resultado === 'Aprovado' && m?.alunoId)
-      .map(m => m.alunoId)
-  );
-  const idsComPraticoAprovado = new Set(
-    (tenant?.examesMarcacoes || [])
-      .filter(m => m?.tipo === 'Prático' && m?.resultado === 'Aprovado' && m?.alunoId)
-      .map(m => m.alunoId)
-  );
-  const totalConcluidos = alunos.filter(a => a?.estado === 'Concluído').length;
-
-  const etapas = [
-    { etapa: 'Inscritos', total: totalInscritos },
-    { etapa: 'Aprovados no teórico', total: idsComTeoricoAprovado.size },
-    { etapa: 'Aprovados no prático', total: idsComPraticoAprovado.size },
-    { etapa: 'Curso concluído', total: totalConcluidos }
-  ];
-
-  return etapas.map((e, i) => ({
-    ...e,
-    taxaConversaoDesdeInicio: totalInscritos ? +((e.total / totalInscritos) * 100).toFixed(1) : null,
-    taxaConversaoEtapaAnterior: i > 0 && etapas[i - 1].total ? +((e.total / etapas[i - 1].total) * 100).toFixed(1) : null
-  }));
-}
-
-function tentativasMediasAteAprovacao(tenant) {
-  const porAlunoTipo = new Map();
-
-  (tenant.examesMarcacoes || [])
-    .filter(m => m.alunoId && m.tipo && m.data && (m.resultado === 'Aprovado' || m.resultado === 'Reprovado'))
-    .forEach(m => {
-      const chave = `${m.alunoId}|${m.tipo}`;
-      if (!porAlunoTipo.has(chave)) porAlunoTipo.set(chave, []);
-      porAlunoTipo.get(chave).push(m);
-    });
-
-  const tentativas = { 'Teórico': [], 'Prático': [] };
-  porAlunoTipo.forEach((exames, chave) => {
-    const tipo = chave.split('|')[1];
-    const ordenados = exames.slice().sort((a, b) => dstr(a.data).localeCompare(dstr(b.data)));
-    const idxAprovacao = ordenados.findIndex(e => e.resultado === 'Aprovado');
-    if (idxAprovacao === -1) return;
-    if (tentativas[tipo]) tentativas[tipo].push(idxAprovacao + 1);
-  });
-
-  const mediaOuNull = arr => arr.length ? +(arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : null;
-
-  return {
-    teorico: mediaOuNull(tentativas['Teórico']),
-    pratico: mediaOuNull(tentativas['Prático'])
-  };
-}
-
-function construirReceitaPorCategoria(tenant) {
-  const pagamentosPagos = (tenant.pagamentos || []).filter(p => p.estado === 'Pago');
-  const mapa = new Map();
-
-  pagamentosPagos.forEach(p => {
-    const aluno = (tenant.alunos || []).find(a => a.id === p.alunoId);
-    const categoria = aluno?.categoria || 'Sem categoria';
-    mapa.set(categoria, +(((mapa.get(categoria) || 0) + (Number(p.valor) || 0)).toFixed(2)));
-  });
-
-  return [...mapa.entries()]
-    .map(([categoria, total]) => ({ categoria, total }))
-    .sort((a, b) => b.total - a.total);
-}
-
-// CORRIGIDO: isTipo / isEstadoConcluida em vez de comparação estrita.
-function construirDesempenhoInstrutores(tenant) {
-  const aulasPraticasPorAluno = new Map();
-
-  (tenant.aulas || [])
-    .filter(a => isTipo(a, 'Prática') && isEstadoConcluida(a.estado) && a.alunoId && a.instrutorId)
-    .forEach(a => {
-      if (!aulasPraticasPorAluno.has(a.alunoId)) aulasPraticasPorAluno.set(a.alunoId, new Map());
-      const m = aulasPraticasPorAluno.get(a.alunoId);
-      m.set(a.instrutorId, (m.get(a.instrutorId) || 0) + 1);
-    });
-
-  const instrutorPrincipalPorAluno = new Map();
-  aulasPraticasPorAluno.forEach((mapa, alunoId) => {
-    let melhor = null, melhorTotal = -1;
-    mapa.forEach((total, instrutorId) => { if (total > melhorTotal) { melhor = instrutorId; melhorTotal = total; } });
-    if (melhor) instrutorPrincipalPorAluno.set(alunoId, melhor);
-  });
-
-  const statsPorInstrutor = new Map();
-  (tenant.examesMarcacoes || [])
-    .filter(m => m.tipo === 'Prático' && m.alunoId && (m.resultado === 'Aprovado' || m.resultado === 'Reprovado'))
-    .forEach(m => {
-      const instrutorId = instrutorPrincipalPorAluno.get(m.alunoId);
-      if (!instrutorId) return;
-      if (!statsPorInstrutor.has(instrutorId)) statsPorInstrutor.set(instrutorId, { aprovados: 0, total: 0 });
-      const s = statsPorInstrutor.get(instrutorId);
-      s.total++;
-      if (m.resultado === 'Aprovado') s.aprovados++;
-    });
-
-  return [...statsPorInstrutor.entries()]
-    .map(([instrutorId, s]) => ({
-      instrutorId,
-      nome: (tenant.instrutores.find(i => i.id === instrutorId) || {}).nome || 'Instrutor removido',
-      totalExames: s.total,
-      aprovados: s.aprovados,
-      taxaAprovacao: s.total ? +((s.aprovados / s.total) * 100).toFixed(1) : null
-    }))
-    .filter(i => i.totalExames >= 3)
-    .sort((a, b) => b.taxaAprovacao - a.taxaAprovacao);
-}
-
-function construirAgingPagamentosPendentes(tenant) {
-  const hoje = new Date();
-  const faixas = [
-    { label: '0-30 dias', min: 0, max: 30, total: 0 },
-    { label: '31-60 dias', min: 31, max: 60, total: 0 },
-    { label: '61-90 dias', min: 61, max: 90, total: 0 },
-    { label: '90+ dias', min: 91, max: Infinity, total: 0 }
-  ];
-
-  (tenant.pagamentos || [])
-    .filter(p => p.estado === 'Pendente' && p.data)
-    .forEach(p => {
-      const dias = Math.round((hoje - new Date(p.data)) / 86400000);
-      const faixa = faixas.find(f => dias >= f.min && dias <= f.max) || faixas[faixas.length - 1];
-      faixa.total = +((faixa.total + (Number(p.valor) || 0)).toFixed(2));
-    });
-
-  return faixas.map(({ label, total }) => ({ label, total }));
-}
-
 function mesAnoAnterior(chaveMes) {
   const [ano, mes] = chaveMes.split('-');
   return `${Number(ano) - 1}-${mes}`;
-}
-
-function construirComparacaoHomologa(tenant, meses) {
-  const mesesAnoAnterior = meses.map(mesAnoAnterior);
-
-  const pagamentosPagos = (tenant.pagamentos || []).filter(p => p.estado === 'Pago' && p.data);
-  const examesComResultado = (tenant.examesMarcacoes || [])
-    .filter(m => m.data && (m.resultado === 'Aprovado' || m.resultado === 'Reprovado'));
-
-  const receitaAtual = construirReceitaMensal(meses, pagamentosPagos);
-  const receitaAnterior = construirReceitaMensal(mesesAnoAnterior, pagamentosPagos);
-  const inscricoesAtual = construirInscricoesMensais(meses, tenant.alunos || []);
-  const inscricoesAnterior = construirInscricoesMensais(mesesAnoAnterior, tenant.alunos || []);
-  const aulasAtual = construirAulasMensais(meses, tenant.aulas, tenant.turmasTeoricas);
-  const aulasAnterior = construirAulasMensais(mesesAnoAnterior, tenant.aulas, tenant.turmasTeoricas);
-  const examesAtual = construirExamesMensais(meses, examesComResultado);
-  const examesAnterior = construirExamesMensais(mesesAnoAnterior, examesComResultado);
-
-  const somaTotal = arr => +arr.reduce((s, m) => s + m.total, 0).toFixed(2);
-  const somaAulas = arr => arr.reduce((s, m) => s + m.praticas + m.teoricas, 0);
-  const somaAprovados = arr => arr.reduce((s, m) => s + m.aprovados, 0);
-  const somaExamesTotal = arr => arr.reduce((s, m) => s + m.aprovados + m.reprovados, 0);
-  const variacaoPct = (atual, anterior) => (anterior ? +(((atual - anterior) / anterior) * 100).toFixed(1) : null);
-
-  const totalReceitaAtual = somaTotal(receitaAtual);
-  const totalReceitaAnterior = somaTotal(receitaAnterior);
-  const totalInscricoesAtual = somaTotal(inscricoesAtual);
-  const totalInscricoesAnterior = somaTotal(inscricoesAnterior);
-  const totalAulasAtual = somaAulas(aulasAtual);
-  const totalAulasAnterior = somaAulas(aulasAnterior);
-  const aprovadosAtual = somaAprovados(examesAtual);
-  const aprovadosAnterior = somaAprovados(examesAnterior);
-  const totalExamesAtual = somaExamesTotal(examesAtual);
-  const totalExamesAnterior = somaExamesTotal(examesAnterior);
-  const taxaAprovacaoAtual = totalExamesAtual ? +((aprovadosAtual / totalExamesAtual) * 100).toFixed(1) : null;
-  const taxaAprovacaoAnterior = totalExamesAnterior ? +((aprovadosAnterior / totalExamesAnterior) * 100).toFixed(1) : null;
-
-  return {
-    porMes: meses.map((m, i) => ({
-      mes: m,
-      mesAnoAnterior: mesesAnoAnterior[i],
-      receitaAtual: receitaAtual[i].total,
-      receitaAnterior: receitaAnterior[i].total,
-      inscricoesAtual: inscricoesAtual[i].total,
-      inscricoesAnterior: inscricoesAnterior[i].total,
-      aulasAtual: aulasAtual[i].praticas + aulasAtual[i].teoricas,
-      aulasAnterior: aulasAnterior[i].praticas + aulasAnterior[i].teoricas
-    })),
-    totais: {
-      receita: { atual: totalReceitaAtual, anterior: totalReceitaAnterior, variacaoPct: variacaoPct(totalReceitaAtual, totalReceitaAnterior) },
-      inscricoes: { atual: totalInscricoesAtual, anterior: totalInscricoesAnterior, variacaoPct: variacaoPct(totalInscricoesAtual, totalInscricoesAnterior) },
-      aulasConcluidas: { atual: totalAulasAtual, anterior: totalAulasAnterior, variacaoPct: variacaoPct(totalAulasAtual, totalAulasAnterior) },
-      taxaAprovacao: {
-        atual: taxaAprovacaoAtual, anterior: taxaAprovacaoAnterior,
-        variacaoPP: (taxaAprovacaoAtual != null && taxaAprovacaoAnterior != null) ? +(taxaAprovacaoAtual - taxaAprovacaoAnterior).toFixed(1) : null
-      }
-    }
-  };
-}
-
-function tempoMedioDiasAteAprovacaoPratica(tenant) {
-  const primeiraAprovacaoPorAluno = new Map();
-  (tenant.examesMarcacoes || [])
-    .filter(m => m.tipo === 'Prático' && m.resultado === 'Aprovado' && m.data && m.alunoId)
-    .forEach(m => {
-      const atual = primeiraAprovacaoPorAluno.get(m.alunoId);
-      if (!atual || m.data < atual) primeiraAprovacaoPorAluno.set(m.alunoId, m.data);
-    });
-
-  const diffsDias = [];
-  primeiraAprovacaoPorAluno.forEach((dataAprovacao, alunoId) => {
-    const aluno = (tenant.alunos || []).find(a => a.id === alunoId);
-    if (!aluno || !aluno.dataInscricao) return;
-    const dias = Math.round((new Date(dataAprovacao) - new Date(aluno.dataInscricao)) / 86400000);
-    if (dias >= 0) diffsDias.push(dias);
-  });
-
-  if (!diffsDias.length) return null;
-  return Math.round(diffsDias.reduce((a, b) => a + b, 0) / diffsDias.length);
 }
 
 function medianaDe(numeros) {
@@ -2806,226 +2648,650 @@ function medianaDe(numeros) {
     : +(((ordenados[meio - 1] + ordenados[meio]) / 2).toFixed(1));
 }
 
-// CORRIGIDO: isTipo / isEstadoConcluida em vez de comparação estrita.
-function calcularEsperaTeoricoPraticaPorAluno(tenant) {
-  const resultados = [];
-  (tenant.alunos || []).forEach(aluno => {
-    const examesAprovados = (tenant.examesMarcacoes || [])
-      .filter(m => m.alunoId === aluno.id && m.tipo === 'Teórico' && m.resultado === 'Aprovado' && m.data)
-      .sort((a, b) => a.data.localeCompare(b.data));
-    if (!examesAprovados.length) return;
-    const dataExameAprovado = examesAprovados[0].data;
+app.get('/api/estatisticas', async (req, res) => {
+  try {
+    const e = req.escolaId;
+    const anoQuery = req.query.ano ? Number(req.query.ano) : null;
+    const modo = anoQuery ? 'anoCivil' : 'rolante12';
+    const meses = modo === 'anoCivil' ? mesesDoAnoCivil(anoQuery) : ultimosNMeses(12);
 
-    const primeiraPratica = (tenant.aulas || [])
-      .filter(a => a.alunoId === aluno.id && isTipo(a, 'Prática') && isEstadoConcluida(a.estado) && a.data)
-      .sort((a, b) => (a.data + (a.hora || '')).localeCompare(b.data + (b.hora || '')))[0];
-    if (!primeiraPratica) return;
+    const inicioMes = meses[0] + '-01';
+    const fimMes = `${meses[meses.length - 1]}-31`;
 
-    const dias = Math.round((new Date(primeiraPratica.data) - new Date(dataExameAprovado)) / 86400000);
-    if (dias < 0) return;
+    const mesesAnoAnterior = meses.map(mesAnoAnterior);
+    const inicioHomologo = mesesAnoAnterior[0] + '-01';
+    const fimHomologo = `${mesesAnoAnterior[mesesAnoAnterior.length - 1]}-31`;
 
-    resultados.push({
-      alunoId: aluno.id,
-      dataExameAprovado,
-      dataAula1: primeiraPratica.data,
-      mesAula1: primeiraPratica.data.slice(0, 7),
-      diasEspera: dias
+    const tresMesesAtrasStr = meses[Math.max(0, meses.length - 3)] + '-01';
+
+    // Executar queries SQL paralelas no SQL Server
+    const [
+      receitaMensalRes,
+      receitaHomologaRes,
+      inscricoesMensaisRes,
+      inscricoesHomologaRes,
+      aulasIndividuaisRes,
+      aulasHomologasRes,
+      turmasTeoricasRes,
+      turmasHomologasRes,
+      examesMensaisRes,
+      examesHomologosRes,
+      receitaPendenteRes,
+      taxasExamesRes,
+      alunosEstadoRes,
+      alunosCategoriaRes,
+      cargaInstrutorRes,
+      usoVeiculosRes,
+      receitaCategoriaRes,
+      agingRes,
+      funilRes,
+      tentativasRes,
+      desempenhoInstrutoresRes,
+      esperaRes,
+      anosDisponiveisRes,
+      alunosTotaisRes,
+      tempoMedioPraticaRes
+    ] = await Promise.all([
+      // 1. Receita mensal atual
+      query(`
+        SELECT FORMAT(data, 'yyyy-MM') AS mes, ISNULL(SUM(valor), 0) AS total
+        FROM pagamentos
+        WHERE escola_id = @e AND estado = 'Pago' AND data >= @inicioMes AND data <= @fimMes
+        GROUP BY FORMAT(data, 'yyyy-MM')
+      `, { e, inicioMes, fimMes }),
+
+      // 2. Receita período homólogo
+      query(`
+        SELECT FORMAT(data, 'yyyy-MM') AS mes, ISNULL(SUM(valor), 0) AS total
+        FROM pagamentos
+        WHERE escola_id = @e AND estado = 'Pago' AND data >= @inicioHomologo AND data <= @fimHomologo
+        GROUP BY FORMAT(data, 'yyyy-MM')
+      `, { e, inicioHomologo, fimHomologo }),
+
+      // 3. Inscrições mensais atuais
+      query(`
+        SELECT FORMAT(data_inscricao, 'yyyy-MM') AS mes, COUNT(*) AS total
+        FROM alunos
+        WHERE escola_id = @e AND data_inscricao >= @inicioMes AND data_inscricao <= @fimMes
+        GROUP BY FORMAT(data_inscricao, 'yyyy-MM')
+      `, { e, inicioMes, fimMes }),
+
+      // 4. Inscrições período homólogo
+      query(`
+        SELECT FORMAT(data_inscricao, 'yyyy-MM') AS mes, COUNT(*) AS total
+        FROM alunos
+        WHERE escola_id = @e AND data_inscricao >= @inicioHomologo AND data_inscricao <= @fimHomologo
+        GROUP BY FORMAT(data_inscricao, 'yyyy-MM')
+      `, { e, inicioHomologo, fimHomologo }),
+
+      // 5. Aulas individuais atuais (Prática / Teórica)
+      query(`
+        SELECT FORMAT(data, 'yyyy-MM') AS mes,
+               CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END AS tipo,
+               COUNT(*) AS total
+        FROM aulas
+        WHERE escola_id = @e
+          AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
+          AND data >= @inicioMes AND data <= @fimMes
+        GROUP BY FORMAT(data, 'yyyy-MM'), CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END
+      `, { e, inicioMes, fimMes }),
+
+      // 6. Aulas individuais período homólogo
+      query(`
+        SELECT FORMAT(data, 'yyyy-MM') AS mes,
+               CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END AS tipo,
+               COUNT(*) AS total
+        FROM aulas
+        WHERE escola_id = @e
+          AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
+          AND data >= @inicioHomologo AND data <= @fimHomologo
+        GROUP BY FORMAT(data, 'yyyy-MM'), CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END
+      `, { e, inicioHomologo, fimHomologo }),
+
+      // 7. Turmas teóricas atuais
+      query(`
+        SELECT FORMAT(t.data, 'yyyy-MM') AS mes, COUNT(ti.aluno_id) AS total
+        FROM turmas_teoricas t
+        JOIN turma_inscritos ti ON ti.turma_id = t.id AND ti.presente = 1
+        WHERE t.escola_id = @e
+          AND t.estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
+          AND t.data >= @inicioMes AND t.data <= @fimMes
+        GROUP BY FORMAT(t.data, 'yyyy-MM')
+      `, { e, inicioMes, fimMes }),
+
+      // 8. Turmas teóricas período homólogo
+      query(`
+        SELECT FORMAT(t.data, 'yyyy-MM') AS mes, COUNT(ti.aluno_id) AS total
+        FROM turmas_teoricas t
+        JOIN turma_inscritos ti ON ti.turma_id = t.id AND ti.presente = 1
+        WHERE t.escola_id = @e
+          AND t.estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
+          AND t.data >= @inicioHomologo AND t.data <= @fimHomologo
+        GROUP BY FORMAT(t.data, 'yyyy-MM')
+      `, { e, inicioHomologo, fimHomologo }),
+
+      // 9. Exames mensais atuais
+      query(`
+        SELECT FORMAT(data, 'yyyy-MM') AS mes, resultado, COUNT(*) AS total
+        FROM exames_marcacoes
+        WHERE escola_id = @e AND resultado IN ('Aprovado', 'Reprovado')
+          AND data >= @inicioMes AND data <= @fimMes
+        GROUP BY FORMAT(data, 'yyyy-MM'), resultado
+      `, { e, inicioMes, fimMes }),
+
+      // 10. Exames período homólogo
+      query(`
+        SELECT FORMAT(data, 'yyyy-MM') AS mes, resultado, COUNT(*) AS total
+        FROM exames_marcacoes
+        WHERE escola_id = @e AND resultado IN ('Aprovado', 'Reprovado')
+          AND data >= @inicioHomologo AND data <= @fimHomologo
+        GROUP BY FORMAT(data, 'yyyy-MM'), resultado
+      `, { e, inicioHomologo, fimHomologo }),
+
+      // 11. Receita pendente total
+      query(`
+        SELECT ISNULL(SUM(valor), 0) AS total
+        FROM pagamentos
+        WHERE escola_id = @e AND estado = 'Pendente'
+      `, { e }),
+
+      // 12. Taxas gerais de exame
+      query(`
+        SELECT tipo, resultado, COUNT(*) AS total
+        FROM exames_marcacoes
+        WHERE escola_id = @e AND resultado IN ('Aprovado', 'Reprovado')
+        GROUP BY tipo, resultado
+      `, { e }),
+
+      // 13. Alunos por estado
+      query(`
+        SELECT ISNULL(estado, 'Ativo') AS estado, COUNT(*) AS total
+        FROM alunos
+        WHERE escola_id = @e
+        GROUP BY estado
+      `, { e }),
+
+      // 14. Alunos por categoria
+      query(`
+        SELECT ISNULL(categoria, 'Sem categoria') AS categoria, COUNT(*) AS total
+        FROM alunos
+        WHERE escola_id = @e
+        GROUP BY categoria
+        ORDER BY total DESC
+      `, { e }),
+
+      // 15. Carga por instrutor (3 meses)
+      query(`
+        SELECT i.id AS instrutorId, i.nome, COUNT(a.id) AS total
+        FROM instrutores i
+        JOIN (
+          SELECT id, instrutor_id FROM aulas WHERE escola_id = @e AND data >= @tresMesesAtrasStr
+          UNION ALL
+          SELECT id, instrutor_id FROM turmas_teoricas WHERE escola_id = @e AND data >= @tresMesesAtrasStr
+        ) a ON a.instrutor_id = i.id
+        WHERE i.escola_id = @e
+        GROUP BY i.id, i.nome
+        ORDER BY total DESC
+      `, { e, tresMesesAtrasStr }),
+
+      // 16. Utilização de veículos (3 meses)
+      query(`
+        SELECT v.id AS veiculoId, v.matricula, COUNT(a.id) AS total
+        FROM veiculos v
+        JOIN aulas a ON a.veiculo_id = v.id
+        WHERE v.escola_id = @e
+          AND (LOWER(a.tipo) LIKE '%prat%')
+          AND a.data >= @tresMesesAtrasStr
+        GROUP BY v.id, v.matricula
+        ORDER BY total DESC
+      `, { e, tresMesesAtrasStr }),
+
+      // 17. Receita por categoria
+      query(`
+        SELECT ISNULL(a.categoria, 'Sem categoria') AS categoria, ISNULL(SUM(p.valor), 0) AS total
+        FROM pagamentos p
+        LEFT JOIN alunos a ON a.id = p.aluno_id
+        WHERE p.escola_id = @e AND p.estado = 'Pago'
+        GROUP BY a.categoria
+        ORDER BY total DESC
+      `, { e }),
+
+      // 18. Aging de pagamentos pendentes
+      query(`
+        SELECT
+          ISNULL(SUM(CASE WHEN DATEDIFF(day, data, GETDATE()) <= 30 THEN valor ELSE 0 END), 0) AS f0_30,
+          ISNULL(SUM(CASE WHEN DATEDIFF(day, data, GETDATE()) BETWEEN 31 AND 60 THEN valor ELSE 0 END), 0) AS f31_60,
+          ISNULL(SUM(CASE WHEN DATEDIFF(day, data, GETDATE()) BETWEEN 61 AND 90 THEN valor ELSE 0 END), 0) AS f61_90,
+          ISNULL(SUM(CASE WHEN DATEDIFF(day, data, GETDATE()) > 90 THEN valor ELSE 0 END), 0) AS f90_plus
+        FROM pagamentos
+        WHERE escola_id = @e AND estado = 'Pendente' AND data IS NOT NULL
+      `, { e }),
+
+      // 19. Funil de conversão
+      query(`
+        SELECT
+          (SELECT COUNT(*) FROM alunos WHERE escola_id = @e) AS totalInscritos,
+          (SELECT COUNT(DISTINCT aluno_id) FROM exames_marcacoes WHERE escola_id = @e AND tipo = 'Teórico' AND resultado = 'Aprovado') AS aprovadosTeorico,
+          (SELECT COUNT(DISTINCT aluno_id) FROM exames_marcacoes WHERE escola_id = @e AND tipo = 'Prático' AND resultado = 'Aprovado') AS aprovadosPratico,
+          (SELECT COUNT(*) FROM alunos WHERE escola_id = @e AND estado = 'Concluído') AS concluidos
+      `, { e }),
+
+      // 20. Exames para cálculo de tentativas médias
+      query(`
+        SELECT aluno_id, tipo, data, resultado
+        FROM exames_marcacoes
+        WHERE escola_id = @e AND aluno_id IS NOT NULL AND resultado IN ('Aprovado', 'Reprovado')
+        ORDER BY aluno_id, tipo, data
+      `, { e }),
+
+      // 21. Desempenho de instrutores
+      query(`
+        WITH AlunoInstrutorPrincipal AS (
+          SELECT aluno_id, instrutor_id,
+            ROW_NUMBER() OVER (PARTITION BY aluno_id ORDER BY COUNT(*) DESC) as rn
+          FROM aulas
+          WHERE escola_id = @e AND LOWER(tipo) LIKE '%prat%' AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído') AND instrutor_id IS NOT NULL
+          GROUP BY aluno_id, instrutor_id
+        )
+        SELECT
+          i.id AS instrutorId,
+          i.nome,
+          COUNT(m.id) AS totalExames,
+          SUM(CASE WHEN m.resultado = 'Aprovado' THEN 1 ELSE 0 END) AS aprovados
+        FROM exames_marcacoes m
+        JOIN AlunoInstrutorPrincipal aip ON aip.aluno_id = m.aluno_id AND aip.rn = 1
+        JOIN instrutores i ON i.id = aip.instrutor_id
+        WHERE m.escola_id = @e AND m.tipo = 'Prático' AND m.resultado IN ('Aprovado', 'Reprovado')
+        GROUP BY i.id, i.nome
+        HAVING COUNT(m.id) >= 3
+        ORDER BY (CAST(SUM(CASE WHEN m.resultado = 'Aprovado' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(m.id)) DESC
+      `, { e }),
+
+      // 22. Tempo de espera teórico -> prático por aluno
+      query(`
+        WITH TeoricoAprovado AS (
+          SELECT aluno_id, MIN(data) AS dataExameAprovado
+          FROM exames_marcacoes
+          WHERE escola_id = @e AND tipo = 'Teórico' AND resultado = 'Aprovado'
+          GROUP BY aluno_id
+        ),
+        PrimeiraPratica AS (
+          SELECT aluno_id, MIN(data) AS dataAula1
+          FROM aulas
+          WHERE escola_id = @e AND LOWER(tipo) LIKE '%prat%'
+            AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
+          GROUP BY aluno_id
+        )
+        SELECT
+          t.aluno_id AS alunoId,
+          t.dataExameAprovado,
+          p.dataAula1,
+          FORMAT(p.dataAula1, 'yyyy-MM') AS mesAula1,
+          DATEDIFF(day, t.dataExameAprovado, p.dataAula1) AS diasEspera
+        FROM TeoricoAprovado t
+        JOIN PrimeiraPratica p ON p.aluno_id = t.aluno_id
+        WHERE p.dataAula1 >= t.dataExameAprovado
+      `, { e }),
+
+      // 23. Anos disponíveis
+      query(`
+        SELECT DISTINCT ano FROM (
+          SELECT YEAR(data) AS ano FROM pagamentos WHERE escola_id = @e AND data IS NOT NULL
+          UNION
+          SELECT YEAR(data_inscricao) AS ano FROM alunos WHERE escola_id = @e AND data_inscricao IS NOT NULL
+          UNION
+          SELECT YEAR(data) AS ano FROM aulas WHERE escola_id = @e AND data IS NOT NULL
+          UNION
+          SELECT YEAR(data) AS ano FROM exames_marcacoes WHERE escola_id = @e AND data IS NOT NULL
+        ) t WHERE ano >= 1990 AND ano <= 2100 ORDER BY ano
+      `, { e }),
+
+      // 24. Alunos totais por estado
+      query(`
+        SELECT
+          (SELECT COUNT(*) FROM alunos WHERE escola_id = @e AND (estado = 'Ativo' OR estado IS NULL)) AS totalAlunosAtivos,
+          (SELECT COUNT(*) FROM alunos WHERE escola_id = @e AND estado = 'Concluído') AS alunosConcluidos,
+          (SELECT COUNT(*) FROM alunos WHERE escola_id = @e AND estado = 'Suspenso') AS alunosSuspensos
+      `, { e }),
+
+      // 25. Tempo médio até aprovação prática
+      query(`
+        SELECT AVG(CAST(dias AS FLOAT)) AS mediaDias
+        FROM (
+          SELECT DATEDIFF(day, a.data_inscricao, MIN(m.data)) AS dias
+          FROM exames_marcacoes m
+          JOIN alunos a ON a.id = m.aluno_id
+          WHERE m.escola_id = @e AND m.tipo = 'Prático' AND m.resultado = 'Aprovado'
+            AND a.data_inscricao IS NOT NULL AND m.data >= a.data_inscricao
+          GROUP BY a.id, a.data_inscricao
+        ) sub
+      `, { e })
+    ]);
+
+    // Mapeamentos para garantir que todos os meses do período estão representados
+    const recMap = new Map((receitaMensalRes.recordset || []).map(r => [r.mes, +Number(r.total).toFixed(2)]));
+    const receitaMensal = meses.map(m => ({ mes: m, total: recMap.get(m) || 0 }));
+
+    const recHomologaMap = new Map((receitaHomologaRes.recordset || []).map(r => [r.mes, +Number(r.total).toFixed(2)]));
+    const receitaAnterior = mesesAnoAnterior.map(m => ({ mes: m, total: recHomologaMap.get(m) || 0 }));
+
+    const inscMap = new Map((inscricoesMensaisRes.recordset || []).map(r => [r.mes, Number(r.total)]));
+    const inscricoesMensais = meses.map(m => ({ mes: m, total: inscMap.get(m) || 0 }));
+
+    const inscHomologaMap = new Map((inscricoesHomologaRes.recordset || []).map(r => [r.mes, Number(r.total)]));
+    const inscricoesAnterior = mesesAnoAnterior.map(m => ({ mes: m, total: inscHomologaMap.get(m) || 0 }));
+
+    const aulasPratMap = new Map();
+    const aulasTeorMap = new Map();
+    (aulasIndividuaisRes.recordset || []).forEach(r => {
+      if (r.tipo === 'Prática') aulasPratMap.set(r.mes, (aulasPratMap.get(r.mes) || 0) + Number(r.total));
+      else aulasTeorMap.set(r.mes, (aulasTeorMap.get(r.mes) || 0) + Number(r.total));
     });
-  });
-  return resultados;
-}
+    (turmasTeoricasRes.recordset || []).forEach(r => {
+      aulasTeorMap.set(r.mes, (aulasTeorMap.get(r.mes) || 0) + Number(r.total));
+    });
+    const aulasMensais = meses.map(m => ({
+      mes: m,
+      praticas: aulasPratMap.get(m) || 0,
+      teoricas: aulasTeorMap.get(m) || 0
+    }));
 
-function construirTempoEsperaMensal(tenant, meses) {
-  const registos = calcularEsperaTeoricoPraticaPorAluno(tenant);
-  const porMes = new Map();
-  registos.forEach(r => {
-    if (!porMes.has(r.mesAula1)) porMes.set(r.mesAula1, []);
-    porMes.get(r.mesAula1).push(r.diasEspera);
-  });
-  return meses.map(m => {
-    const valores = porMes.get(m) || [];
-    return { mes: m, medianaDias: medianaDe(valores), amostras: valores.length };
-  });
-}
+    const aulasPratHomologaMap = new Map();
+    const aulasTeorHomologaMap = new Map();
+    (aulasHomologasRes.recordset || []).forEach(r => {
+      if (r.tipo === 'Prática') aulasPratHomologaMap.set(r.mes, (aulasPratHomologaMap.get(r.mes) || 0) + Number(r.total));
+      else aulasTeorHomologaMap.set(r.mes, (aulasTeorHomologaMap.get(r.mes) || 0) + Number(r.total));
+    });
+    (turmasHomologasRes.recordset || []).forEach(r => {
+      aulasTeorHomologaMap.set(r.mes, (aulasTeorHomologaMap.get(r.mes) || 0) + Number(r.total));
+    });
+    const aulasAnterior = mesesAnoAnterior.map(m => ({
+      mes: m,
+      praticas: aulasPratHomologaMap.get(m) || 0,
+      teoricas: aulasTeorHomologaMap.get(m) || 0
+    }));
 
-app.get('/api/estatisticas', (req, res) => {
-  const { tenant } = currentTenant(req);
+    const examesAprovMap = new Map();
+    const examesReprovMap = new Map();
+    (examesMensaisRes.recordset || []).forEach(r => {
+      if (r.resultado === 'Aprovado') examesAprovMap.set(r.mes, Number(r.total));
+      else if (r.resultado === 'Reprovado') examesReprovMap.set(r.mes, Number(r.total));
+    });
+    const examesMensais = meses.map(m => ({
+      mes: m,
+      aprovados: examesAprovMap.get(m) || 0,
+      reprovados: examesReprovMap.get(m) || 0
+    }));
 
-  // Helper seguro para converter qualquer tipo de data em "YYYY-MM"
-  const getAnoMes = (data) => {
-    if (!data) return '';
-    if (data instanceof Date) {
-      return isNaN(data.getTime()) ? '' : data.toISOString().slice(0, 7);
-    }
-    return String(data).slice(0, 7);
-  };
+    const exHomAprovMap = new Map();
+    const exHomReprovMap = new Map();
+    (examesHomologosRes.recordset || []).forEach(r => {
+      if (r.resultado === 'Aprovado') exHomAprovMap.set(r.mes, Number(r.total));
+      else if (r.resultado === 'Reprovado') exHomReprovMap.set(r.mes, Number(r.total));
+    });
+    const examesAnterior = mesesAnoAnterior.map(m => ({
+      mes: m,
+      aprovados: exHomAprovMap.get(m) || 0,
+      reprovados: exHomReprovMap.get(m) || 0
+    }));
 
-  const alunos = tenant.alunos || [];
-  const pagamentos = tenant.pagamentos || [];
-  const examesMarcacoes = tenant.examesMarcacoes || [];
-  const aulas = tenant.aulas || [];
-  const turmasTeoricas = tenant.turmasTeoricas || [];
-  const instrutores = tenant.instrutores || [];
-  const veiculos = tenant.veiculos || [];
+    // Taxas de aprovação gerais
+    let totalAprovGeral = 0, totalExamesGeral = 0;
+    let totalAprovTeorico = 0, totalExamesTeorico = 0;
+    let totalAprovPratico = 0, totalExamesPratico = 0;
+    (taxasExamesRes.recordset || []).forEach(r => {
+      const tot = Number(r.total);
+      const isAprov = r.resultado === 'Aprovado';
+      totalExamesGeral += tot;
+      if (isAprov) totalAprovGeral += tot;
 
-  const anoQuery = req.query.ano ? Number(req.query.ano) : null;
-  const modo = anoQuery ? 'anoCivil' : 'rolante12';
-  const meses = modo === 'anoCivil' ? mesesDoAnoCivil(anoQuery) : ultimosNMeses(12);
+      if (r.tipo === 'Teórico') {
+        totalExamesTeorico += tot;
+        if (isAprov) totalAprovTeorico += tot;
+      } else if (r.tipo === 'Prático') {
+        totalExamesPratico += tot;
+        if (isAprov) totalAprovPratico += tot;
+      }
+    });
+    const taxaAprovacaoGeral = totalExamesGeral ? +((totalAprovGeral / totalExamesGeral) * 100).toFixed(1) : null;
+    const taxaAprovacaoTeorico = totalExamesTeorico ? +((totalAprovTeorico / totalExamesTeorico) * 100).toFixed(1) : null;
+    const taxaAprovacaoPratico = totalExamesPratico ? +((totalAprovPratico / totalExamesPratico) * 100).toFixed(1) : null;
 
-  const pagamentosPagos = pagamentos.filter(p => p.estado === 'Pago' && p.data);
-  const receitaPendenteTotal = +pagamentos
-    .filter(p => p.estado === 'Pendente')
-    .reduce((s, p) => s + (Number(p.valor) || 0), 0)
-    .toFixed(2);
+    // Totais do período homólogo
+    const somaTotal = arr => +arr.reduce((s, m) => s + m.total, 0).toFixed(2);
+    const somaAulas = arr => arr.reduce((s, m) => s + m.praticas + m.teoricas, 0);
+    const somaAprovados = arr => arr.reduce((s, m) => s + m.aprovados, 0);
+    const somaExamesTotal = arr => arr.reduce((s, m) => s + m.aprovados + m.reprovados, 0);
+    const variacaoPct = (atual, anterior) => (anterior ? +(((atual - anterior) / anterior) * 100).toFixed(1) : null);
 
-  const examesComResultado = examesMarcacoes
-    .filter(m => m.data && (m.resultado === 'Aprovado' || m.resultado === 'Reprovado'));
+    const totalReceitaAtual = somaTotal(receitaMensal);
+    const totalReceitaAnterior = somaTotal(receitaAnterior);
+    const totalInscricoesAtual = somaTotal(inscricoesMensais);
+    const totalInscricoesAnterior = somaTotal(inscricoesAnterior);
+    const totalAulasAtual = somaAulas(aulasMensais);
+    const totalAulasAnterior = somaAulas(aulasAnterior);
+    const aprovadosAtual = somaAprovados(examesMensais);
+    const aprovadosAnterior = somaAprovados(examesAnterior);
+    const totalExamesAtual = somaExamesTotal(examesMensais);
+    const totalExamesAnterior = somaExamesTotal(examesAnterior);
+    const taxaAprovAtual = totalExamesAtual ? +((aprovadosAtual / totalExamesAtual) * 100).toFixed(1) : null;
+    const taxaAprovAnterior = totalExamesAnterior ? +((aprovadosAnterior / totalExamesAnterior) * 100).toFixed(1) : null;
 
-  const receitaMensal = construirReceitaMensal(meses, pagamentosPagos);
-  const inscricoesMensais = construirInscricoesMensais(meses, alunos);
-  const aulasMensais = construirAulasMensais(meses, aulas, turmasTeoricas);
-  const tempoEsperaMensal = construirTempoEsperaMensal(tenant, meses);
-  const examesMensais = construirExamesMensais(meses, examesComResultado);
+    const comparacaoHomologa = {
+      porMes: meses.map((m, i) => ({
+        mes: m,
+        mesAnoAnterior: mesesAnoAnterior[i],
+        receitaAtual: receitaMensal[i].total,
+        receitaAnterior: receitaAnterior[i].total,
+        inscricoesAtual: inscricoesMensais[i].total,
+        inscricoesAnterior: inscricoesAnterior[i].total,
+        aulasAtual: aulasMensais[i].praticas + aulasMensais[i].teoricas,
+        aulasAnterior: aulasAnterior[i].praticas + aulasAnterior[i].teoricas
+      })),
+      totais: {
+        receita: { atual: totalReceitaAtual, anterior: totalReceitaAnterior, variacaoPct: variacaoPct(totalReceitaAtual, totalReceitaAnterior) },
+        inscricoes: { atual: totalInscricoesAtual, anterior: totalInscricoesAnterior, variacaoPct: variacaoPct(totalInscricoesAtual, totalInscricoesAnterior) },
+        aulasConcluidas: { atual: totalAulasAtual, anterior: totalAulasAnterior, variacaoPct: variacaoPct(totalAulasAtual, totalAulasAnterior) },
+        taxaAprovacao: {
+          atual: taxaAprovAtual, anterior: taxaAprovAnterior,
+          variacaoPP: (taxaAprovAtual != null && taxaAprovAnterior != null) ? +(taxaAprovAtual - taxaAprovAnterior).toFixed(1) : null
+        }
+      }
+    };
 
-  const comparacaoHomologa = construirComparacaoHomologa(tenant, meses);
-  const funilConversao = construirFunilConversao(tenant);
-  const tentativasMediasExame = tentativasMediasAteAprovacao(tenant);
-  const receitaPorCategoria = construirReceitaPorCategoria(tenant);
-  const desempenhoInstrutores = construirDesempenhoInstrutores(tenant);
-  const agingPagamentosPendentes = construirAgingPagamentosPendentes(tenant);
+    // Anos disponíveis e comparativo anual
+    const anosDisponiveis = (anosDisponiveisRes.recordset || []).map(r => Number(r.ano)).sort((a, b) => a - b);
+    if (!anosDisponiveis.includes(new Date().getFullYear())) anosDisponiveis.push(new Date().getFullYear());
+    const anosComparacao = Math.max(2, Number(req.query.anosComparacao) || 5);
+    const anosParaComparar = anosDisponiveis.slice(-anosComparacao);
 
-  const totalAprovadosGeral = examesComResultado.filter(m => m.resultado === 'Aprovado').length;
-  const taxaAprovacaoGeral = examesComResultado.length ? +((totalAprovadosGeral / examesComResultado.length) * 100).toFixed(1) : null;
+    const anosListStr = anosParaComparar.length ? anosParaComparar.join(',') : String(new Date().getFullYear());
+    const [recAnualRes, inscAnualRes, aulasAnualRes, examesAnualRes] = await Promise.all([
+      query(`
+        SELECT YEAR(data) AS ano, ISNULL(SUM(valor), 0) AS total
+        FROM pagamentos
+        WHERE escola_id = @e AND estado = 'Pago' AND YEAR(data) IN (${anosListStr})
+        GROUP BY YEAR(data)
+      `, { e }),
+      query(`
+        SELECT YEAR(data_inscricao) AS ano, COUNT(*) AS total
+        FROM alunos
+        WHERE escola_id = @e AND YEAR(data_inscricao) IN (${anosListStr})
+        GROUP BY YEAR(data_inscricao)
+      `, { e }),
+      query(`
+        SELECT YEAR(data) AS ano, COUNT(*) AS total
+        FROM (
+          SELECT data FROM aulas WHERE escola_id = @e AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído') AND YEAR(data) IN (${anosListStr})
+          UNION ALL
+          SELECT t.data FROM turmas_teoricas t
+          JOIN turma_inscritos ti ON ti.turma_id = t.id AND ti.presente = 1
+          WHERE t.escola_id = @e AND t.estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído') AND YEAR(t.data) IN (${anosListStr})
+        ) sub
+        GROUP BY YEAR(data)
+      `, { e }),
+      query(`
+        SELECT YEAR(data) AS ano,
+               SUM(CASE WHEN resultado = 'Aprovado' THEN 1 ELSE 0 END) AS aprovados,
+               SUM(CASE WHEN resultado = 'Reprovado' THEN 1 ELSE 0 END) AS reprovados
+        FROM exames_marcacoes
+        WHERE escola_id = @e AND resultado IN ('Aprovado', 'Reprovado') AND YEAR(data) IN (${anosListStr})
+        GROUP BY YEAR(data)
+      `, { e })
+    ]);
 
-  const taxaAprovacaoTeorico = (() => {
-    const lista = examesComResultado.filter(m => m.tipo === 'Teórico');
-    if (!lista.length) return null;
-    return +((lista.filter(m => m.resultado === 'Aprovado').length / lista.length) * 100).toFixed(1);
-  })();
+    const recAnualMap = new Map((recAnualRes.recordset || []).map(r => [Number(r.ano), +Number(r.total).toFixed(2)]));
+    const inscAnualMap = new Map((inscAnualRes.recordset || []).map(r => [Number(r.ano), Number(r.total)]));
+    const aulasAnualMap = new Map((aulasAnualRes.recordset || []).map(r => [Number(r.ano), Number(r.total)]));
+    const examesAnualMap = new Map((examesAnualRes.recordset || []).map(r => [Number(r.ano), { aprovados: Number(r.aprovados), reprovados: Number(r.reprovados) }]));
 
-  const taxaAprovacaoPratico = (() => {
-    const lista = examesComResultado.filter(m => m.tipo === 'Prático');
-    if (!lista.length) return null;
-    return +((lista.filter(m => m.resultado === 'Aprovado').length / lista.length) * 100).toFixed(1);
-  })();
-
-  const alunosPorEstado = ['Ativo', 'Concluído', 'Suspenso'].map(estado => ({
-    estado,
-    total: alunos.filter(a => (a.estado || 'Ativo') === estado).length
-  }));
-
-  const categoriaMap = new Map();
-  alunos.forEach(a => {
-    const cat = a.categoria || 'Sem categoria';
-    categoriaMap.set(cat, (categoriaMap.get(cat) || 0) + 1);
-  });
-  const alunosPorCategoria = [...categoriaMap.entries()]
-    .map(([categoria, total]) => ({ categoria, total }))
-    .sort((a, b) => b.total - a.total);
-
-  // --- Carga por Instrutor ---
-  const tresMesesAtras = meses[Math.max(0, meses.length - 3)];
-  const cargaInstrutor = new Map();
-
-  aulas
-    .filter(a => a.data && getAnoMes(a.data) >= tresMesesAtras)
-    .forEach(a => {
-      if (!a.instrutorId) return;
-      cargaInstrutor.set(a.instrutorId, (cargaInstrutor.get(a.instrutorId) || 0) + 1);
+    const baseComparativo = anosParaComparar.map(ano => {
+      const receita = recAnualMap.get(ano) || 0;
+      const inscricoes = inscAnualMap.get(ano) || 0;
+      const aulasConcluidas = aulasAnualMap.get(ano) || 0;
+      const ex = examesAnualMap.get(ano) || { aprovados: 0, reprovados: 0 };
+      const totEx = ex.aprovados + ex.reprovados;
+      const taxaAprovacao = totEx ? +((ex.aprovados / totEx) * 100).toFixed(1) : null;
+      return { ano, receita, inscricoes, aulasConcluidas, examesAprovados: ex.aprovados, examesReprovados: ex.reprovados, taxaAprovacao };
     });
 
-  turmasTeoricas
-    .filter(t => t.data && getAnoMes(t.data) >= tresMesesAtras)
-    .forEach(t => {
-      if (!t.instrutorId) return;
-      cargaInstrutor.set(t.instrutorId, (cargaInstrutor.get(t.instrutorId) || 0) + 1);
+    const comparativoAnual = baseComparativo.map((item, i) => {
+      const anterior = baseComparativo[i - 1];
+      return {
+        ...item,
+        variacaoReceitaPct: anterior && anterior.receita ? +(((item.receita - anterior.receita) / anterior.receita) * 100).toFixed(1) : null,
+        variacaoInscricoesPct: anterior && anterior.inscricoes ? +(((item.inscricoes - anterior.inscricoes) / anterior.inscricoes) * 100).toFixed(1) : null
+      };
     });
 
-  const cargaPorInstrutor = [...cargaInstrutor.entries()]
-    .map(([instrutorId, total]) => ({
-      instrutorId,
-      nome: (instrutores.find(i => i.id === instrutorId) || {}).nome || 'Instrutor removido',
-      total
-    }))
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 10);
+    // Funil de conversão
+    const fRow = funilRes.recordset[0] || {};
+    const totalInscritos = Number(fRow.totalInscritos || 0);
+    const etapas = [
+      { etapa: 'Inscritos', total: totalInscritos },
+      { etapa: 'Aprovados no teórico', total: Number(fRow.aprovadosTeorico || 0) },
+      { etapa: 'Aprovados no prático', total: Number(fRow.aprovadosPratico || 0) },
+      { etapa: 'Curso concluído', total: Number(fRow.concluidos || 0) }
+    ];
+    const funilConversao = etapas.map((et, i) => ({
+      ...et,
+      taxaConversaoDesdeInicio: totalInscritos ? +((et.total / totalInscritos) * 100).toFixed(1) : null,
+      taxaConversaoEtapaAnterior: i > 0 && etapas[i - 1].total ? +((et.total / etapas[i - 1].total) * 100).toFixed(1) : null
+    }));
 
-  // --- Utilização de Veículos ---
-  // CORRIGIDO: isTipo em vez de `a.tipo === 'Prática'` estrito.
-  const usoVeiculo = new Map();
+    // Aging de pagamentos
+    const agRow = agingRes.recordset[0] || {};
+    const agingPagamentosPendentes = [
+      { label: '0-30 dias', total: +Number(agRow.f0_30 || 0).toFixed(2) },
+      { label: '31-60 dias', total: +Number(agRow.f31_60 || 0).toFixed(2) },
+      { label: '61-90 dias', total: +Number(agRow.f61_90 || 0).toFixed(2) },
+      { label: '90+ dias', total: +Number(agRow.f90_plus || 0).toFixed(2) }
+    ];
 
-  aulas
-    .filter(a => isTipo(a, 'Prática') && a.data && a.veiculoId && getAnoMes(a.data) >= tresMesesAtras)
-    .forEach(a => {
-      usoVeiculo.set(a.veiculoId, (usoVeiculo.get(a.veiculoId) || 0) + 1);
+    // Desempenho de instrutores
+    const desempenhoInstrutores = (desempenhoInstrutoresRes.recordset || []).map(r => ({
+      instrutorId: r.instrutorId,
+      nome: r.nome,
+      totalExames: Number(r.totalExames),
+      aprovados: Number(r.aprovados),
+      taxaAprovacao: Number(r.totalExames) ? +((Number(r.aprovados) / Number(r.totalExames)) * 100).toFixed(1) : null
+    }));
+
+    // Tempo de espera mensal
+    const porMesEspera = new Map();
+    (esperaRes.recordset || []).forEach(r => {
+      if (!porMesEspera.has(r.mesAula1)) porMesEspera.set(r.mesAula1, []);
+      porMesEspera.get(r.mesAula1).push(Number(r.diasEspera));
+    });
+    const tempoEsperaMensal = meses.map(m => {
+      const valores = porMesEspera.get(m) || [];
+      return { mes: m, medianaDias: medianaDe(valores), amostras: valores.length };
     });
 
-  const utilizacaoVeiculos = [...usoVeiculo.entries()]
-    .map(([veiculoId, total]) => ({
-      veiculoId,
-      matricula: (veiculos.find(v => v.id === veiculoId) || {}).matricula || '—',
-      total
-    }))
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 10);
+    // Tentativas médias de exame
+    const tentativas = { 'Teórico': [], 'Prático': [] };
+    const porAlunoTipo = new Map();
+    (tentativasRes.recordset || []).forEach(m => {
+      const chave = `${m.aluno_id}|${m.tipo}`;
+      if (!porAlunoTipo.has(chave)) porAlunoTipo.set(chave, []);
+      porAlunoTipo.get(chave).push(m);
+    });
+    porAlunoTipo.forEach((lista, chave) => {
+      const tipo = chave.split('|')[1];
+      const idx = lista.findIndex(x => x.resultado === 'Aprovado');
+      if (idx !== -1 && tentativas[tipo]) {
+        tentativas[tipo].push(idx + 1);
+      }
+    });
+    const mediaOuNull = arr => arr.length ? +(arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : null;
+    const tentativasMediasExame = {
+      teorico: mediaOuNull(tentativas['Teórico']),
+      pratico: mediaOuNull(tentativas['Prático'])
+    };
 
-  const kpis = {
-    totalAlunosAtivos: alunos.filter(a => a.estado === 'Ativo').length,
-    receitaUltimos12Meses: +receitaMensal.reduce((s, m) => s + m.total, 0).toFixed(2),
-    receitaMesAtual: receitaMensal[receitaMensal.length - 1]?.total || 0,
-    receitaPendenteTotal,
-    taxaAprovacaoGeral,
-    taxaAprovacaoTeorico,
-    taxaAprovacaoPratico,
-    comparacaoHomologa,
-    funilConversao,
-    tentativasMediasExame,
-    receitaPorCategoria,
-    desempenhoInstrutores,
-    agingPagamentosPendentes,
-    aulasConcluidasUltimos12Meses: aulasMensais.reduce((s, m) => s + m.praticas + m.teoricas, 0),
-    tempoEsperaMensal,
-    inscricoesUltimos12Meses: inscricoesMensais.reduce((s, m) => s + m.total, 0)
-  };
+    // KPIs principais e adicionais
+    const totRow = alunosTotaisRes.recordset[0] || {};
+    const totalAlunosAtivos = Number(totRow.totalAlunosAtivos || 0);
+    const alunosConcluidos = Number(totRow.alunosConcluidos || 0);
+    const alunosSuspensos = Number(totRow.alunosSuspensos || 0);
+    const totalProcessosTerminados = alunosConcluidos + alunosSuspensos;
 
-  const alunosConcluidos = alunos.filter(a => a.estado === 'Concluído').length;
-  const alunosSuspensos = alunos.filter(a => a.estado === 'Suspenso').length;
-  const totalProcessosTerminados = alunosConcluidos + alunosSuspensos;
+    const receitaUltimos12Meses = +receitaMensal.reduce((s, m) => s + m.total, 0).toFixed(2);
+    const receitaMesAtual = receitaMensal[receitaMensal.length - 1]?.total || 0;
+    const receitaPendenteTotal = +Number(receitaPendenteRes.recordset[0]?.total || 0).toFixed(2);
 
-  const kpisAdicionais = {
-    taxaConclusaoCurso: totalProcessosTerminados ? +((alunosConcluidos / totalProcessosTerminados) * 100).toFixed(1) : null,
-    taxaDesistencia: totalProcessosTerminados ? +((alunosSuspensos / totalProcessosTerminados) * 100).toFixed(1) : null,
-    receitaMediaPorAlunoAtivo: kpis.totalAlunosAtivos ? +(kpis.receitaUltimos12Meses / kpis.totalAlunosAtivos).toFixed(2) : null,
-    tempoMedioDiasAteAprovacaoPratica: tempoMedioDiasAteAprovacaoPratica(tenant)
-  };
+    const kpis = {
+      totalAlunosAtivos,
+      receitaUltimos12Meses,
+      receitaMesAtual,
+      receitaPendenteTotal,
+      taxaAprovacaoGeral,
+      taxaAprovacaoTeorico,
+      taxaAprovacaoPratico,
+      comparacaoHomologa,
+      funilConversao,
+      tentativasMediasExame,
+      receitaPorCategoria: (receitaCategoriaRes.recordset || []).map(r => ({ categoria: r.categoria, total: +Number(r.total).toFixed(2) })),
+      desempenhoInstrutores,
+      agingPagamentosPendentes,
+      aulasConcluidasUltimos12Meses: aulasMensais.reduce((s, m) => s + m.praticas + m.teoricas, 0),
+      tempoEsperaMensal,
+      inscricoesUltimos12Meses: inscricoesMensais.reduce((s, m) => s + m.total, 0)
+    };
 
-  const anosDisponiveis = listarAnosComDados(tenant);
-  const anosComparacao = Math.max(2, Number(req.query.anosComparacao) || 5);
-  const anosParaComparar = anosDisponiveis.slice(-anosComparacao);
-  const comparativoAnual = construirComparativoAnual(tenant, anosParaComparar);
+    const mediaDiasPratica = tempoMedioPraticaRes.recordset[0]?.mediaDias;
+    const kpisAdicionais = {
+      taxaConclusaoCurso: totalProcessosTerminados ? +((alunosConcluidos / totalProcessosTerminados) * 100).toFixed(1) : null,
+      taxaDesistencia: totalProcessosTerminados ? +((alunosSuspensos / totalProcessosTerminados) * 100).toFixed(1) : null,
+      receitaMediaPorAlunoAtivo: totalAlunosAtivos ? +(receitaUltimos12Meses / totalAlunosAtivos).toFixed(2) : null,
+      tempoMedioDiasAteAprovacaoPratica: mediaDiasPratica != null ? Math.round(Number(mediaDiasPratica)) : null
+    };
 
-  ok(res, {
-    modo,
-    anoSelecionado: modo === 'anoCivil' ? anoQuery : null,
-    anosDisponiveis,
-    kpis,
-    kpisAdicionais,
-    comparacaoHomologa,
-    funilConversao,
-    tentativasMediasExame,
-    desempenhoInstrutores,
-    agingPagamentosPendentes,
-    receitaPorCategoria,
-    receitaMensal,
-    inscricoesMensais,
-    aulasMensais,
-    examesMensais,
-    alunosPorEstado,
-    alunosPorCategoria,
-    cargaPorInstrutor,
-    utilizacaoVeiculos,
-    comparativoAnual
-  });
+    ok(res, {
+      modo,
+      anoSelecionado: modo === 'anoCivil' ? anoQuery : null,
+      anosDisponiveis,
+      kpis,
+      kpisAdicionais,
+      comparacaoHomologa,
+      funilConversao,
+      tentativasMediasExame,
+      desempenhoInstrutores,
+      agingPagamentosPendentes,
+      receitaPorCategoria: kpis.receitaPorCategoria,
+      receitaMensal,
+      inscricoesMensais,
+      aulasMensais,
+      examesMensais,
+      alunosPorEstado: (alunosEstadoRes.recordset || []).map(r => ({ estado: r.estado, total: Number(r.total) })),
+      alunosPorCategoria: (alunosCategoriaRes.recordset || []).map(r => ({ categoria: r.categoria, total: Number(r.total) })),
+      cargaPorInstrutor: (cargaInstrutorRes.recordset || []).slice(0, 10).map(r => ({ instrutorId: r.instrutorId, nome: r.nome, total: Number(r.total) })),
+      utilizacaoVeiculos: (usoVeiculosRes.recordset || []).slice(0, 10).map(r => ({ veiculoId: r.veiculoId, matricula: r.matricula, total: Number(r.total) })),
+      comparativoAnual
+    });
+  } catch (ex) {
+    res.status(500).json({ success: false, error: `Falha ao carregar estatísticas: ${ex.message || ex}` });
+  }
 });
 
 /* ------------------------------------------------------------
@@ -3033,30 +3299,49 @@ app.get('/api/estatisticas', (req, res) => {
    ------------------------------------------------------------ */
 
 app.get('/api/dashboard', async (req, res) => {
-  const hoje = new Date().toISOString().slice(0, 10);
-  const [resumo] = (await query(`
-    SELECT
-      (SELECT COUNT(*) FROM alunos WHERE escola_id=@e) AS totalAlunos,
-      (SELECT COUNT(*) FROM alunos WHERE escola_id=@e AND estado='Ativo') AS alunosAtivos,
-      (SELECT COUNT(*) FROM aulas WHERE escola_id=@e AND data=@hoje) +
-      (SELECT COUNT(*) FROM turmas_teoricas WHERE escola_id=@e AND data=@hoje) AS aulasHoje,
-      (SELECT COUNT(*) FROM instrutores WHERE escola_id=@e AND estado='Ativo') AS instrutoresAtivos,
-      (SELECT COUNT(*) FROM veiculos WHERE escola_id=@e AND estado='Disponível') AS veiculosDisponiveis,
-      (SELECT COUNT(*) FROM veiculos WHERE escola_id=@e) AS totalVeiculos,
-      (SELECT COUNT(*) FROM instrutores WHERE escola_id=@e) AS totalInstrutores,
-      (SELECT ISNULL(SUM(valor),0) FROM pagamentos WHERE escola_id=@e AND estado='Pago') AS receitaMes,
-      (SELECT ISNULL(SUM(valor),0) FROM pagamentos WHERE escola_id=@e AND estado='Pendente') AS pagamentosPendentes
-  `, { e: req.escolaId, hoje })).recordset;
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { tenant } = currentTenant(req);
+    const [resumo] = (await query(`
+      SELECT
+        (SELECT COUNT(*) FROM alunos WHERE escola_id=@e) AS totalAlunos,
+        (SELECT COUNT(*) FROM alunos WHERE escola_id=@e AND estado='Ativo') AS alunosAtivos,
+        (SELECT COUNT(*) FROM aulas WHERE escola_id=@e AND data=@hoje) +
+        (SELECT COUNT(*) FROM turmas_teoricas WHERE escola_id=@e AND data=@hoje) AS aulasHoje,
+        (SELECT COUNT(*) FROM instrutores WHERE escola_id=@e AND estado='Ativo') AS instrutoresAtivos,
+        (SELECT COUNT(*) FROM veiculos WHERE escola_id=@e AND estado='Disponível') AS veiculosDisponiveis,
+        (SELECT COUNT(*) FROM veiculos WHERE escola_id=@e) AS totalVeiculos,
+        (SELECT COUNT(*) FROM instrutores WHERE escola_id=@e) AS totalInstrutores,
+        (SELECT ISNULL(SUM(valor),0) FROM pagamentos WHERE escola_id=@e AND estado='Pago') AS receitaMes,
+        (SELECT ISNULL(SUM(valor),0) FROM pagamentos WHERE escola_id=@e AND estado='Pendente') AS pagamentosPendentes
+    `, { e: req.escolaId, hoje })).recordset;
 
-  const proximasAulas = tenant.aulas
-    .filter(a => a.estado === 'Agendada' && a.data >= hoje)
-    .sort((a, b) => (a.data + a.hora).localeCompare(b.data + b.hora))
-    .slice(0, 6)
-    .map(a => ({
-      ...a,
-      alunoNome: (tenant.alunos.find(al => al.id === a.alunoId) || {}).nome || '—',
-      instrutorNome: (tenant.instrutores.find(i => i.id === a.instrutorId) || {}).nome || '—',
-      veiculoMatricula: (tenant.veiculos.find(v => v.id === a.veiculoId) || {}).matricula || '—'
+    const {
+      totalAlunos, alunosAtivos, aulasHoje, instrutoresAtivos,
+      veiculosDisponiveis, totalVeiculos, totalInstrutores,
+      receitaMes, pagamentosPendentes
+    } = resumo || {};
+
+    const proximasRes = await query(`
+      SELECT TOP 6
+        au.id, au.data, au.hora, au.hora_fim AS horaFim, au.tipo, au.modulo, au.estado, au.notas,
+        au.aluno_id AS alunoId, au.instrutor_id AS instrutorId, au.veiculo_id AS veiculoId,
+        a.nome AS alunoNome,
+        i.nome AS instrutorNome,
+        v.matricula AS veiculoMatricula
+      FROM aulas au
+      LEFT JOIN alunos a ON a.id = au.aluno_id
+      LEFT JOIN instrutores i ON i.id = au.instrutor_id
+      LEFT JOIN veiculos v ON v.id = au.veiculo_id
+      WHERE au.escola_id = @e AND au.estado = 'Agendada' AND au.data >= @hoje
+      ORDER BY au.data, au.hora
+    `, { e: req.escolaId, hoje });
+
+    const proximasAulas = (proximasRes.recordset || []).map(r => ({
+      ...dbRowToJs(r),
+      alunoNome: r.alunoNome || '—',
+      instrutorNome: r.instrutorNome || '—',
+      veiculoMatricula: r.veiculoMatricula || '—'
     }));
 
   const alertas = [];
@@ -3145,19 +3430,23 @@ app.get('/api/dashboard', async (req, res) => {
     }
   });
 
-  ok(res, {
-    totalAlunos: tenant.alunos.length,
-    alunosAtivos,
-    aulasHoje,
-    instrutoresAtivos,
-    veiculosDisponiveis,
-    totalVeiculos: tenant.veiculos.length,
-    totalInstrutores: tenant.instrutores.length,
-    receitaMes,
-    pagamentosPendentes,
-    proximasAulas,
-    alertas
-  });
+    ok(res, {
+      totalAlunos: Number(totalAlunos || 0),
+      alunosAtivos: Number(alunosAtivos || 0),
+      aulasHoje: Number(aulasHoje || 0),
+      instrutoresAtivos: Number(instrutoresAtivos || 0),
+      veiculosDisponiveis: Number(veiculosDisponiveis || 0),
+      totalVeiculos: Number(totalVeiculos || 0),
+      totalInstrutores: Number(totalInstrutores || 0),
+      receitaMes: Number(receitaMes || 0),
+      pagamentosPendentes: Number(pagamentosPendentes || 0),
+      proximasAulas,
+      alertas
+    });
+  } catch (ex) {
+    console.error('Erro ao carregar dashboard:', ex);
+    res.status(500).json({ success: false, error: 'Falha ao carregar dashboard' });
+  }
 });
 
 app.use((req, res) => {

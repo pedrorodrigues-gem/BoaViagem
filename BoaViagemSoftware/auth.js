@@ -42,10 +42,50 @@ function nestAlunoExtras(aluno) {
   return aluno;
 }
 
+// Cache em memória para tenant por escola, evitando 15+ queries por cada pedido HTTP.
+const tenantCache = new Map();
+const inFlightTenantPromises = new Map();
+const TENANT_CACHE_TTL_MS = 60 * 1000; // 60 segundos
+
+function invalidateTenantCache(escolaId) {
+  if (escolaId != null) {
+    tenantCache.delete(Number(escolaId));
+    inFlightTenantPromises.delete(Number(escolaId));
+  } else {
+    tenantCache.clear();
+    inFlightTenantPromises.clear();
+  }
+}
+
+const COLUNAS_LEVES_ALUNOS = 'id, escola_id, pessoa_id, espaco_id, numero_aluno, nome, email, telefone, categoria, estado, data_inscricao, aulas_teoricas, aulas_praticas, notas, data_nascimento, nif, tipo_documento, numero_documento, validade_documento, morada, codigo_postal, localidade, dispensa_modulos, desconto, atestado_data_emissao, atestado_data_validade, atestado_apto, psicotecnico_aplicavel, psicotecnico_data_emissao, psicotecnico_data_validade, imt_numero, imt_data_emissao, imt_data_validade';
+const COLUNAS_LEVES_INSTRUTORES = 'id, escola_id, pessoa_id, nome, email, telefone, estado, cargo, nif, titulo_profissional_numero, titulo_profissional_validade';
+
 async function loadTenantForEscola(escolaId) {
-  // By default load full tenant data, but allow skipping heavy preloads
-  // via environment variable LOAD_FULL_TENANT=false which is useful for
-  // very large databases where SELECT * on big tables during auth times out.
+  const eId = Number(escolaId);
+  const now = Date.now();
+  const cached = tenantCache.get(eId);
+  if (cached && now < cached.expiresAt) {
+    return cached.tenant;
+  }
+  if (inFlightTenantPromises.has(eId)) {
+    return inFlightTenantPromises.get(eId);
+  }
+
+  const promise = (async () => {
+    try {
+      const tenant = await _fetchTenantFromDb(eId);
+      tenantCache.set(eId, { tenant, expiresAt: Date.now() + TENANT_CACHE_TTL_MS });
+      return tenant;
+    } finally {
+      inFlightTenantPromises.delete(eId);
+    }
+  })();
+
+  inFlightTenantPromises.set(eId, promise);
+  return promise;
+}
+
+async function _fetchTenantFromDb(escolaId) {
   const FULL = process.env.LOAD_FULL_TENANT !== 'false';
 
   const tenant = {
@@ -70,8 +110,8 @@ async function loadTenantForEscola(escolaId) {
 
   if (FULL) {
     const [alunos, instrutores, veiculos, aulas, turmas, pessoas, espacos, requisitos, produtos, contratos, pagamentos, itensConta, preInscricoes, exames, users] = await Promise.all([
-      query('SELECT * FROM alunos WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
-      query('SELECT * FROM instrutores WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
+      query(`SELECT ${COLUNAS_LEVES_ALUNOS} FROM alunos WHERE escola_id = @escolaId ORDER BY id`, { escolaId }),
+      query(`SELECT ${COLUNAS_LEVES_INSTRUTORES} FROM instrutores WHERE escola_id = @escolaId ORDER BY id`, { escolaId }),
       query('SELECT * FROM veiculos WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
       query('SELECT * FROM aulas WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
       query('SELECT * FROM turmas_teoricas WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
@@ -128,7 +168,7 @@ async function loadTenantForEscola(escolaId) {
   } else {
     // Partial load: only small tables and configuration needed for UI
     const [instrutores, pessoas, espacos, requisitos, produtos, users] = await Promise.all([
-      query('SELECT * FROM instrutores WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
+      query(`SELECT ${COLUNAS_LEVES_INSTRUTORES} FROM instrutores WHERE escola_id = @escolaId ORDER BY id`, { escolaId }),
       query('SELECT * FROM pessoas WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
       query('SELECT * FROM espacos WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
       query('SELECT * FROM requisitos WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
@@ -283,4 +323,4 @@ async function autenticar({ username, password }) {
   return { escola: escolaRow, user: userRow };
 }
 
-module.exports = { requireAuth, setAuthCookie, clearAuthCookie, registarEscola, autenticar, loadTenantForEscola };
+module.exports = { requireAuth, setAuthCookie, clearAuthCookie, registarEscola, autenticar, loadTenantForEscola, invalidateTenantCache };
