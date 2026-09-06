@@ -453,6 +453,7 @@ tbody tr:hover { background: var(--surface-2); }
 
 .badge-pratica, .badge-pratico { background: var(--accent-soft); color: var(--accent-dark); }
 .badge-inativo { background: var(--brand-beige-soft); color: var(--brand-beige-dark); }
+.badge-anulado { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
 
 .empty-state { padding: 32px 16px; text-align: center; color: var(--muted); }
 .empty-state h4 { color: var(--brand-black); margin-bottom: 4px; }
