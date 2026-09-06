@@ -4003,15 +4003,29 @@ async function abrirModalFolhaCaixa(dataEscolhida) {
   try {
     toast('A carregar dados da folha de caixa…');
     const dados = await api('GET', `/api/relatorios/folha-caixa-diaria?data=${dataRef}`);
+    const totais = dados?.totais || {
+      pgnum: dados?.totalGeralNumerario || 0,
+      pgtr: dados?.totalGeralCartaoTransferencia || 0,
+      geral: dados?.totalGeralDia || 0,
+      quantidade: (dados?.espacos || []).reduce((s, e) => s + (e.pagamentos?.length || e.quantidade || 0), 0)
+    };
+    const espacos = (dados?.espacos || []).map(e => ({
+      id: e.id || e.espacoId,
+      nome: e.nome || e.espacoNome || '—',
+      serie: e.serie || '—',
+      pgnum: e.pgnum ?? e.totalNumerario ?? 0,
+      pgtr: e.pgtr ?? e.totalCartaoTransferencia ?? 0,
+      total: e.total ?? e.totalGeral ?? 0
+    }));
     
-    openModal(`Folha de Caixa Diária · ${fmtDate(dados.data)}`, `
+    openModal(`Folha de Caixa Diária · ${fmtDate(dados?.data || dataRef)}`, `
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px">
         <div style="display:flex; align-items:center; gap:8px">
           <label style="margin:0; font-weight:600">Data:</label>
-          <input type="date" id="dataFolhaCaixa" value="${dados.data}" onchange="abrirModalFolhaCaixa(this.value)" style="padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius-sm)">
+          <input type="date" id="dataFolhaCaixa" value="${dados?.data || dataRef}" onchange="abrirModalFolhaCaixa(this.value)" style="padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius-sm)">
         </div>
-        <button class="btn btn-accent btn-sm" onclick="exportarFolhaCaixaPdf('${dados.data}')">
-          <span class="icon">📄</span> Descarregar / Imprimir PDF
+        <button class="btn btn-accent btn-sm" onclick="exportarFolhaCaixaPdf('${dados?.data || dataRef}')">
+          <span class="icon">🖨️</span> Descarregar / Imprimir PDF
         </button>
       </div>
       <div class="table-wrap">
@@ -4026,7 +4040,7 @@ async function abrirModalFolhaCaixa(dataEscolhida) {
             </tr>
           </thead>
           <tbody>
-            ${dados.espacos.length ? dados.espacos.map(e => `
+            ${espacos.length ? espacos.map(e => `
               <tr>
                 <td class="cell-primary">${esc(e.nome)}</td>
                 <td><span class="badge" style="background:#f1f5f9; color:#475569">${esc(e.serie || 'Padrão')}</span></td>
@@ -4040,15 +4054,15 @@ async function abrirModalFolhaCaixa(dataEscolhida) {
             <tr style="background:var(--surface-hover); font-weight:700">
               <td>TOTAIS DO DIA</td>
               <td>—</td>
-              <td style="text-align:right; color:#92400e">${fmtMoney(dados.totais.pgnum)}</td>
-              <td style="text-align:right; color:#0369a1">${fmtMoney(dados.totais.pgtr)}</td>
-              <td style="text-align:right; font-size:1.05em; color:var(--accent-dark)">${fmtMoney(dados.totais.geral)}</td>
+              <td style="text-align:right; color:#92400e">${fmtMoney(totais.pgnum)}</td>
+              <td style="text-align:right; color:#0369a1">${fmtMoney(totais.pgtr)}</td>
+              <td style="text-align:right; font-size:1.05em; color:var(--accent-dark)">${fmtMoney(totais.geral)}</td>
             </tr>
           </tfoot>
         </table>
       </div>
       <p class="muted" style="margin-top:12px; font-size:12.5px">
-        * Total de ${dados.totais.quantidade} pagamento(s) recebido(s) nesta data. Os valores excluem pagamentos anulados.
+        * Total de ${totais.quantidade} pagamento(s) recebido(s) nesta data. Os valores excluem pagamentos anulados.
       </p>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" onclick="closeModal()">Fechar</button>
@@ -4065,26 +4079,41 @@ async function exportarFolhaCaixaPdf(dataStr) {
     toast('A preparar documento para impressão/PDF…');
     const dados = await api('GET', `/api/relatorios/folha-caixa-diaria?data=${dataRef}`);
     const nomeEscola = state.escola?.nome || 'Escola de Condução';
+    const totais = dados?.totais || {
+      pgnum: dados?.totalGeralNumerario || 0,
+      pgtr: dados?.totalGeralCartaoTransferencia || 0,
+      geral: dados?.totalGeralDia || 0,
+      quantidade: (dados?.espacos || []).reduce((s, e) => s + (e.pagamentos?.length || e.quantidade || 0), 0)
+    };
+    const espacos = (dados?.espacos || []).map(e => ({
+      id: e.id || e.espacoId,
+      nome: e.nome || e.espacoNome || '—',
+      serie: e.serie || '—',
+      pgnum: e.pgnum ?? e.totalNumerario ?? 0,
+      pgtr: e.pgtr ?? e.totalCartaoTransferencia ?? 0,
+      total: e.total ?? e.totalGeral ?? 0
+    }));
+
     const html = `
       <div class="print-doc">
         <div class="print-head" style="margin-bottom:24px; border-bottom:2px solid #16233B; padding-bottom:12px">
           <h1 style="font-size:22px; margin:0 0 6px">${esc(nomeEscola)}</h1>
           <h2 style="font-size:16px; margin:0 0 4px; color:#556170">Folha de Caixa Diária · Fecho de Turno</h2>
-          <p class="muted" style="margin:0; font-size:12px">Data de referência: <strong>${fmtDate(dados.data)}</strong> · Emitido em ${new Date().toLocaleString('pt-PT')}</p>
+          <p class="muted" style="margin:0; font-size:12px">Data de referência: <strong>${fmtDate(dados?.data || dataRef)}</strong> · Emitido em ${new Date().toLocaleString('pt-PT')}</p>
         </div>
 
         <div style="display:flex; gap:16px; margin-bottom:24px">
           <div style="flex:1; border:1px solid #d2dcea; border-radius:8px; padding:12px; background:#f8fafc">
             <span style="font-size:11px; text-transform:uppercase; color:#556170; font-weight:600">Numerário (PGNUM)</span>
-            <div style="font-size:18px; font-weight:700; color:#92400e; margin-top:4px">${fmtMoney(dados.totais.pgnum)}</div>
+            <div style="font-size:18px; font-weight:700; color:#92400e; margin-top:4px">${fmtMoney(totais.pgnum)}</div>
           </div>
           <div style="flex:1; border:1px solid #d2dcea; border-radius:8px; padding:12px; background:#f8fafc">
             <span style="font-size:11px; text-transform:uppercase; color:#556170; font-weight:600">Cartão / Transferência (PGTR)</span>
-            <div style="font-size:18px; font-weight:700; color:#0369a1; margin-top:4px">${fmtMoney(dados.totais.pgtr)}</div>
+            <div style="font-size:18px; font-weight:700; color:#0369a1; margin-top:4px">${fmtMoney(totais.pgtr)}</div>
           </div>
           <div style="flex:1; border:1px solid #d2dcea; border-radius:8px; padding:12px; background:#f0fdf4">
             <span style="font-size:11px; text-transform:uppercase; color:#166534; font-weight:600">Total Recebido</span>
-            <div style="font-size:20px; font-weight:700; color:#15803d; margin-top:4px">${fmtMoney(dados.totais.geral)}</div>
+            <div style="font-size:20px; font-weight:700; color:#15803d; margin-top:4px">${fmtMoney(totais.geral)}</div>
           </div>
         </div>
 
@@ -4100,7 +4129,7 @@ async function exportarFolhaCaixaPdf(dataStr) {
               </tr>
             </thead>
             <tbody>
-              ${dados.espacos.map(e => `
+              ${espacos.map(e => `
                 <tr>
                   <td style="padding:8px 10px; border:1px solid #d2dcea"><strong>${esc(e.nome)}</strong></td>
                   <td style="padding:8px 10px; border:1px solid #d2dcea">${esc(e.serie || '—')}</td>
@@ -4112,11 +4141,11 @@ async function exportarFolhaCaixaPdf(dataStr) {
             </tbody>
             <tfoot>
               <tr style="background:#f8fafc; font-weight:bold">
-                <td style="padding:10px; border:1px solid #d2dcea">TOTAL GERAL (${dados.totais.quantidade} recebimentos)</td>
+                <td style="padding:10px; border:1px solid #d2dcea">TOTAL GERAL (${totais.quantidade} recebimentos)</td>
                 <td style="padding:10px; border:1px solid #d2dcea">—</td>
-                <td style="padding:10px; border:1px solid #d2dcea; text-align:right; color:#92400e">${fmtMoney(dados.totais.pgnum)}</td>
-                <td style="padding:10px; border:1px solid #d2dcea; text-align:right; color:#0369a1">${fmtMoney(dados.totais.pgtr)}</td>
-                <td style="padding:10px; border:1px solid #d2dcea; text-align:right; font-size:1.1em; color:#15803d">${fmtMoney(dados.totais.geral)}</td>
+                <td style="padding:10px; border:1px solid #d2dcea; text-align:right; color:#92400e">${fmtMoney(totais.pgnum)}</td>
+                <td style="padding:10px; border:1px solid #d2dcea; text-align:right; color:#0369a1">${fmtMoney(totais.pgtr)}</td>
+                <td style="padding:10px; border:1px solid #d2dcea; text-align:right; font-size:1.1em; color:#15803d">${fmtMoney(totais.geral)}</td>
               </tr>
             </tfoot>
           </table>
