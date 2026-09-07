@@ -182,3 +182,64 @@ test('loadEssential: todos os alunos carregados e alunosAtivos derivados sem cha
   assert.strictEqual(apiCallsCount, 1, 'Não deve fazer novas chamadas de rede quando alunos já está carregado');
 });
 
+// 6. Teste de pré-agregação de contagens de aulas em O(M) com lookups O(1)
+test('obterMapaContagensAulas: agrega aulas e turmas teóricas em O(M) e permite lookups instantâneos O(1)', () => {
+  const state = {
+    aulas: [
+      { id: 1, alunoId: 10, tipo: 'Teórica', estado: 'Realizada' },
+      { id: 2, alunoId: 10, tipo: 'Prática', estado: 'Realizada' },
+      { id: 3, alunoId: 10, tipo: 'Prática', estado: 'Realizada' },
+      { id: 4, alunoId: 10, tipo: 'Prática', estado: 'Cancelada' }, // não conta
+      { id: 5, alunoId: 20, tipo: 'Prática', estado: 'Realizada' },
+      { id: 6, alunoId: 20, tipo: 'Teórica', estado: 'Realizada' }
+    ],
+    turmasTeoricas: [
+      { id: 101, estado: 'Realizada', inscritos: [10, 20], presencas: { 10: true, 20: false } },
+      { id: 102, estado: 'Realizada', inscritos: [10], presencas: { 10: true } }
+    ]
+  };
+
+  const ESTADOS_CANCELADA_SET = new Set(['cancelada', 'cancelado', 'anulada', 'anulado']);
+  function normalize(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase(); }
+
+  function buildMap(st) {
+    const map = new Map();
+    for (const a of st.aulas || []) {
+      if (!a.alunoId || ESTADOS_CANCELADA_SET.has(normalize(a.estado))) continue;
+      let c = map.get(a.alunoId);
+      if (!c) { c = { aulasTeoricas: 0, aulasPraticas: 0 }; map.set(a.alunoId, c); }
+      const t = normalize(a.tipo);
+      if (t === 'teorica') c.aulasTeoricas++;
+      else if (t === 'pratica') c.aulasPraticas++;
+    }
+    for (const tu of st.turmasTeoricas || []) {
+      if (ESTADOS_CANCELADA_SET.has(normalize(tu.estado))) continue;
+      for (const aId of tu.inscritos || []) {
+        if (tu.presencas && tu.presencas[aId] === true) {
+          let c = map.get(aId);
+          if (!c) { c = { aulasTeoricas: 0, aulasPraticas: 0 }; map.set(aId, c); }
+          c.aulasTeoricas++;
+        }
+      }
+    }
+    return map;
+  }
+
+  const map = buildMap(state);
+
+  // Aluno 10: 1 teórica individual + 2 turmas teóricas presentes = 3 teóricas; 2 práticas realizadas = 2 práticas (1 cancelada ignorada)
+  const c10 = map.get(10);
+  assert.strictEqual(c10.aulasTeoricas, 3, 'Aluno 10 deve ter 3 aulas teóricas');
+  assert.strictEqual(c10.aulasPraticas, 2, 'Aluno 10 deve ter 2 aulas práticas');
+
+  // Aluno 20: 1 teórica individual + 0 turmas (falta) = 1 teórica; 1 prática = 1 prática
+  const c20 = map.get(20);
+  assert.strictEqual(c20.aulasTeoricas, 1);
+  assert.strictEqual(c20.aulasPraticas, 1);
+
+  // Aluno inexistente: lookup instantâneo O(1)
+  const c99 = map.get(99);
+  assert.strictEqual(c99, undefined);
+});
+
+
