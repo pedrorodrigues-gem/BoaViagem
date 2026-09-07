@@ -60,11 +60,45 @@ async function ensureSchemaColumns() {
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('pagamentos') AND name = 'modo_pagamento')
         ALTER TABLE pagamentos ADD modo_pagamento NVARCHAR(10) NOT NULL DEFAULT 'PGNUM';
 
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('pagamentos') AND name = 'nao_faturar')
+        ALTER TABLE pagamentos ADD nao_faturar BIT NOT NULL DEFAULT 0;
+
+      BEGIN TRY
+        ALTER TABLE pagamentos ALTER COLUMN aluno_id INT NULL;
+      END TRY
+      BEGIN CATCH
+      END CATCH;
+
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'assinatura_tutor_nome_digitado')
         ALTER TABLE contratos ADD assinatura_tutor_nome_digitado NVARCHAR(200) NULL;
 
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'assinatura_tutor_imagem')
         ALTER TABLE contratos ADD assinatura_tutor_imagem VARBINARY(MAX) NULL;
+
+      IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'revalidacoes')
+      BEGIN
+        CREATE TABLE revalidacoes (
+          id INT IDENTITY(1,1) PRIMARY KEY,
+          escola_id INT NOT NULL REFERENCES escolas(id) ON DELETE CASCADE,
+          aluno_id INT NULL,
+          nome NVARCHAR(200) NOT NULL,
+          nif NVARCHAR(20) NULL,
+          telefone NVARCHAR(50) NULL,
+          email NVARCHAR(200) NULL,
+          numero_carta NVARCHAR(50) NULL,
+          categoria NVARCHAR(50) NULL,
+          tipo_revalidacao NVARCHAR(100) NULL,
+          data_pedido DATE NOT NULL,
+          data_validade_anterior DATE NULL,
+          valor DECIMAL(10,2) NOT NULL DEFAULT 0,
+          modo_pagamento NVARCHAR(20) NULL DEFAULT 'PGNUM',
+          estado_processo NVARCHAR(50) NOT NULL DEFAULT 'Registado',
+          estado_pagamento NVARCHAR(50) NOT NULL DEFAULT 'Pago',
+          pagamento_id INT NULL,
+          notas NVARCHAR(MAX) NULL,
+          data_criacao DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+        );
+      END;
     `);
   } catch (err) {
     console.warn('Aviso ao verificar colunas da BD:', err.message || err);
@@ -251,9 +285,10 @@ const COLUMNS_BY_TABLE = {
   requisitos: ['categoria', 'horas_teoricas_min', 'horas_praticas_min', 'km_pratica_min'],
   produtos: ['codigo', 'descricao', 'categoria', 'valor', 'descontavel', 'taxa_iva'],
   contratos: ['aluno_id', 'categoria', 'plano_carta_id', 'plano_pagamento', 'numero_prestacoes', 'estado', 'valor_carta_calculado', 'desconto_aplicado', 'valor_total', 'texto_contrato', 'assinatura_nome_digitado', 'assinatura_data_hora', 'assinatura_tutor_nome_digitado'],
-  pagamentos: ['aluno_id', 'valor', 'data', 'descricao', 'taxa_iva', 'estado', 'modo_pagamento'],
+  pagamentos: ['aluno_id', 'valor', 'data', 'descricao', 'taxa_iva', 'estado', 'modo_pagamento', 'nao_faturar'],
   itens_conta: ['aluno_id', 'origem_contrato_id', 'codigo', 'descricao', 'categoria', 'valor', 'taxa_iva', 'estado', 'origem_plano', 'ordem'],  pre_inscricoes: ['nome', 'email', 'categoria', 'desconto', 'estado', 'observacoes', 'data_pre_inscricao', 'data_inscricao', 'aluno_id'],
-  exames_marcacoes: ['aluno_id', 'tipo', 'data', 'hora', 'hora_fim', 'duracao', 'local', 'estado', 'observacoes', 'resultado']
+  exames_marcacoes: ['aluno_id', 'tipo', 'data', 'hora', 'hora_fim', 'duracao', 'local', 'estado', 'observacoes', 'resultado'],
+  revalidacoes: ['aluno_id', 'nome', 'nif', 'telefone', 'email', 'numero_carta', 'categoria', 'tipo_revalidacao', 'data_pedido', 'data_validade_anterior', 'valor', 'modo_pagamento', 'estado_processo', 'estado_pagamento', 'pagamento_id', 'notas']
 };
 
 function jsToDbRow(table, row, extra = {}) {
@@ -315,7 +350,8 @@ const TABLE_MAP = {
   itensConta: 'itens_conta',
   preInscricoes: 'pre_inscricoes',
   examesMarcacoes: 'exames_marcacoes',
-  users: 'users'
+  users: 'users',
+  revalidacoes: 'revalidacoes'
 };
 
 function collectionTableName(name) {
@@ -1074,18 +1110,24 @@ app.use('/api/requisitos', collectionRoutes('requisitos', {
   validate: (p) => (!p.categoria ? 'A categoria é obrigatória' : null)
 }));
 app.use('/api/pagamentos', collectionRoutes('pagamentos', {
-  validate: (p) => (!p.alunoId || !p.valor ? 'Aluno e valor são obrigatórios' : null),
+  validate: (p) => (!p.valor ? 'O valor do pagamento é obrigatório' : null),
   onCreate: async (item, tenant, req) => {
     if (!item.modoPagamento && !item.modo_pagamento) item.modoPagamento = 'PGNUM';
-    await tentarEmitirReciboAutomatico(item, tenant, req);
+    if (!item.naoFaturar && !item.nao_faturar) {
+      await tentarEmitirReciboAutomatico(item, tenant, req);
+    }
   },
-  onAfterCreate: async (saved, tenant, req) => { await atualizarEstadosContaCorrente(req, saved.alunoId); return saved; },
+  onAfterCreate: async (saved, tenant, req) => { if (saved.alunoId) await atualizarEstadosContaCorrente(req, saved.alunoId); return saved; },
   onUpdate: async (atualizado, anterior, tenant, req) => {
     if (!atualizado.modoPagamento && !atualizado.modo_pagamento) atualizado.modoPagamento = anterior?.modoPagamento || 'PGNUM';
-    if (atualizado.estado === 'Pago' && anterior.estado !== 'Pago') await tentarEmitirReciboAutomatico(atualizado, tenant, req);
+    if (atualizado.estado === 'Pago' && anterior.estado !== 'Pago' && !atualizado.naoFaturar && !atualizado.nao_faturar) {
+      await tentarEmitirReciboAutomatico(atualizado, tenant, req);
+    }
   },
-  onAfterUpdate: async (saved, tenant, req) => { await atualizarEstadosContaCorrente(req, saved.alunoId); return saved; },
+  onAfterUpdate: async (saved, tenant, req) => { if (saved.alunoId) await atualizarEstadosContaCorrente(req, saved.alunoId); return saved; },
   onDelete: async (atual, tenant, req) => {
+    if (atual.naoFaturar || atual.nao_faturar) return null;
+
     // Verificar se o pagamento já possui emissão fiscal associada
     const docResult = await query(
       `SELECT TOP 1 * FROM documentos_fiscais WHERE pagamento_id=@id AND tipo IN ('FA', 'FR', 'RE') ORDER BY data_emissao DESC`,
@@ -1165,7 +1207,7 @@ app.use('/api/pagamentos', collectionRoutes('pagamentos', {
         erro: ncResultado.erro
       });
 
-      await atualizarEstadosContaCorrente(req, atual.alunoId);
+      if (atual.alunoId) await atualizarEstadosContaCorrente(req, atual.alunoId);
 
       const list = tenant.pagamentos || [];
       const pos = list.findIndex(p => p.id === atual.id);
@@ -1191,8 +1233,9 @@ app.use('/api/pagamentos', collectionRoutes('pagamentos', {
 
     return null;
   },
-  onAfterDelete: async (removed, tenant, req) => { await atualizarEstadosContaCorrente(req, removed.alunoId); },
+  onAfterDelete: async (removed, tenant, req) => { if (removed?.alunoId) await atualizarEstadosContaCorrente(req, removed.alunoId); },
   transformOut: async (row, tenant, req) => {
+    row.naoFaturar = !!(row.naoFaturar || row.nao_faturar);
     if (row.faturacaoNumero || row.faturacaoTipo) {
       row.faturacao = {
         tipo: row.faturacaoTipo,
@@ -1248,6 +1291,80 @@ app.use('/api/produtos', collectionRoutes('produtos', {
     return null;
   }
 }));
+app.use('/api/revalidacoes', collectionRoutes('revalidacoes', {
+  validate: (p) => {
+    if (!p.nome) return 'O nome do titular/candidato é obrigatório';
+    return null;
+  },
+  onAfterCreate: async (saved, tenant, req) => {
+    const valor = Number(saved.valor || 0);
+    if (valor > 0) {
+      try {
+        const pagData = saved.dataPedido || new Date().toISOString().slice(0, 10);
+        const pagDesc = `Revalidação de Carta (${saved.categoria || 'B'} - ${saved.tipoRevalidacao || 'Geral'}) · ${saved.nome}`;
+        const pagSaved = await insertItemToSql(req, 'pagamentos', {
+          alunoId: saved.alunoId || null,
+          valor: valor,
+          data: pagData,
+          descricao: pagDesc,
+          taxaIva: 0,
+          estado: saved.estadoPagamento || 'Pago',
+          modoPagamento: saved.modoPagamento || 'PGNUM',
+          naoFaturar: 1
+        });
+        if (pagSaved && pagSaved.id) {
+          await query('UPDATE revalidacoes SET pagamento_id=@pagId WHERE id=@id', { pagId: pagSaved.id, id: saved.id });
+          saved.pagamentoId = pagSaved.id;
+          (tenant.pagamentos = tenant.pagamentos || []).push(pagSaved);
+        }
+      } catch (err) {
+        console.warn('Aviso ao gerar pagamento de revalidação:', err.message || err);
+      }
+    }
+    return saved;
+  },
+  onAfterUpdate: async (saved, tenant, req) => {
+    if (saved.pagamentoId) {
+      try {
+        const valor = Number(saved.valor || 0);
+        const pagDesc = `Revalidação de Carta (${saved.categoria || 'B'} - ${saved.tipoRevalidacao || 'Geral'}) · ${saved.nome}`;
+        await query(
+          `UPDATE pagamentos
+           SET valor=@valor,
+               modo_pagamento=@modo,
+               descricao=@desc,
+               estado=@estado
+           WHERE id=@pagId AND escola_id=@escolaId`,
+          {
+            valor,
+            modo: saved.modoPagamento || 'PGNUM',
+            desc: pagDesc,
+            estado: saved.estadoPagamento || 'Pago',
+            pagId: saved.pagamentoId,
+            escolaId: req.escolaId
+          }
+        );
+      } catch (err) {
+        console.warn('Aviso ao sincronizar pagamento de revalidação:', err.message || err);
+      }
+    }
+    return saved;
+  },
+  onDelete: async (atual, tenant, req) => {
+    if (atual.pagamentoId) {
+      try {
+        await query('DELETE FROM pagamentos WHERE id=@id AND escola_id=@escolaId', { id: atual.pagamentoId, escolaId: req.escolaId });
+        if (tenant.pagamentos) {
+          tenant.pagamentos = tenant.pagamentos.filter(p => p.id !== atual.pagamentoId);
+        }
+      } catch (err) {
+        console.warn('Aviso ao remover pagamento de revalidação:', err.message || err);
+      }
+    }
+    return null;
+  }
+}));
+
 
 /* ------------------------------------------------------------
    9. Contratos
@@ -1911,6 +2028,9 @@ async function historicoFaturacaoInsert(pagamentoId, entrada) {
    parcialmente pelo valor deste pagamento. */
 async function tentarEmitirReciboAutomatico(item, tenant, req) {
   if (item.estado !== 'Pago') return;
+  if (item.naoFaturar || item.nao_faturar) return;
+  const desc = String(item.descricao || '').toLowerCase();
+  if (desc.includes('revalidação') || desc.includes('revalidacao')) return;
   if (item.id) {
     const jaTemRecibo = await query(`SELECT id FROM documentos_fiscais WHERE pagamento_id=@id AND tipo='RE'`, { id: item.id });
     if (jaTemRecibo.recordset.length) return;
@@ -1963,6 +2083,9 @@ async function handleEmissao(req, res, tipo) {
     const pagamentoResult = await query('SELECT * FROM pagamentos WHERE id=@id AND escola_id=@escolaId', { id: Number(req.params.id), escolaId: req.escolaId });
     const pagamentoRow = pagamentoResult.recordset[0];
     if (!pagamentoRow) return notFound(res, 'Pagamento não encontrado');
+    if (pagamentoRow.nao_faturar) {
+      return badRequest(res, 'Este pagamento é referente a uma revalidação/serviço isento de faturação fiscal.');
+    }
     const alunoResult = await query('SELECT * FROM alunos WHERE id=@id AND escola_id=@escolaId', { id: pagamentoRow.aluno_id, escolaId: req.escolaId });
     const alunoRow = alunoResult.recordset[0];
     if (!alunoRow) return badRequest(res, 'Este pagamento não está associado a um aluno válido');
