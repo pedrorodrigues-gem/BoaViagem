@@ -1003,6 +1003,97 @@ app.delete('/api/alunos/:id/documentos/:docId', async (req, res) => {
   }
 });
 
+app.post('/api/alunos/:id/transferir', async (req, res) => {
+  try {
+    const alunoId = Number(req.params.id);
+    if (!alunoId) return badRequest(res, 'ID de aluno inválido.');
+
+    const alunoRes = await query('SELECT * FROM alunos WHERE id=@id AND escola_id=@escolaId', {
+      id: alunoId,
+      escolaId: req.escolaId
+    });
+    if (!alunoRes.recordset[0]) return notFound(res, 'Aluno não encontrado.');
+    const aluno = dbRowToJs(alunoRes.recordset[0]);
+
+    const { tipoTransferencia, destino, data: dataTransferencia, notas } = req.body || {};
+
+    const isPdl = tipoTransferencia === 'dgv_pdl' || tipoTransferencia === '098' || String(tipoTransferencia || '').toLowerCase().includes('pdl');
+    const codigo = isPdl ? '098' : '097';
+    let descricao = isPdl ? 'Transferência do Processo DGV PDL' : 'Transferência do Processo outra DGV';
+    let valor = isPdl ? 30.00 : 50.00;
+    let taxaIva = 16.00;
+    let categoria = 'Diversos';
+
+    // Verificar se existe produto com este código na tabela produtos para a escola
+    try {
+      const prodRes = await query(
+        'SELECT * FROM produtos WHERE escola_id=@escolaId AND codigo=@codigo',
+        { escolaId: req.escolaId, codigo }
+      );
+      if (prodRes.recordset[0]) {
+        const p = prodRes.recordset[0];
+        if (p.descricao) descricao = p.descricao;
+        if (p.categoria) categoria = p.categoria;
+        if (p.valor != null && !Number.isNaN(Number(p.valor))) valor = Number(p.valor);
+        if (p.taxa_iva != null && !Number.isNaN(Number(p.taxa_iva))) taxaIva = Number(p.taxa_iva);
+      }
+    } catch (e) {
+      // Manter valores por defeito
+    }
+
+    // 1. Atualizar estado do aluno para 'Transferido' e registar nota no processo
+    const dataStr = dataTransferencia || new Date().toISOString().slice(0, 10);
+    const destinoStr = destino && String(destino).trim() ? ` (Destino: ${String(destino).trim()})` : '';
+    const notasAdicionais = notas && String(notas).trim() ? ` - ${String(notas).trim()}` : '';
+    const notaTransferencia = `[Transferência para ${isPdl ? 'DGV PDL' : 'outra DGV'}${destinoStr} em ${dataStr}${notasAdicionais}]`;
+    const notasAtuais = aluno.notas ? String(aluno.notas).trim() : '';
+    const novasNotas = notasAtuais ? `${notasAtuais}\n${notaTransferencia}` : notaTransferencia;
+
+    await query('UPDATE alunos SET estado=@estado, notas=@notas WHERE id=@id AND escola_id=@escolaId', {
+      estado: 'Transferido',
+      notas: novasNotas,
+      id: alunoId,
+      escolaId: req.escolaId
+    });
+
+    const pessoaId = aluno.pessoaId || aluno.pessoa_id;
+    if (pessoaId) {
+      await query('UPDATE pessoas SET estado=@estado WHERE id=@id AND escola_id=@escolaId', {
+        estado: 'Transferido',
+        id: pessoaId,
+        escolaId: req.escolaId
+      });
+    }
+
+    // 2. Inserir o item na conta corrente (itens_conta)
+    const itemConta = await insertItemToSql(req, 'itensConta', {
+      alunoId,
+      codigo,
+      descricao: destino && String(destino).trim() ? `${descricao} - ${String(destino).trim()}` : descricao,
+      categoria,
+      valor,
+      taxaIva,
+      estado: 'Pendente'
+    });
+
+    // 3. Recalcular e atualizar estados da conta corrente
+    await atualizarEstadosContaCorrente(req, alunoId);
+
+    // 4. Invalidar cache da escola
+    invalidateTenantCache(req.escolaId);
+
+    ok(res, {
+      aluno: { ...aluno, estado: 'Transferido', notas: novasNotas },
+      itemConta,
+      codigo,
+      valor,
+      descricao
+    });
+  } catch (ex) {
+    res.status(503).json({ success: false, error: `Falha ao registar transferência do aluno: ${ex.message || ex}` });
+  }
+});
+
 /* ------------------------------------------------------------
    8. Coleções CRUD
    ------------------------------------------------------------ */
