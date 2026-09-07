@@ -183,18 +183,6 @@
   }
 
   async function ensureViewData(view) {
-    if (view === 'alunos') {
-      setLoadingBar(true);
-      try {
-        await ensureAlunosAtivos();
-        await ensureCollections(VIEW_DEPS.alunos);
-      } finally {
-        setLoadingBar(false);
-      }
-      preloadIdle(['alunos', 'instrutores', 'veiculos', 'espacos']);
-      return;
-    }
-
     const deps = VIEW_DEPS[view] || [];
     const emFalta = deps.filter((d) => !loaded[d]);
     if (emFalta.length) {
@@ -229,11 +217,12 @@
 
     setupHoverPrefetch();
 
-    // Carregar todos os alunos automaticamente no arranque inicial (loadEssential)
+    // Carregar dados essenciais no arranque inicial (alunos, escola, dashboard, espacos)
     const essenciais = [
       ensureCollection('alunos'),
       ensureCollection('escola'),
-      ensureCollection('dashboard')
+      ensureCollection('dashboard'),
+      ensureCollection('espacos')
     ];
     if (auth.user?.role === 'instrutor') essenciais.push(ensureCollection('instrutores'));
 
