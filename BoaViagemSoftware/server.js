@@ -2411,6 +2411,15 @@ app.put('/api/turmasTeoricas/:id/presencas', async (req, res) => {
     const idsAlunos = Object.keys(presencas).map(Number).filter(Number.isFinite);
     const marcadoPor = req.user.id; // quem está a marcar a presença (staff autenticado)
 
+    // Remover alunos que foram retirados da lista de presenças desta turma
+    if (idsAlunos.length > 0) {
+      const placeholders = idsAlunos.map((_, i) => '@keep' + i).join(',');
+      const deleteParams = idsAlunos.reduce((acc, id, i) => ({ ...acc, ['keep' + i]: id }), { turmaId });
+      await query(`DELETE FROM turma_inscritos WHERE turma_id=@turmaId AND aluno_id NOT IN (${placeholders})`, deleteParams);
+    } else {
+      await query('DELETE FROM turma_inscritos WHERE turma_id=@turmaId', { turmaId });
+    }
+
     for (const alunoId of idsAlunos) {
       const jaExiste = await query('SELECT 1 AS existe FROM turma_inscritos WHERE turma_id=@turmaId AND aluno_id=@alunoId', {
         turmaId,
@@ -2919,7 +2928,7 @@ app.get('/api/relatorios/geral', async (req, res) => {
                SUM(ISNULL(km, 0)) AS kmTotal
         FROM aulas
         WHERE escola_id = @e
-          AND (LOWER(tipo) LIKE '%prat%')
+          AND (tipo = 'Prática' OR tipo LIKE '%pr_t%')
           AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
         GROUP BY aluno_id
       ),
@@ -2928,7 +2937,7 @@ app.get('/api/relatorios/geral', async (req, res) => {
                SUM(ISNULL(duracao, 50)) AS minutosTeoricaInd
         FROM aulas
         WHERE escola_id = @e
-          AND (LOWER(tipo) LIKE '%teor%')
+          AND (tipo = 'Teórica' OR tipo LIKE '%te_r%')
           AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
         GROUP BY aluno_id
       ),
@@ -3012,11 +3021,11 @@ app.get('/api/relatorios/espera-teorica-pratica', async (req, res) => {
       PrimeiraPratica AS (
         SELECT aluno_id, MIN(data) AS dataAula1
         FROM aulas
-        WHERE escola_id = @e AND LOWER(tipo) LIKE '%prat%'
+        WHERE escola_id = @e AND (tipo = 'Prática' OR tipo LIKE '%pr_t%')
           AND estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
         GROUP BY aluno_id
       )
-      SELECT
+      SELECT TOP (200)
         a.id AS alunoId,
         a.nome,
         a.espaco_id AS espacoId,
@@ -3295,12 +3304,18 @@ app.get('/api/estatisticas', async (req, res) => {
     const isAnoEmCurso = (modo === 'anoCivil' && anoQuery === anoAtual);
     const meses = modo === 'anoCivil' ? mesesDoAnoCivil(anoQuery) : ultimosNMeses(12);
 
+    const fimDoMesISO = (anoMes) => {
+      const [ano, mes] = anoMes.split('-').map(Number);
+      const ultimoDia = new Date(ano, mes, 0).getDate();
+      return `${anoMes}-${String(ultimoDia).padStart(2, '0')}`;
+    };
+
     const inicioMes = meses[0] + '-01';
-    const fimMes = `${meses[meses.length - 1]}-31`;
+    const fimMes = fimDoMesISO(meses[meses.length - 1]);
 
     const mesesAnoAnterior = meses.map(mesAnoAnterior);
     const inicioHomologo = mesesAnoAnterior[0] + '-01';
-    const fimHomologo = `${mesesAnoAnterior[mesesAnoAnterior.length - 1]}-31`;
+    const fimHomologo = fimDoMesISO(mesesAnoAnterior[mesesAnoAnterior.length - 1]);
 
     const tresMesesAtrasStr = meses[Math.max(0, meses.length - 3)] + '-01';
 
@@ -3382,25 +3397,25 @@ app.get('/api/estatisticas', async (req, res) => {
       // 5. Aulas individuais atuais (Prática / Teórica)
       safeQ(`
         SELECT FORMAT(TRY_CONVERT(date, data), 'yyyy-MM') AS mes,
-               CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END AS tipo,
+               CASE WHEN (tipo = 'Prática' OR tipo LIKE '%pr_t%') THEN 'Prática' ELSE 'Teórica' END AS tipo,
                COUNT(*) AS total
         FROM aulas
         WHERE escola_id = @e
           AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
           AND data >= @inicioMes AND data <= @fimMes
-        GROUP BY FORMAT(TRY_CONVERT(date, data), 'yyyy-MM'), CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END
+        GROUP BY FORMAT(TRY_CONVERT(date, data), 'yyyy-MM'), CASE WHEN (tipo = 'Prática' OR tipo LIKE '%pr_t%') THEN 'Prática' ELSE 'Teórica' END
       `, { e, inicioMes, fimMes }, 'aulasIndividuais'),
 
       // 6. Aulas individuais período homólogo
       safeQ(`
         SELECT FORMAT(TRY_CONVERT(date, data), 'yyyy-MM') AS mes,
-               CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END AS tipo,
+               CASE WHEN (tipo = 'Prática' OR tipo LIKE '%pr_t%') THEN 'Prática' ELSE 'Teórica' END AS tipo,
                COUNT(*) AS total
         FROM aulas
         WHERE escola_id = @e
           AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
           AND data >= @inicioHomologo AND data <= @fimHomologo
-        GROUP BY FORMAT(TRY_CONVERT(date, data), 'yyyy-MM'), CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 'Prática' ELSE 'Teórica' END
+        GROUP BY FORMAT(TRY_CONVERT(date, data), 'yyyy-MM'), CASE WHEN (tipo = 'Prática' OR tipo LIKE '%pr_t%') THEN 'Prática' ELSE 'Teórica' END
       `, { e, inicioHomologo, fimHomologo }, 'aulasHomologas'),
 
       // 7. Turmas teóricas atuais
@@ -3495,7 +3510,7 @@ app.get('/api/estatisticas', async (req, res) => {
         FROM veiculos v
         JOIN aulas a ON a.veiculo_id = v.id
         WHERE v.escola_id = @e
-          AND (LOWER(a.tipo) LIKE '%prat%')
+          AND (a.tipo = 'Prática' OR a.tipo LIKE '%pr_t%')
           AND a.data >= @tresMesesAtrasStr
         GROUP BY v.id, v.matricula
         ORDER BY total DESC
@@ -3545,7 +3560,7 @@ app.get('/api/estatisticas', async (req, res) => {
           SELECT aluno_id, instrutor_id,
             ROW_NUMBER() OVER (PARTITION BY aluno_id ORDER BY COUNT(*) DESC) as rn
           FROM aulas
-          WHERE escola_id = @e AND LOWER(tipo) LIKE '%prat%' AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído') AND instrutor_id IS NOT NULL
+          WHERE escola_id = @e AND (tipo = 'Prática' OR tipo LIKE '%pr_t%') AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído') AND instrutor_id IS NOT NULL
           GROUP BY aluno_id, instrutor_id
         )
         SELECT
@@ -3574,7 +3589,7 @@ app.get('/api/estatisticas', async (req, res) => {
         PrimeiraPratica AS (
           SELECT aluno_id, MIN(TRY_CONVERT(date, data)) AS dataAula1
           FROM aulas
-          WHERE escola_id = @e AND LOWER(tipo) LIKE '%prat%'
+          WHERE escola_id = @e AND (tipo = 'Prática' OR tipo LIKE '%pr_t%')
             AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
             AND TRY_CONVERT(date, data) IS NOT NULL
           GROUP BY aluno_id
@@ -3658,22 +3673,29 @@ app.get('/api/estatisticas', async (req, res) => {
         SELECT a.espaco_id,
           SUM(CASE WHEN p.estado = 'Pago' AND p.data >= @inicioMes AND p.data <= @fimMes THEN p.valor ELSE 0 END) AS receita_periodo,
           SUM(CASE WHEN p.estado = 'Pago' AND p.data >= @inicioHomologo AND p.data <= @fimHomologo THEN p.valor ELSE 0 END) AS receita_homologa,
-          SUM(CASE WHEN p.estado = 'Pendente' THEN p.valor ELSE 0 END) AS receita_pendente
+          SUM(CASE WHEN p.estado = 'Pendente' THEN p.valor ELSE 0 END) AS receita_pendente,
+          COUNT(CASE WHEN p.estado = 'Pago' AND p.data >= @inicioMes AND p.data <= @fimMes THEN p.id ELSE NULL END) AS pagamentos_count
         FROM pagamentos p
         JOIN alunos a ON a.id = p.aluno_id AND a.escola_id = @e
         WHERE p.escola_id = @e AND a.espaco_id IS NOT NULL
         GROUP BY a.espaco_id
       `, { e, inicioMes, fimMes, inicioHomologo, fimHomologo }, 'espacoReceitaTotais'),
 
-      // 30. Aulas por espaço
+      // 30. Aulas por espaço (inclui práticas e teóricas individuais + turmas teóricas)
       safeQ(`
         SELECT espaco_id,
-          SUM(CASE WHEN LOWER(tipo) LIKE '%prat%' THEN 1 ELSE 0 END) AS aulas_praticas,
-          SUM(CASE WHEN LOWER(tipo) NOT LIKE '%prat%' THEN 1 ELSE 0 END) AS aulas_teoricas,
+          SUM(CASE WHEN (tipo = 'Prática' OR tipo LIKE '%pr_t%') THEN 1 ELSE 0 END) AS aulas_praticas,
+          SUM(CASE WHEN (tipo = 'Teórica' OR tipo LIKE '%te_r%') THEN 1 ELSE 0 END) AS aulas_teoricas,
           COUNT(*) AS total_aulas
-        FROM aulas
-        WHERE escola_id = @e AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
-          AND data >= @inicioMes AND data <= @fimMes AND espaco_id IS NOT NULL
+        FROM (
+          SELECT espaco_id, tipo, data FROM aulas
+          WHERE escola_id = @e AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
+            AND data >= @inicioMes AND data <= @fimMes AND espaco_id IS NOT NULL
+          UNION ALL
+          SELECT espaco_id, 'Teórica' as tipo, data FROM turmas_teoricas
+          WHERE escola_id = @e AND estado IN ('Realizada', 'Concluída', 'Concluido', 'Concluida', 'Concluído')
+            AND data >= @inicioMes AND data <= @fimMes AND espaco_id IS NOT NULL
+        ) allAulas
         GROUP BY espaco_id
       `, { e, inicioMes, fimMes }, 'espacoAulas'),
 
@@ -3927,20 +3949,29 @@ app.get('/api/estatisticas', async (req, res) => {
         alunosAtivos,
         alunosConcluidos,
         inscricoesPeriodo,
+        alunosNovosPeriodo: inscricoesPeriodo,
         inscricoesHomologo,
         variacaoInscricoesPct: variacaoPct(inscricoesPeriodo, inscricoesHomologo),
         receitaPeriodo,
+        receitaTotal: receitaPeriodo,
         receitaHomologa,
         variacaoReceitaPct: variacaoPct(receitaPeriodo, receitaHomologa),
         receitaPendente,
         receitaMediaPorAluno,
+        ticketMedioAluno: receitaMediaPorAluno,
+        pagamentosCount: Number(rec.pagamentos_count || 0),
         aulasPraticas,
         aulasTeoricas,
         totalAulas,
+        aulasTotal: totalAulas,
         totalExames,
+        examesTotal: totalExames,
         aprovados,
+        examesAprovados: aprovados,
         reprovados,
+        examesReprovados: reprovados,
         taxaAprovacaoGeral,
+        taxaAprovacao: taxaAprovacaoGeral,
         taxaAprovacaoTeorico,
         taxaAprovacaoPratico,
         receitaMensal: receitaMensalEspaco
@@ -4147,6 +4178,7 @@ app.get('/api/estatisticas', async (req, res) => {
       tentativasMediasExame,
       desempenhoInstrutores,
       agingPagamentosPendentes,
+      tempoEsperaMensal,
       receitaPorCategoria: kpis.receitaPorCategoria,
       receitaMensal,
       inscricoesMensais,
