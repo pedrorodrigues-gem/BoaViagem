@@ -11,11 +11,24 @@
 </head>
 <body>
 
+<!-- BLOQUEADOR DE ECRÃ COM BOLA / SPINNER GIRATÓRIO -->
+<div id="globalScreenLoader" class="global-screen-loader active">
+  <div class="loader-content">
+    <div class="loader-spinner-orbit">
+      <div class="loader-spinner-ring ring-1"></div>
+      <div class="loader-spinner-ring ring-2"></div>
+      <div class="loader-spinner-ball"></div>
+    </div>
+    <div class="loader-text" id="globalScreenLoaderText">A carregar dados essenciais…</div>
+    <div class="loader-sub">Por favor aguarde um momento</div>
+  </div>
+</div>
+
 <div class="app">
 
   <!-- SIDEBAR -->
   <aside class="sidebar">
-    <div class="brand">
+    <div class="brand" id="brandLogoTrigger" style="cursor:pointer" title="Boa Viagem">
       <img src="images/logo.svg" alt="Logo" class="brand-mark" width="34" height="34" style="object-fit: contain;">
       <div>
         <div class="brand-name">Boa Viagem</div>
@@ -55,6 +68,9 @@
         </button>
         <button class="nav-item" data-view="contratos">
           <span class="nav-ico">▧</span> Contratos
+        </button>
+        <button class="nav-item nav-item-hidden" id="navItemRevalidacoes" data-view="revalidacoes" style="display:none">
+          <span class="nav-ico">🪪</span> Revalidações <span class="badge" style="font-size:10px; margin-left:auto; background:rgba(255,255,255,0.16); padding:2px 6px; border-radius:10px">Interno</span>
         </button>
       </div>
 
@@ -101,6 +117,7 @@
     <section id="view-instrutores" class="view"></section>
     <section id="view-veiculos" class="view"></section>
     <section id="view-pagamentos" class="view"></section>
+    <section id="view-revalidacoes" class="view"></section>
     <section id="view-relatorios" class="view"></section>
     <section id="view-contratos" class="view"></section>
     <section id="view-config" class="view"></section>

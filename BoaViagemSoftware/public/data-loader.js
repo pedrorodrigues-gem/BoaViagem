@@ -5,27 +5,28 @@
   }
 
   const COLLECTION_LOADERS = {
-    alunos: () => window.fetchCollectionAll('/api/alunos', { limit: 500, maxPages: 30 }),
+    alunos: () => api('GET', '/api/alunos'),
     instrutores: () => api('GET', '/api/instrutores'),
     veiculos: () => api('GET', '/api/veiculos'),
-    aulas: () => window.fetchCollectionAll('/api/aulas', { limit: 500, maxPages: 30 }),
-    turmasTeoricas: () => window.fetchCollectionAll('/api/turmasTeoricas', { limit: 500, maxPages: 30 }),
+    aulas: () => api('GET', '/api/aulas'),
+    turmasTeoricas: () => api('GET', '/api/turmasTeoricas'),
     requisitos: () => api('GET', '/api/requisitos'),
-    pagamentos: () => window.fetchCollectionAll('/api/pagamentos', { limit: 500, maxPages: 30 }),
-    contratos: () => window.fetchCollectionAll('/api/contratos', { limit: 500, maxPages: 30 }),
-    preInscricoes: () => window.fetchCollectionAll('/api/preinscricoes', { limit: 500, maxPages: 30 }),
+    pagamentos: () => api('GET', '/api/pagamentos'),
+    contratos: () => api('GET', '/api/contratos'),
+    preInscricoes: () => api('GET', '/api/preinscricoes'),
     examesMarcacoes: () => api('GET', '/api/examesMarcacoes?limit=200'),
     espacos: () => api('GET', '/api/espacos'),
     produtos: () => api('GET', '/api/produtos'),
     escola: () => api('GET', '/api/escola'),
     dashboard: () => api('GET', '/api/dashboard'),
-    config: () => api('GET', '/api/config')
+    config: () => api('GET', '/api/config'),
+    revalidacoes: () => api('GET', '/api/revalidacoes')
   };
 
   const VIEW_DEPS = {
     dashboard: ['dashboard'],
-    calendario: ['instrutores', 'veiculos', 'espacos'], // já não pede aulas/turmasTeoricas/alunos completos
-    aulas: ['aulas', 'turmasTeoricas', 'alunos', 'instrutores', 'veiculos', 'espacos'], // esta vista continua a precisar (tabela histórica), mas pode ganhar o mesmo tratamento depois
+    calendario: ['instrutores', 'veiculos', 'espacos', 'aulas', 'turmasTeoricas'],
+    aulas: ['aulas', 'turmasTeoricas', 'alunos', 'instrutores', 'veiculos', 'espacos'],
     alunos: ['espacos'],
     instrutores: ['instrutores'],
     veiculos: ['veiculos'],
@@ -33,11 +34,10 @@
     contratos: ['contratos', 'alunos', 'produtos', 'espacos', 'config'],
     config: ['espacos', 'produtos', 'config'],
     preinscricoes: ['preInscricoes', 'espacos'],
-    exames: ['examesMarcacoes'],
-    estatisticas: []
+    exames: ['examesMarcacoes', 'alunos', 'instrutores', 'veiculos'],
+    estatisticas: ['pagamentos', 'alunos'],
+    revalidacoes: ['revalidacoes', 'alunos']
   };
-
-  const PRELOAD_BASE = ['alunos', 'instrutores', 'veiculos', 'espacos', 'produtos'];
 
   const inFlight = {};
   const loaded = {};
@@ -91,11 +91,13 @@
     return !!loaded[name];
   }
 
-  /* ---------- Alunos ativos: carregamento rápido e isolado ----------
-     Não usa fetchCollectionAll (que insiste em trazer TUDO) — pede só
-     os alunos com estado=Ativo, já com paginação no servidor. Isto é o
-     que a vista "Alunos" mostra por omissão, por isso tem de ser o mais
-     rápido possível a aparecer no ecrã. */
+  function isViewDataLoaded(view) {
+    if (view === 'alunos') return alunosAtivosLoaded;
+    const deps = VIEW_DEPS[view] || [];
+    return deps.every(d => !!loaded[d]);
+  }
+
+  /* ---------- Alunos ativos: carregamento rápido e prioritário ---------- */
   let alunosAtivosLoaded = false;
   let alunosAtivosPromise = null;
 
@@ -110,9 +112,6 @@
         state.alunosAtivosTotal = res.total;
         alunosAtivosLoaded = true;
         alunosAtivosPromise = null;
-        // Se a coleção completa 'alunos' ainda não estiver carregada,
-        // usa já estes ativos como base provisória — a vista não fica vazia
-        // enquanto a coleção completa (todos os estados) chega em segundo plano.
         if (!loaded.alunos) {
           state.alunos = res.alunos;
         }
@@ -126,21 +125,38 @@
     return alunosAtivosPromise;
   }
 
-  /* ---------- Preload em segundo plano ---------- */
-  let preloadScheduled = false;
-  function preloadIdle(names) {
-    const pendentes = names.filter((n) => !loaded[n] && !inFlight[n]);
-    if (!pendentes.length) return;
-    const run = () => {
-      preloadScheduled = false;
-      pendentes.forEach((n) => ensureCollection(n).catch(() => {}));
-    };
-    if (preloadScheduled) return;
-    preloadScheduled = true;
-    if ('requestIdleCallback' in window) {
-      requestIdleCallback(run, { timeout: 4000 });
+  /* ---------- Preload em segundo plano com fila sequencial ---------- */
+  const preloadQueue = [];
+  let isPreloading = false;
+
+  function processNextPreload() {
+    if (!preloadQueue.length) {
+      isPreloading = false;
+      return;
+    }
+    isPreloading = true;
+    const next = preloadQueue.shift();
+    if (!loaded[next] && !inFlight[next]) {
+      ensureCollection(next)
+        .catch(() => {})
+        .finally(() => {
+          setTimeout(processNextPreload, 300);
+        });
     } else {
-      setTimeout(run, 1200);
+      processNextPreload();
+    }
+  }
+
+  function preloadIdle(names) {
+    const pendentes = names.filter((n) => !loaded[n] && !inFlight[n] && !preloadQueue.includes(n));
+    if (!pendentes.length) return;
+    preloadQueue.push(...pendentes);
+    if (!isPreloading) {
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(processNextPreload, { timeout: 3500 });
+      } else {
+        setTimeout(processNextPreload, 800);
+      }
     }
   }
 
@@ -162,8 +178,6 @@
   }
 
   async function ensureViewData(view) {
-    // Caso especial: a vista de alunos carrega primeiro os ativos (rápido),
-    // e só depois espera pelo resto das dependências (espaços, etc.).
     if (view === 'alunos') {
       setLoadingBar(true);
       try {
@@ -172,10 +186,7 @@
       } finally {
         setLoadingBar(false);
       }
-      // A coleção completa de alunos (todos os estados) e o resto da app
-      // carregam-se sem bloquear — assim que estiver pronta, quem mudar
-      // o filtro para "Todos"/"Concluído"/"Suspenso" já a encontra pronta.
-      preloadIdle(['alunos', ...PRELOAD_BASE, ...Object.values(VIEW_DEPS).flat()]);
+      preloadIdle(['alunos', 'instrutores', 'veiculos', 'espacos']);
       return;
     }
 
@@ -189,11 +200,21 @@
         setLoadingBar(false);
       }
     }
-    const resto = Array.from(new Set([
-      ...PRELOAD_BASE,
-      ...Object.values(VIEW_DEPS).flat()
-    ])).filter((n) => n !== 'dashboard');
-    preloadIdle(resto);
+  }
+
+  /* Hover Pre-fetch: quando o utilizador passa o rato ou foca num item do menu,
+     começa logo a descarregar as dependências dessa vista antes do clique. */
+  function setupHoverPrefetch() {
+    document.addEventListener('mouseover', (e) => {
+      const btn = e.target.closest('.nav-item[data-view]');
+      if (!btn) return;
+      const v = btn.dataset.view;
+      if (!v || !VIEW_DEPS[v]) return;
+      const emFalta = VIEW_DEPS[v].filter((d) => !loaded[d] && !inFlight[d]);
+      if (emFalta.length) {
+        emFalta.forEach((n) => ensureCollection(n).catch(() => {}));
+      }
+    }, { passive: true });
   }
 
   async function loadEssential() {
@@ -201,10 +222,11 @@
     state.escolaAtual = auth.escola;
     state.usuarioAtual = auth.user;
 
+    setupHoverPrefetch();
     ensureAlunosAtivos().catch(() => {});
-    ensureCollection('escola'); // não await — não bloqueia a primeira vista
+    ensureCollection('escola');
     ensureCollection('dashboard');
-    if (auth.user?.role === 'instrutor') await ensureCollection('instrutores'); // este sim é preciso já
+    if (auth.user?.role === 'instrutor') await ensureCollection('instrutores');
     return auth;
   }
 
@@ -215,5 +237,6 @@
   window.ensureAlunosAtivos = ensureAlunosAtivos;
   window.preloadIdle = preloadIdle;
   window.isLoaded = isLoaded;
+  window.isViewDataLoaded = isViewDataLoaded;
   window.loadEssential = loadEssential;
 })();
