@@ -936,74 +936,277 @@ function openTurmaTeoricaForm(id) {
   });
 }
 
-function abrirPresencasForm(turmaId) {
+async function abrirPresencasForm(turmaId) {
+  if (typeof ensureCollection === 'function' && (!state.alunos || !state.alunos.length)) {
+    try { await ensureCollection('alunos'); } catch (e) { console.warn('Erro ao carregar alunos:', e); }
+  }
+
   const t = state.turmasTeoricas.find(x => x.id === turmaId);
   if (!t) return;
-  const alunosBase = (t.inscritos || []).length
-    ? (t.inscritos || []).map(id => findAluno(id)).filter(Boolean)
-    : getAlunosAtivos();
-  const inscritos = alunosBase.filter(a => a.estado === 'Ativo' || !a.estado);
 
-  openModal(`Presenças · ${t.tema}`, `
-    <p class="muted" style="margin-bottom:14px">${fmtDate(t.data)} · ${esc(t.horaInicio)}–${esc(t.horaFim)} · Marca os alunos que estiveram presentes. Esta validação atualiza automaticamente as horas teóricas de cada aluno.</p>
-    <div class="form-field" style="margin-bottom:10px">
-      <label>Pesquisar aluno por nome ou nº</label>
-      <input type="text" id="presencasFiltroInput" placeholder="Escreve o nome ou o número do aluno..." autocomplete="off">
-    </div>
-    <form id="presencasForm">
-      <div id="presencasListaAlunos" style="display:flex; flex-direction:column; gap:2px">
-        ${inscritos.length ? inscritos.map(a => `
-          <label class="presenca-row" data-nome="${esc(normalizarTexto(a.nome))}" data-num="${esc(String(a.numeroAluno ?? a.id))}" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 4px; border-bottom:1px solid var(--border); font-size:14px; font-weight:500; text-transform:none; color:var(--ink)">
-            <span>${esc(a.nome)} <span class="muted" style="font-size:12px">· Nº ${a.numeroAluno ?? a.id}</span></span>
-            <span style="display:flex; gap:14px">
-              <label style="display:flex; align-items:center; gap:5px; font-size:13px; font-weight:600; text-transform:none">
-                <input type="radio" name="p_${a.id}" value="1" ${t.presencas?.[a.id] === true ? 'checked' : ''}> Presente
-              </label>
-              <label style="display:flex; align-items:center; gap:5px; font-size:13px; font-weight:600; text-transform:none; color:var(--danger)">
-                <input type="radio" name="p_${a.id}" value="0" ${t.presencas?.[a.id] === false ? 'checked' : ''}> Faltou
-              </label>
-            </span>
-          </label>
-        `).join('') : emptyState('Sem alunos ativos', 'Não há alunos ativos para validar presença neste momento.')}
-      </div>
-      <div id="presencasSemResultados" class="muted" style="padding:10px 4px; display:none">Nenhum aluno encontrado com esse nome ou número.</div>
-      <div class="form-actions">
-        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
-        ${inscritos.length ? `<button type="submit" class="btn btn-accent">Validar presenças e concluir aula</button>` : ''}
-      </div>
-    </form>
-  `);
-
-  const filtroInput = document.getElementById('presencasFiltroInput');
-  const linhas = Array.from(document.querySelectorAll('.presenca-row'));
-  const semResultados = document.getElementById('presencasSemResultados');
-  function aplicarFiltro() {
-    const termo = normalizarTexto(filtroInput.value.trim());
-    let visiveis = 0;
-    linhas.forEach(row => {
-      const corresponde = !termo || row.dataset.nome.includes(termo) || row.dataset.num.includes(termo);
-      row.style.display = corresponde ? '' : 'none';
-      if (corresponde) visiveis++;
+  // Lista de alunos atualmente na turma (IDs numéricos)
+  let inscritosIds = Array.isArray(t.inscritos) ? t.inscritos.map(Number) : [];
+  // Mapa de presenças { [alunoId]: true/false }
+  let presencasMap = {};
+  if (t.presencas && typeof t.presencas === 'object') {
+    Object.keys(t.presencas).forEach(k => {
+      presencasMap[Number(k)] = t.presencas[k] === true || t.presencas[k] === 1;
     });
-    if (semResultados) semResultados.style.display = (linhas.length && !visiveis) ? '' : 'none';
   }
-  if (filtroInput) filtroInput.addEventListener('input', aplicarFiltro);
 
-  const form = document.getElementById('presencasForm');
-  if (!form.querySelector('button[type="submit"]')) return;
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(form);
-    const presencas = {};
-    inscritos.forEach(a => { presencas[a.id] = fd.get('p_' + a.id) === '1'; });
-    try {
-      await api('PUT', `/api/turmasTeoricas/${turmaId}/presencas`, { presencas, estado: 'Concluída' });
-      await refreshCollections(['turmasTeoricas']);
-      closeModal();
-      render();
-      toast('Presenças validadas com sucesso.');
-    } catch (err) { toast(err.message, 'error'); }
+  // Garantir que todos os inscritos já existentes têm presença definida (default: true)
+  inscritosIds.forEach(id => {
+    if (presencasMap[id] === undefined) presencasMap[id] = true;
   });
+
+  function getAlunoRef(id) {
+    return (typeof findAluno === 'function' ? findAluno(id) : null) ||
+      (state.alunos || []).find(a => a.id === id) ||
+      { id, nome: `Aluno #${id}`, numeroAluno: id };
+  }
+
+  function renderModalContent() {
+    const todosAtivos = typeof getAlunosAtivos === 'function'
+      ? getAlunosAtivos()
+      : (state.alunos || []).filter(a => a.estado === 'Ativo' || !a.estado);
+
+    const setInscritos = new Set(inscritosIds);
+    const disponiveis = todosAtivos.filter(a => !setInscritos.has(Number(a.id)));
+
+    const listaAlunosNaTurma = inscritosIds
+      .map(id => getAlunoRef(id))
+      .sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+
+    const countPresentes = inscritosIds.filter(id => presencasMap[id] === true).length;
+    const countFaltas = inscritosIds.filter(id => presencasMap[id] === false).length;
+
+    return `
+      <p class="muted" style="margin-bottom:12px">
+        ${fmtDate(t.data)} · ${esc(t.horaInicio || '')}–${esc(t.horaFim || '')} · 
+        Adiciona os alunos que assistiram à aula e valida as presenças para atualizar as fichas dos alunos.
+      </p>
+
+      <!-- BARRA DE PESQUISA E ADIÇÃO RÁPIDA -->
+      <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px; margin-bottom:14px">
+        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--muted); display:block; margin-bottom:6px">
+          Adicionar Aluno à Turma
+        </label>
+        <div style="display:flex; gap:8px; align-items:center">
+          <div style="flex:1; position:relative">
+            <input type="text" id="presencasAlunoInput" list="presencasDatalistDisponiveis" placeholder="Pesquisar por nome ou número do aluno..." autocomplete="off" style="width:100%">
+            <datalist id="presencasDatalistDisponiveis">
+              ${disponiveis.map(a => `<option value="${esc(a.nome)} (Nº ${a.numeroAluno ?? a.id})"></option>`).join('')}
+            </datalist>
+          </div>
+          <button type="button" id="btnAdicionarAluno" class="btn btn-accent btn-sm" style="white-space:nowrap">
+            + Adicionar
+          </button>
+        </div>
+      </div>
+
+      <!-- FERRAMENTAS RÁPIDAS E CONTADORES -->
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px">
+        <div style="display:flex; gap:6px; align-items:center">
+          <span class="badge" style="background:var(--surface-2); border:1px solid var(--border); font-size:12px">Total: <strong>${inscritosIds.length}</strong></span>
+          <span class="badge" style="background:#dcfce7; color:#15803d; font-size:12px">Presentes: <strong>${countPresentes}</strong></span>
+          <span class="badge" style="background:#fee2e2; color:#b91c1c; font-size:12px">Faltas: <strong>${countFaltas}</strong></span>
+        </div>
+        ${inscritosIds.length ? `
+          <div style="display:flex; gap:6px">
+            <button type="button" id="btnTodosPresentes" class="btn btn-ghost btn-sm" style="font-size:11.5px; padding:3px 8px">Todos Presentes</button>
+            <button type="button" id="btnTodosFaltou" class="btn btn-ghost btn-sm" style="font-size:11.5px; padding:3px 8px; color:var(--danger)">Todos Faltou</button>
+          </div>
+        ` : ''}
+      </div>
+
+      <!-- FILTRO LOCAL QUANDO HÁ MUITOS ALUNOS -->
+      ${inscritosIds.length > 6 ? `
+        <div class="form-field" style="margin-bottom:8px">
+          <input type="text" id="presencasFiltroInput" placeholder="Filtrar inscritos nesta aula..." autocomplete="off">
+        </div>
+      ` : ''}
+
+      <!-- LISTA DE ALUNOS NA AULA -->
+      <form id="presencasForm">
+        <div id="presencasListaAlunos" style="display:flex; flex-direction:column; gap:2px; max-height:360px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius-md); padding:6px 10px; background:var(--surface)">
+          ${listaAlunosNaTurma.length ? listaAlunosNaTurma.map(a => `
+            <div class="presenca-row" data-id="${a.id}" data-nome="${esc(normalizarTexto(a.nome || ''))}" data-num="${esc(String(a.numeroAluno ?? a.id))}" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid var(--border); font-size:13.5px">
+              <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+                <strong>${esc(a.nome)}</strong>
+                <span class="muted" style="font-size:12px">· Nº ${a.numeroAluno ?? a.id}</span>
+              </span>
+              <div style="display:flex; align-items:center; gap:12px">
+                <label style="display:flex; align-items:center; gap:4px; font-size:13px; font-weight:600; cursor:pointer; color:var(--success, #16a34a)">
+                  <input type="radio" name="p_${a.id}" value="1" ${presencasMap[a.id] === true ? 'checked' : ''}> Presente
+                </label>
+                <label style="display:flex; align-items:center; gap:4px; font-size:13px; font-weight:600; cursor:pointer; color:var(--danger, #dc2626)">
+                  <input type="radio" name="p_${a.id}" value="0" ${presencasMap[a.id] === false ? 'checked' : ''}> Faltou
+                </label>
+                <button type="button" class="btn btn-ghost btn-sm btn-remover-aluno" data-id="${a.id}" title="Remover da aula" style="color:var(--muted); padding:2px 6px; font-size:13px; line-height:1">✕</button>
+              </div>
+            </div>
+          `).join('') : `
+            <div class="muted" style="padding:24px 12px; text-align:center">
+              Nenhum aluno registado nesta turma teórica ainda.<br>
+              Usa o campo acima para pesquisar e adicionar os alunos presentes.
+            </div>
+          `}
+        </div>
+        <div id="presencasSemResultados" class="muted" style="padding:10px 4px; display:none">Nenhum aluno corresponde à pesquisa.</div>
+
+        <div class="form-actions" style="margin-top:16px">
+          <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+          <button type="submit" class="btn btn-accent">${t.estado === 'Concluída' ? 'Guardar alterações' : 'Validar presenças e concluir aula'}</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function setupEvents() {
+    const todosAtivos = typeof getAlunosAtivos === 'function'
+      ? getAlunosAtivos()
+      : (state.alunos || []).filter(a => a.estado === 'Ativo' || !a.estado);
+
+    const alunoInput = document.getElementById('presencasAlunoInput');
+    const btnAdd = document.getElementById('btnAdicionarAluno');
+
+    function tentarAdicionar() {
+      if (!alunoInput) return;
+      const val = alunoInput.value.trim();
+      if (!val) return;
+
+      let match = null;
+      // Match padrão "Nome (Nº 123)" ou "(123)"
+      const matchParen = val.match(/\(Nº\s*(\d+)\)/i) || val.match(/\((\d+)\)$/);
+      if (matchParen) {
+        const numOuId = Number(matchParen[1]);
+        match = todosAtivos.find(a => Number(a.numeroAluno) === numOuId || Number(a.id) === numOuId);
+      }
+      if (!match) {
+        const valNorm = normalizarTexto(val);
+        match = todosAtivos.find(a => normalizarTexto(a.nome) === valNorm || String(a.numeroAluno ?? a.id) === val);
+      }
+      if (!match) {
+        const valNorm = normalizarTexto(val);
+        const matches = todosAtivos.filter(a => normalizarTexto(a.nome).includes(valNorm));
+        if (matches.length === 1) match = matches[0];
+      }
+
+      if (!match) {
+        toast('Aluno não encontrado. Seleciona uma opção sugerida da lista.', 'error');
+        return;
+      }
+
+      const matchId = Number(match.id);
+      if (inscritosIds.includes(matchId)) {
+        toast('Esse aluno já se encontra na lista desta aula.', 'info');
+        alunoInput.value = '';
+        return;
+      }
+
+      inscritosIds.push(matchId);
+      presencasMap[matchId] = true;
+      reRenderModal();
+    }
+
+    if (btnAdd) btnAdd.onclick = tentarAdicionar;
+    if (alunoInput) {
+      alunoInput.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          tentarAdicionar();
+        }
+      };
+    }
+
+    // Botões marcar todos
+    const btnTodosP = document.getElementById('btnTodosPresentes');
+    if (btnTodosP) {
+      btnTodosP.onclick = () => {
+        inscritosIds.forEach(id => { presencasMap[id] = true; });
+        reRenderModal();
+      };
+    }
+    const btnTodosF = document.getElementById('btnTodosFaltou');
+    if (btnTodosF) {
+      btnTodosF.onclick = () => {
+        inscritosIds.forEach(id => { presencasMap[id] = false; });
+        reRenderModal();
+      };
+    }
+
+    // Remover aluno
+    document.querySelectorAll('.btn-remover-aluno').forEach(btn => {
+      btn.onclick = () => {
+        const aId = Number(btn.dataset.id);
+        inscritosIds = inscritosIds.filter(id => id !== aId);
+        delete presencasMap[aId];
+        reRenderModal();
+      };
+    });
+
+    // Guardar seleção dos rádios
+    document.querySelectorAll('#presencasListaAlunos input[type="radio"]').forEach(radio => {
+      radio.onchange = () => {
+        const m = radio.name.match(/^p_(\d+)$/);
+        if (m) {
+          presencasMap[Number(m[1])] = radio.value === '1';
+        }
+      };
+    });
+
+    // Filtro local
+    const filtroInput = document.getElementById('presencasFiltroInput');
+    if (filtroInput) {
+      const linhas = Array.from(document.querySelectorAll('.presenca-row'));
+      const semResultados = document.getElementById('presencasSemResultados');
+      filtroInput.oninput = () => {
+        const termo = normalizarTexto(filtroInput.value.trim());
+        let visiveis = 0;
+        linhas.forEach(row => {
+          const corresponde = !termo || row.dataset.nome.includes(termo) || row.dataset.num.includes(termo);
+          row.style.display = corresponde ? '' : 'none';
+          if (corresponde) visiveis++;
+        });
+        if (semResultados) semResultados.style.display = (linhas.length && !visiveis) ? '' : 'none';
+      };
+    }
+
+    // Submissão do formulário
+    const form = document.getElementById('presencasForm');
+    if (form) {
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        const presencasFinais = {};
+        inscritosIds.forEach(id => {
+          const val = fd.get('p_' + id);
+          presencasFinais[id] = val !== null ? (val === '1') : (presencasMap[id] ?? true);
+        });
+
+        try {
+          await api('PUT', `/api/turmasTeoricas/${turmaId}/presencas`, {
+            presencas: presencasFinais,
+            estado: 'Concluída'
+          });
+          await refreshCollections(['turmasTeoricas']);
+          closeModal();
+          render();
+          toast('Presenças validadas com sucesso.');
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      };
+    }
+  }
+
+  function reRenderModal() {
+    openModal(`Presenças · ${t.tema}`, renderModalContent(), { maxWidth: '640px' });
+    setupEvents();
+  }
+
+  openModal(`Presenças · ${t.tema}`, renderModalContent(), { maxWidth: '640px' });
+  setupEvents();
 }
 
 function renderDocumentosAlunoHTML(aluno) {
@@ -3292,7 +3495,9 @@ function renderTurmasTeoricasTab() {
         </div>
         <div class="row-actions">
           <button class="btn btn-ghost btn-sm" onclick="openTurmaTeoricaForm(${t.id})">Editar</button>
-          ${t.estado === 'Agendada' ? `<button class="btn btn-accent btn-sm" onclick="abrirPresencasForm(${t.id})">Marcar presenças</button>` : ''}
+          ${t.estado === 'Agendada'
+            ? `<button class="btn btn-accent btn-sm" onclick="abrirPresencasForm(${t.id})">Marcar presenças</button>`
+            : `<button class="btn btn-ghost btn-sm" onclick="abrirPresencasForm(${t.id})">Presenças (${(t.inscritos || []).length})</button>`}
         </div>
       </div>
     `).join('') : emptyState('Sem turmas teóricas', periodo === 'Agendadas' ? 'Não há turmas agendadas de momento.' : 'Sem histórico de turmas teóricas.')}
