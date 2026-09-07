@@ -454,6 +454,59 @@ tbody tr:hover { background: var(--surface-2); }
 .badge-pratica, .badge-pratico { background: var(--accent-soft); color: var(--accent-dark); }
 .badge-inativo { background: var(--brand-beige-soft); color: var(--brand-beige-dark); }
 .badge-anulado { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
+.badge-transferido { background: #f3e8ff; color: #7e22ce; border: 1px solid #e9d5ff; font-weight: 600; }
+
+.transfer-option-card {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+  background: var(--bg-surface);
+}
+.transfer-option-card:hover {
+  border-color: var(--accent);
+  background: rgba(126, 34, 206, 0.03);
+}
+.transfer-option-card.selected {
+  border-color: var(--accent);
+  background: rgba(126, 34, 206, 0.06);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.transfer-option-card input[type="radio"] {
+  margin-top: 3px;
+}
+.transfer-option-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.transfer-option-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: #f3e8ff;
+  color: #7e22ce;
+}
+.transfer-option-price {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--brand-black);
+  margin-left: auto;
+}
+.transfer-option-desc {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 3px;
+}
 
 .empty-state { padding: 32px 16px; text-align: center; color: var(--muted); }
 .empty-state h4 { color: var(--brand-black); margin-bottom: 4px; }
