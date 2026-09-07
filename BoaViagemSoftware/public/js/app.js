@@ -4179,24 +4179,29 @@ function renderPagamentos() {
     const aluno = findAluno(p.alunoId);
     const fat = p.faturacao;
     const isAnulado = p.estado === 'Anulado';
+    const isNaoFaturavel = !!(p.naoFaturar || p.nao_faturar || String(p.descricao || '').toLowerCase().includes('revalidação') || String(p.descricao || '').toLowerCase().includes('revalidacao'));
     const modoTag = p.modoPagamento === 'PGTR'
       ? `<span class="badge" style="background:#e0f2fe; color:#0369a1; font-size:11px" title="Cartão / Transferência">PGTR</span>`
       : `<span class="badge" style="background:#fef3c7; color:#92400e; font-size:11px" title="Numerário">PGNUM</span>`;
+    const faturacaoCol = isNaoFaturavel
+      ? `<span class="badge badge-nao-faturavel" title="Pagamento interno de revalidação — não sujeito a faturação fiscal">Não Faturável</span>`
+      : (fat ? `<span class="tag" style="background:var(--info-soft); color:var(--info)">${esc(fat.tipo)} ${esc(fat.serie || '')}/${esc(fat.numero || '')}</span>` : '<span class="muted" style="font-size:12px">Por emitir</span>');
+    const alunoNomeDisplay = aluno ? aluno.nome : (isNaoFaturavel ? (p.descricao.split('·')[1]?.trim() || 'Condutor / Revalidação') : '—');
     return `
             <tr style="${isAnulado ? 'opacity:0.65; background:#f8fafc;' : ''}">
-              <td class="cell-primary">${esc(aluno?.nome || '—')} ${aluno ? `<span class="muted" style="font-size:12px">· Nº ${aluno.numeroAluno ?? aluno.id}</span>` : ''}</td>
+              <td class="cell-primary">${esc(alunoNomeDisplay)} ${aluno ? `<span class="muted" style="font-size:12px">· Nº ${aluno.numeroAluno ?? aluno.id}</span>` : ''}</td>
               <td>${esc(p.descricao || '—')}</td>
               <td>${fmtDate(p.data)}</td>
               <td>${modoTag}</td>
               <td class="cell-primary">${fmtMoney(p.valor)}</td>
               <td><span class="${badgeClass(p.estado)}">${esc(p.estado || '—')}</span></td>
-              <td>${fat ? `<span class="tag" style="background:var(--info-soft); color:var(--info)">${esc(fat.tipo)} ${esc(fat.serie || '')}/${esc(fat.numero || '')}</span>` : '<span class="muted" style="font-size:12px">Por emitir</span>'}</td>
+              <td>${faturacaoCol}</td>
               <td>
                 <div class="row-actions">
                   ${aluno ? `<button class="btn btn-ghost btn-sm" onclick="abrirContaCorrente(${aluno.id})">Conta Corrente</button>` : ''}
                   ${isAnulado ? `<span class="muted" style="font-size:12px; font-style:italic; padding:4px 6px">Anulado (NC)</span>` : `
                     <button class="btn btn-ghost btn-sm" onclick="openPagamentoForm(${p.id})">Editar</button>
-                    <button class="btn btn-accent btn-sm" onclick="abrirFaturacaoModal(${p.id})">Faturar</button>
+                    ${!isNaoFaturavel ? `<button class="btn btn-accent btn-sm" onclick="abrirFaturacaoModal(${p.id})">Faturar</button>` : ''}
                     <button class="btn btn-danger-ghost btn-sm" onclick="deleteItem('pagamentos', ${p.id}, 'este pagamento')">Remover</button>
                   `}
                 </div>
@@ -6362,6 +6367,7 @@ function bindForm(collection, id, numberFields, rerender) {
 
 async function deleteItem(collection, id, label) {
   if (!confirm(`Tens a certeza que queres remover ${label}?`)) return;
+  showScreenLoader('A remover registo…');
   try {
     const resDel = await api('DELETE', `/api/${collection}/${id}`);
     const tarefas = [refreshCollections([collection, 'dashboard'])];
@@ -6376,7 +6382,619 @@ async function deleteItem(collection, id, label) {
       toast('Registo removido.');
     }
   } catch (err) { toast(err.message, 'error'); }
+  finally { hideScreenLoader(); }
 }
+
+/* ==================== MÓDULO OCULTO: REVALIDAÇÕES DE CARTAS ==================== */
+
+state.search.revalidacoes = state.search.revalidacoes || '';
+state.filter.revalidacoes = state.filter.revalidacoes || 'Todos';
+
+function badgeProcessoRevalidacao(estado) {
+  const norm = String(estado || '').toLowerCase();
+  if (norm.includes('conclu')) return 'badge-processo-concluido';
+  if (norm.includes('guia')) return 'badge-processo-guia';
+  if (norm.includes('imt')) return 'badge-processo-imt';
+  if (norm.includes('médico') || norm.includes('medico')) return 'badge-processo-medico';
+  return 'badge-processo-registado';
+}
+
+function renderRevalidacoes() {
+  const el = document.getElementById('view-revalidacoes');
+  if (!el) return;
+
+  const rawList = state.revalidacoes || [];
+  const q = (state.search.revalidacoes || '').toLowerCase().trim();
+  const filtroEstado = state.filter.revalidacoes || 'Todos';
+
+  let list = [...rawList].sort((a, b) => (b.dataPedido || '').localeCompare(a.dataPedido || ''));
+
+  if (q) {
+    list = list.filter(r =>
+      (r.nome || '').toLowerCase().includes(q) ||
+      (r.nif || '').toLowerCase().includes(q) ||
+      (r.numeroCarta || '').toLowerCase().includes(q) ||
+      (r.telefone || '').includes(q)
+    );
+  }
+
+  if (filtroEstado !== 'Todos') {
+    list = list.filter(r => (r.estadoProcesso || 'Registado') === filtroEstado);
+  }
+
+  // Estatísticas do Módulo
+  const total = rawList.length;
+  const totalValor = rawList.reduce((acc, r) => acc + (Number(r.valor) || 0), 0);
+  const pendentes = rawList.filter(r => r.estadoProcesso !== 'Concluído').length;
+  const concluidos = rawList.filter(r => r.estadoProcesso === 'Concluído').length;
+
+  const estadosOpcoes = [
+    'Todos',
+    'Registado',
+    'Atestado Médico Entregue',
+    'Submetido no IMT',
+    'Guia Provisória Emitida',
+    'Concluído'
+  ];
+
+  el.innerHTML = `
+    <!-- ALERTA DISCRETO DO MÓDULO -->
+    <div class="inline-alert inline-alert-info" style="margin-bottom:18px; display:flex; justify-content:space-between; align-items:center">
+      <div>
+        <strong>Módulo Interno de Revalidações:</strong> Os pagamentos aqui registados entram no controlo de caixa/financeiro da escola, mas <strong>não são transmitidos nem faturados fiscalmente</strong> na Cegid Primavera.
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="toggleModuloRevalidacoes()" style="white-space:nowrap; margin-left:12px">🔒 Ocultar Módulo</button>
+    </div>
+
+    <!-- KPIS -->
+    <div class="revalida-kpis">
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon tone-accent">🪪</div></div>
+        <div class="stat-value">${total}</div>
+        <div class="stat-label">Total de processos registados</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon tone-success">◈</div></div>
+        <div class="stat-value">${fmtMoney(totalValor)}</div>
+        <div class="stat-label">Total cobrado (não faturado)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon tone-warn">◷</div></div>
+        <div class="stat-value">${pendentes}</div>
+        <div class="stat-label">Processos em curso (Médico/IMT)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon tone-info">✓</div></div>
+        <div class="stat-value">${concluidos}</div>
+        <div class="stat-label">Cartas revalidadas e entregues</div>
+      </div>
+    </div>
+
+    <!-- TOOLBAR & FILTROS -->
+    <div class="toolbar" style="flex-wrap:wrap; gap:12px; margin-bottom:16px">
+      <input class="search-input" placeholder="Pesquisar por titular, NIF, nº de carta ou telefone..."
+             value="${esc(state.search.revalidacoes)}"
+             oninput="state.search.revalidacoes = this.value; renderRevalidacoes();"
+             style="min-width:280px; flex:1">
+
+      <div class="filter-row" style="gap:6px; flex-wrap:wrap">
+        ${estadosOpcoes.map(est => `
+          <button class="chip ${filtroEstado === est ? 'active' : ''}"
+                  onclick="state.filter.revalidacoes='${est}'; renderRevalidacoes();">${esc(est)}</button>
+        `).join('')}
+      </div>
+
+      <div style="display:flex; gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="imprimirResumoRevalidacoes()"><span class="icon">🖨️</span> Folha de Controlo</button>
+        <button class="btn btn-accent btn-sm" onclick="openRevalidacaoForm()">+ Nova Revalidação</button>
+      </div>
+    </div>
+
+    <!-- TABELA -->
+    <div class="table-wrap">
+      ${list.length ? `
+        <table>
+          <thead>
+            <tr>
+              <th>Titular / NIF</th>
+              <th>Carta & Cat.</th>
+              <th>Tipo de Revalidação</th>
+              <th>Valor (€) & Modo</th>
+              <th>Pagamento</th>
+              <th>Estado do Processo</th>
+              <th>Data Pedido</th>
+              <th style="text-align:right">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list.map(r => {
+              const modoLabel = r.modoPagamento === 'PGTR' ? 'Multibanco/Transf.' : (r.modoPagamento === 'MBWAY' ? 'MBWay' : 'Numerário');
+              return `
+                <tr>
+                  <td class="cell-primary">
+                    ${esc(r.nome)}
+                    <div class="muted" style="font-size:12px">${esc(r.nif ? 'NIF: ' + r.nif : (r.telefone || 'Sem NIF'))}</div>
+                  </td>
+                  <td>
+                    <strong>${esc(r.numeroCarta || '—')}</strong>
+                    <div><span class="badge" style="font-size:11px; background:#eef2ff; color:#4338ca">Cat. ${esc(r.categoria || 'B')}</span></div>
+                  </td>
+                  <td>${esc(r.tipoRevalidacao || 'Geral / Idade')}</td>
+                  <td>
+                    <strong>${fmtMoney(r.valor)}</strong>
+                    <div class="muted" style="font-size:12px">${esc(modoLabel)}</div>
+                  </td>
+                  <td>
+                    <span class="badge badge-nao-faturavel" title="Pagamento interno de caixa — isento de faturação fiscal na Primavera">
+                      Pago (Não Faturado)
+                    </span>
+                  </td>
+                  <td>
+                    <span class="badge ${badgeProcessoRevalidacao(r.estadoProcesso)}">
+                      ${esc(r.estadoProcesso || 'Registado')}
+                    </span>
+                  </td>
+                  <td>${fmtDate(r.dataPedido)}</td>
+                  <td>
+                    <div class="row-actions" style="justify-content:flex-end">
+                      <button class="btn btn-ghost btn-sm" title="Alterar estado do processo no IMT" onclick="alterarEstadoRevalidacao(${r.id})">Estado</button>
+                      <button class="btn btn-ghost btn-sm" title="Imprimir comprovativo interno" onclick="imprimirComprovativoRevalidacao(${r.id})">Recibo</button>
+                      <button class="btn btn-ghost btn-sm" onclick="openRevalidacaoForm(${r.id})">Editar</button>
+                      <button class="btn btn-danger-ghost btn-sm" onclick="deleteItem('revalidacoes', ${r.id}, 'esta revalidação')">Remover</button>
+                    </div>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      ` : emptyState('Nenhuma revalidação encontrada', 'Regista uma nova revalidação de carta de condução para começar.')}
+    </div>
+  `;
+}
+
+function openRevalidacaoForm(id) {
+  const item = id ? (state.revalidacoes || []).find(r => r.id === id) : null;
+  const hoje = new Date().toISOString().slice(0, 10);
+
+  const categoriasLista = ['B', 'A', 'A1', 'A2', 'B+E', 'C', 'C+E', 'D', 'D+E', 'AM'];
+  const tiposRevalidacao = [
+    'Revalidação por Idade (50 / 60 / 65 / 70 anos)',
+    'Revalidação por Caducidade',
+    'Averbamento Grupo 2 (Pesados / TVDE / Ambulância)',
+    'Substituição / 2ª Via por Perda ou Mau Estado',
+    'Troca de Carta Estrangeira',
+    'Alteração de Dados / Restrições Médicas',
+    'Outro Serviço de Carta'
+  ];
+
+  const estadosProcesso = [
+    'Registado',
+    'Atestado Médico Entregue',
+    'Submetido no IMT',
+    'Guia Provisória Emitida',
+    'Concluído'
+  ];
+
+  openModal(item ? 'Editar Revalidação de Carta' : 'Nova Revalidação de Carta', `
+    <form id="formRevalidacao">
+      <div class="inline-alert inline-alert-info" style="margin-bottom:14px">
+        ℹ️ Este registo dá entrada em <strong>Pagamentos</strong> (para controlo de caixa), mas é assinalado como <strong>Não Faturável</strong>, ficando isento de faturação fiscal na Cegid Primavera.
+      </div>
+
+      <div class="form-grid">
+        <div class="form-field full">
+          <label>Associar a Aluno Existente (opcional)</label>
+          ${renderAlunoPickerHtml(item?.alunoId, { hint: 'Se for um aluno já inscrito, escolhe-o aqui para autopreencher os dados.' })}
+        </div>
+
+        <div class="form-field full">
+          <label>Nome Completo do Titular / Condutor *</label>
+          <input name="nome" type="text" required value="${esc(item?.nome || '')}" placeholder="Nome do titular da carta">
+        </div>
+
+        <div class="form-field">
+          <label>NIF</label>
+          <input name="nif" type="text" maxlength="9" value="${esc(item?.nif || '')}" placeholder="Ex: 123456789">
+        </div>
+
+        <div class="form-field">
+          <label>Contacto Telefónico</label>
+          <input name="telefone" type="tel" value="${esc(item?.telefone || '')}" placeholder="Ex: 912 345 678">
+        </div>
+
+        <div class="form-field">
+          <label>Nº da Carta / Licença de Condução</label>
+          <input name="numeroCarta" type="text" value="${esc(item?.numeroCarta || '')}" placeholder="Ex: P-1234567 8">
+        </div>
+
+        <div class="form-field">
+          <label>Categoria Principal</label>
+          <select name="categoria">
+            ${categoriasLista.map(c => `<option value="${c}" ${(item?.categoria === c || (!item && c === 'B')) ? 'selected' : ''}>Categoria ${c}</option>`).join('')}
+          </select>
+        </div>
+
+        <div class="form-field full">
+          <label>Tipo / Motivo da Revalidação *</label>
+          <select name="tipoRevalidacao" required>
+            ${tiposRevalidacao.map(t => `<option value="${t}" ${item?.tipoRevalidacao === t ? 'selected' : ''}>${t}</option>`).join('')}
+          </select>
+        </div>
+
+        <div class="form-field">
+          <label>Valor Pago (€) *</label>
+          <input name="valor" type="number" step="0.01" min="0" required value="${item ? item.valor : '50.00'}">
+        </div>
+
+        <div class="form-field">
+          <label>Modo de Pagamento</label>
+          <select name="modoPagamento">
+            <option value="PGNUM" ${(!item || item.modoPagamento === 'PGNUM') ? 'selected' : ''}>Numerário (PGNUM)</option>
+            <option value="PGTR" ${(item?.modoPagamento === 'PGTR') ? 'selected' : ''}>Multibanco / Transferência (PGTR)</option>
+            <option value="MBWAY" ${(item?.modoPagamento === 'MBWAY') ? 'selected' : ''}>MBWay</option>
+          </select>
+        </div>
+
+        <div class="form-field">
+          <label>Data do Pedido / Pagamento</label>
+          <input name="dataPedido" type="date" required value="${item?.dataPedido || hoje}">
+        </div>
+
+        <div class="form-field">
+          <label>Data de Validade Anterior (opcional)</label>
+          <input name="dataValidadeAnterior" type="date" value="${item?.dataValidadeAnterior || ''}">
+        </div>
+
+        <div class="form-field full">
+          <label>Estado do Processo</label>
+          <select name="estadoProcesso">
+            ${estadosProcesso.map(e => `<option value="${e}" ${(item?.estadoProcesso === e || (!item && e === 'Registado')) ? 'selected' : ''}>${e}</option>`).join('')}
+          </select>
+        </div>
+
+        <div class="form-field full">
+          <label>Observações / Notas Internas</label>
+          <textarea name="notas" rows="2" placeholder="Notas sobre atestado médico, agendamento no IMT, etc.">${esc(item?.notas || '')}</textarea>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+        <button type="submit" class="btn btn-accent">${item ? 'Guardar Alterações' : 'Registar Revalidação e Pagamento'}</button>
+      </div>
+    </form>
+  `, { maxWidth: '680px' });
+
+  const form = document.getElementById('formRevalidacao');
+  bindAlunoPicker(form);
+
+  // Autopreenchimento se o utilizador escolher um aluno
+  const alunoSelect = form.querySelector('select[name="alunoId"]');
+  if (alunoSelect) {
+    alunoSelect.addEventListener('change', () => {
+      const alunoId = Number(alunoSelect.value);
+      if (alunoId) {
+        const a = findAluno(alunoId);
+        if (a) {
+          if (!form.querySelector('input[name="nome"]').value) form.querySelector('input[name="nome"]').value = a.nome || '';
+          if (!form.querySelector('input[name="nif"]').value && a.nif) form.querySelector('input[name="nif"]').value = a.nif;
+          if (!form.querySelector('input[name="telefone"]').value && a.telefone) form.querySelector('input[name="telefone"]').value = a.telefone;
+        }
+      }
+    });
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const payload = {
+      alunoId: Number(fd.get('alunoId')) || null,
+      nome: String(fd.get('nome') || '').trim(),
+      nif: String(fd.get('nif') || '').trim() || null,
+      telefone: String(fd.get('telefone') || '').trim() || null,
+      numeroCarta: String(fd.get('numeroCarta') || '').trim() || null,
+      categoria: fd.get('categoria') || 'B',
+      tipoRevalidacao: fd.get('tipoRevalidacao') || 'Geral',
+      valor: Number(fd.get('valor')) || 0,
+      modoPagamento: fd.get('modoPagamento') || 'PGNUM',
+      dataPedido: fd.get('dataPedido') || hoje,
+      dataValidadeAnterior: fd.get('dataValidadeAnterior') || null,
+      estadoProcesso: fd.get('estadoProcesso') || 'Registado',
+      estadoPagamento: 'Pago',
+      notas: String(fd.get('notas') || '').trim() || null
+    };
+
+    if (!payload.nome) {
+      toast('Por favor indica o nome do titular.', 'error');
+      return;
+    }
+
+    showScreenLoader(item ? 'A atualizar revalidação…' : 'A registar revalidação e pagamento…');
+    try {
+      if (item) {
+        await api('PUT', `/api/revalidacoes/${item.id}`, payload);
+      } else {
+        await api('POST', '/api/revalidacoes', payload);
+      }
+      await refreshCollections(['revalidacoes', 'pagamentos', 'dashboard']);
+      closeModal();
+      renderRevalidacoes();
+      toast(item ? 'Revalidação atualizada.' : 'Revalidação registada com pagamento interno.');
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      hideScreenLoader();
+    }
+  });
+}
+
+function alterarEstadoRevalidacao(id) {
+  const r = (state.revalidacoes || []).find(x => x.id === id);
+  if (!r) return;
+
+  const estados = [
+    'Registado',
+    'Atestado Médico Entregue',
+    'Submetido no IMT',
+    'Guia Provisória Emitida',
+    'Concluído'
+  ];
+
+  openModal(`Alterar Estado · ${esc(r.nome)}`, `
+    <form id="formEstadoReval">
+      <div style="margin-bottom:14px">
+        <p class="muted">Titular: <strong>${esc(r.nome)}</strong> (Carta: ${esc(r.numeroCarta || '—')})</p>
+      </div>
+
+      <div class="form-field full">
+        <label>Novo Estado do Processo</label>
+        <select name="novoEstado" style="font-size:14px; padding:8px">
+          ${estados.map(est => `<option value="${est}" ${r.estadoProcesso === est ? 'selected' : ''}>${est}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="form-field full" style="margin-top:12px">
+        <label>Atualizar Notas / Observações</label>
+        <textarea name="notas" rows="3" placeholder="Informação adicional sobre o estado">${esc(r.notas || '')}</textarea>
+      </div>
+
+      <div class="form-actions" style="margin-top:16px">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+        <button type="submit" class="btn btn-accent">Atualizar Estado</button>
+      </div>
+    </form>
+  `, { maxWidth: '480px' });
+
+  const form = document.getElementById('formEstadoReval');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const novoEstado = fd.get('novoEstado');
+    const notas = fd.get('notas');
+
+    showScreenLoader('A atualizar estado…');
+    try {
+      await api('PUT', `/api/revalidacoes/${r.id}`, {
+        ...r,
+        estadoProcesso: novoEstado,
+        notas: notas
+      });
+      await refreshCollections(['revalidacoes']);
+      closeModal();
+      renderRevalidacoes();
+      toast('Estado do processo atualizado com sucesso.');
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      hideScreenLoader();
+    }
+  });
+}
+
+function imprimirComprovativoRevalidacao(id) {
+  const r = (state.revalidacoes || []).find(x => x.id === id);
+  if (!r) return;
+
+  const escola = state.escola || {};
+  const printArea = document.getElementById('printArea');
+  if (!printArea) return;
+
+  printArea.innerHTML = `
+    <div class="revalidacao-receipt" style="padding:32px; font-family:sans-serif; color:#0f172a; line-height:1.5">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #334155; padding-bottom:16px; margin-bottom:20px">
+        <div>
+          <h2 style="margin:0; font-size:22px; color:#1e1b4b">${esc(escola.nome || 'Escola de Condução Boa Viagem')}</h2>
+          <p style="margin:4px 0 0 0; font-size:13px; color:#64748b">Alvará/Licença IMT: ${esc(escola.numeroLicencaImt || '—')} · NIPC: ${esc(escola.nipc || '—')}</p>
+          <p style="margin:2px 0 0 0; font-size:13px; color:#64748b">${esc(escola.morada || '')} · Tel: ${esc(escola.telefone || '—')}</p>
+        </div>
+        <div style="text-align:right">
+          <span style="display:inline-block; padding:4px 10px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:6px; font-weight:700; font-size:12px">
+            REGISTO REV-${String(r.id).padStart(4, '0')}
+          </span>
+          <div style="font-size:12px; color:#64748b; margin-top:4px">Data: ${fmtDate(r.dataPedido)}</div>
+        </div>
+      </div>
+
+      <div style="text-align:center; margin-bottom:24px">
+        <h3 style="margin:0; font-size:17px; text-transform:uppercase; letter-spacing:0.5px">Comprovativo de Pedido de Revalidação de Carta</h3>
+        <p style="margin:4px 0 0 0; font-size:12px; color:#64748b">Registo de receção de processo e emolumentos</p>
+      </div>
+
+      <table style="width:100%; border-collapse:collapse; margin-bottom:20px; font-size:13.5px">
+        <tr style="border-bottom:1px solid #e2e8f0">
+          <td style="padding:8px 0; font-weight:700; width:35%">Titular do Pedido:</td>
+          <td style="padding:8px 0">${esc(r.nome)}</td>
+        </tr>
+        <tr style="border-bottom:1px solid #e2e8f0">
+          <td style="padding:8px 0; font-weight:700">NIF:</td>
+          <td style="padding:8px 0">${esc(r.nif || '—')}</td>
+        </tr>
+        <tr style="border-bottom:1px solid #e2e8f0">
+          <td style="padding:8px 0; font-weight:700">Nº da Carta de Condução:</td>
+          <td style="padding:8px 0"><strong>${esc(r.numeroCarta || '—')}</strong> (Cat. ${esc(r.categoria || 'B')})</td>
+        </tr>
+        <tr style="border-bottom:1px solid #e2e8f0">
+          <td style="padding:8px 0; font-weight:700">Tipo de Processo:</td>
+          <td style="padding:8px 0">${esc(r.tipoRevalidacao || 'Revalidação')}</td>
+        </tr>
+        <tr style="border-bottom:1px solid #e2e8f0">
+          <td style="padding:8px 0; font-weight:700">Estado Atual:</td>
+          <td style="padding:8px 0"><strong>${esc(r.estadoProcesso || 'Registado')}</strong></td>
+        </tr>
+        <tr style="border-bottom:1px solid #e2e8f0">
+          <td style="padding:8px 0; font-weight:700">Valor Cobrado / Recebido:</td>
+          <td style="padding:8px 0; font-size:16px; font-weight:700; color:#0f172a">${fmtMoney(r.valor)} (${esc(r.modoPagamento === 'PGTR' ? 'Multibanco/Transf.' : 'Numerário')})</td>
+        </tr>
+      </table>
+
+      ${r.notas ? `<div style="background:#f8fafc; padding:12px; border-radius:6px; font-size:12.5px; margin-bottom:20px; border:1px solid #e2e8f0"><strong>Observações:</strong> ${esc(r.notas)}</div>` : ''}
+
+      <div style="background:#fffbeb; border:1px solid #fef3c7; padding:12px; border-radius:6px; font-size:11.5px; color:#92400e; margin-bottom:32px; line-height:1.4">
+        <strong>Aviso Importante:</strong> O presente documento comprova unicamente a entrega dos elementos e o pagamento dos serviços de revalidação na escola de condução. Não substitui a carta de condução nem a guia oficial emitida pelo IMT.
+      </div>
+
+      <div style="display:flex; justify-content:space-between; margin-top:40px; padding-top:20px;">
+        <div style="width:45%; text-align:center; border-top:1px solid #94a3b8; padding-top:8px; font-size:12px">
+          O Titular
+        </div>
+        <div style="width:45%; text-align:center; border-top:1px solid #94a3b8; padding-top:8px; font-size:12px">
+          Pela Escola de Condução (Carimbo e Assinatura)
+        </div>
+      </div>
+    </div>
+  `;
+
+  window.print();
+}
+
+function imprimirResumoRevalidacoes() {
+  const printArea = document.getElementById('printArea');
+  if (!printArea) return;
+
+  const rawList = state.revalidacoes || [];
+  const escola = state.escola || {};
+  const totalValor = rawList.reduce((acc, r) => acc + (Number(r.valor) || 0), 0);
+
+  printArea.innerHTML = `
+    <div style="padding:24px; font-family:sans-serif; color:#0f172a">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #0f172a; padding-bottom:12px; margin-bottom:16px">
+        <div>
+          <h2 style="margin:0">${esc(escola.nome || 'Boa Viagem')} · Folha de Controlo de Revalidações</h2>
+          <p class="muted" style="margin:4px 0 0 0">Processos de Revalidação Internos (Pagamentos Não Faturados)</p>
+        </div>
+        <div style="text-align:right; font-size:13px">
+          <div>Data de Impressão: ${new Date().toLocaleDateString('pt-PT')}</div>
+          <div><strong>Total Acumulado: ${fmtMoney(totalValor)}</strong></div>
+        </div>
+      </div>
+
+      <table style="width:100%; border-collapse:collapse; font-size:12px">
+        <thead>
+          <tr style="background:#f1f5f9; border-bottom:1px solid #cbd5e1; text-align:left">
+            <th style="padding:6px">Data</th>
+            <th style="padding:6px">Titular</th>
+            <th style="padding:6px">NIF</th>
+            <th style="padding:6px">Carta & Cat.</th>
+            <th style="padding:6px">Tipo</th>
+            <th style="padding:6px">Valor</th>
+            <th style="padding:6px">Modo</th>
+            <th style="padding:6px">Estado IMT</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rawList.map(r => `
+            <tr style="border-bottom:1px solid #e2e8f0">
+              <td style="padding:6px">${fmtDate(r.dataPedido)}</td>
+              <td style="padding:6px"><strong>${esc(r.nome)}</strong></td>
+              <td style="padding:6px">${esc(r.nif || '—')}</td>
+              <td style="padding:6px">${esc(r.numeroCarta || '—')} (${esc(r.categoria || 'B')})</td>
+              <td style="padding:6px">${esc(r.tipoRevalidacao || '—')}</td>
+              <td style="padding:6px"><strong>${fmtMoney(r.valor)}</strong></td>
+              <td style="padding:6px">${esc(r.modoPagamento || 'PGNUM')}</td>
+              <td style="padding:6px">${esc(r.estadoProcesso || 'Registado')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  window.print();
+}
+
+/* ---------------- Atalhos e Acesso Discreto às Revalidações ---------------- */
+function setupSecretRevalidacoesAccess() {
+  function toggleModuloRevalidacoes() {
+    const atual = localStorage.getItem('bv_modulo_revalidacoes_ativo') === 'true';
+    const novo = !atual;
+    localStorage.setItem('bv_modulo_revalidacoes_ativo', novo ? 'true' : 'false');
+    renderNavItems();
+    if (novo) {
+      toast('🔓 Módulo de Revalidações ativado (Interno).', 'success');
+      switchView('revalidacoes');
+    } else {
+      toast('🔒 Módulo de Revalidações ocultado.', 'info');
+      if (state.view === 'revalidacoes') {
+        switchView('dashboard');
+      }
+    }
+  }
+
+  window.toggleModuloRevalidacoes = toggleModuloRevalidacoes;
+
+  // 1. Atalhos de teclado: Ctrl+Shift+R ou Alt+R
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey && e.shiftKey && (e.key === 'R' || e.key === 'r')) ||
+        (e.altKey && (e.key === 'R' || e.key === 'r'))) {
+      e.preventDefault();
+      toggleModuloRevalidacoes();
+    }
+  });
+
+  // 2. Triplo clique no logótipo da escola
+  const logoTrigger = document.getElementById('brandLogoTrigger');
+  if (logoTrigger) {
+    let logoClicks = 0;
+    let logoTimer = null;
+    logoTrigger.addEventListener('click', () => {
+      logoClicks++;
+      clearTimeout(logoTimer);
+      if (logoClicks >= 3) {
+        logoClicks = 0;
+        toggleModuloRevalidacoes();
+      } else {
+        logoTimer = setTimeout(() => { logoClicks = 0; }, 750);
+      }
+    });
+  }
+}
+
+/* ---------------- Bloqueador Global de Ações e Cliques ---------------- */
+function setupGlobalActionBlocker() {
+  // 1. Intercetação ao submeter formulários
+  document.addEventListener('submit', (e) => {
+    const form = e.target;
+    if (form && !form.classList.contains('no-loader')) {
+      showScreenLoader('A processar dados…');
+      setTimeout(() => { hideScreenLoader(); }, 1200);
+    }
+  }, true);
+
+  // 2. Botão de terminar sessão
+  const btnLogout = document.getElementById('btnLogout');
+  if (btnLogout) {
+    btnLogout.addEventListener('click', () => {
+      showScreenLoader('A terminar sessão…');
+    });
+  }
+}
+
+window.renderRevalidacoes = renderRevalidacoes;
+window.openRevalidacaoForm = openRevalidacaoForm;
+window.alterarEstadoRevalidacao = alterarEstadoRevalidacao;
+window.imprimirComprovativoRevalidacao = imprimirComprovativoRevalidacao;
+window.imprimirResumoRevalidacoes = imprimirResumoRevalidacoes;
 
 /* ---------------- Modal ---------------- */
 function openModal(title, bodyHtml, options = {}) {
@@ -6410,8 +7028,11 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal
 
 /* ---------------- Init ---------------- */
 (async function init() {
+  showScreenLoader('A inicializar Boa Viagem…');
   try {
     await loadEssential();               // só auth + escola + dashboard
+    setupSecretRevalidacoesAccess();
+    setupGlobalActionBlocker();
     renderNavItems();
     renderGlobalSearchBox('global-search-container');
     const defaultView = canAccessView('calendario')
@@ -6421,5 +7042,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal
     await switchView(defaultView);        // agora switchView já garante os dados
   } catch (err) {
     toast('Erro ao carregar dados: ' + err.message, 'error');
+  } finally {
+    hideScreenLoader(true);
   }
-})();
+})();

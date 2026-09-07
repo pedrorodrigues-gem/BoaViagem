@@ -24,7 +24,8 @@
     examesMarcacoes: [],
     espacos: [],
     relatorios: { dadosAtuais: null, mapaAtual: [], esperaAtual: [] },
-    estatisticas: null
+    estatisticas: null,
+    revalidacoes: []
   };
 
   var CATEGORIAS_CONTA = ['Diversos', 'Exames teóricos', 'Exames práticos', 'Lições práticas', 'Lições teóricas'];
@@ -41,7 +42,8 @@
     config: { title: 'Configuração', sub: 'Espaços da escola, preços de cartas e descontos por papel de utilizador' },
     preinscricoes: { title: 'Pré-inscrições', sub: 'Gestão de pré-inscrições e conversão para inscrição' },
     exames: { title: 'Marcação de exames', sub: 'Gestão de exames teóricos e práticos' },
-    estatisticas: { title: 'Estatísticas', sub: 'Relatórios e gráficos de desempenho da escola' }
+    estatisticas: { title: 'Estatísticas', sub: 'Relatórios e gráficos de desempenho da escola' },
+    revalidacoes: { title: 'Revalidações de Cartas', sub: 'Processos de renovação e revalidação de cartas (pagamentos não faturados fiscalmente)' }
   };
 
   async function api(method, url, body) {
@@ -57,6 +59,41 @@
     var json = await res.json();
     if (!res.ok || !json.success) throw new Error(json.error || 'Erro no pedido');
     return json.data;
+  }
+
+  var _screenLoaderCount = 0;
+  function showScreenLoader(msg) {
+    _screenLoaderCount++;
+    var el = document.getElementById('globalScreenLoader');
+    if (el) {
+      if (msg) {
+        var textEl = document.getElementById('globalScreenLoaderText');
+        if (textEl) textEl.textContent = msg;
+      }
+      el.classList.add('active');
+    }
+  }
+
+  function hideScreenLoader(force) {
+    if (force) _screenLoaderCount = 0;
+    else _screenLoaderCount = Math.max(0, _screenLoaderCount - 1);
+
+    if (_screenLoaderCount === 0) {
+      var el = document.getElementById('globalScreenLoader');
+      if (el) el.classList.remove('active');
+    }
+  }
+
+  async function withScreenLoader(fnOrPromise, msg) {
+    showScreenLoader(msg);
+    try {
+      if (typeof fnOrPromise === 'function') {
+        return await fnOrPromise();
+      }
+      return await fnOrPromise;
+    } finally {
+      hideScreenLoader();
+    }
   }
 
   function toast(msg, type) {
@@ -378,7 +415,12 @@
   }
 
   function renderNavItems() {
+    var revalAtivo = localStorage.getItem('bv_modulo_revalidacoes_ativo') === 'true';
     document.querySelectorAll('.nav-item').forEach(function (btn) {
+      if (btn.id === 'navItemRevalidacoes') {
+        btn.style.display = (revalAtivo && canAccessView('revalidacoes')) ? '' : 'none';
+        return;
+      }
       btn.style.display = canAccessView(btn.dataset.view) ? '' : 'none';
     });
     document.querySelectorAll('.nav-group').forEach(function (group) {
@@ -395,11 +437,22 @@
     state.view = view;
     document.querySelectorAll('.nav-item').forEach(function (b) { b.classList.toggle('active', b.dataset.view === view); });
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); });
-    document.getElementById('view-' + view).classList.add('active');
-    document.getElementById('viewTitle').textContent = VIEW_META[view].title;
-    document.getElementById('viewSubtitle').textContent = VIEW_META[view].sub;
+    var targetSec = document.getElementById('view-' + view);
+    if (targetSec) targetSec.classList.add('active');
+    if (VIEW_META[view]) {
+      document.getElementById('viewTitle').textContent = VIEW_META[view].title;
+      document.getElementById('viewSubtitle').textContent = VIEW_META[view].sub;
+    }
 
-    await ensureViewData(view);   // <- só isto é novo: espera pelos dados certos
+    var precisaBloquear = window.isViewDataLoaded ? !window.isViewDataLoaded(view) : true;
+    if (precisaBloquear) {
+      showScreenLoader('A carregar ' + (VIEW_META[view]?.title || 'dados') + '…');
+    }
+    try {
+      await ensureViewData(view);
+    } finally {
+      if (precisaBloquear) hideScreenLoader();
+    }
     renderTopbarActions(view);
     render(view);
   }
@@ -412,7 +465,8 @@
       alunos: { label: '+ Novo Aluno', fn: function () { openAlunoForm(); } },
       instrutores: { label: '+ Novo Instrutor', fn: function () { openInstrutorForm(); } },
       veiculos: { label: '+ Novo Veículo', fn: function () { openVeiculoForm(); } },
-      contratos: { label: '+ Novo Contrato', fn: function () { openContratoForm(); } }
+      contratos: { label: '+ Novo Contrato', fn: function () { openContratoForm(); } },
+      revalidacoes: { label: '+ Nova Revalidação', fn: function () { if (typeof openRevalidacaoForm === 'function') openRevalidacaoForm(); } }
     };
     if (map[view] && (state.usuarioAtual && state.usuarioAtual.role !== 'instrutor' || ['aulas', 'alunos', 'instrutores', 'veiculos', 'contratos', 'exames'].includes(view))) {
       var b = document.createElement('button');
@@ -478,7 +532,8 @@
       config: window.renderConfig || (typeof renderConfig !== 'undefined' ? renderConfig : null),
       preinscricoes: window.renderPreInscricoes || (typeof renderPreInscricoes !== 'undefined' ? renderPreInscricoes : null),
       exames: window.renderExamesMarcacoes || (typeof renderExamesMarcacoes !== 'undefined' ? renderExamesMarcacoes : null),
-      estatisticas: window.renderEstatisticas || (typeof renderEstatisticas !== 'undefined' ? renderEstatisticas : null)
+      estatisticas: window.renderEstatisticas || (typeof renderEstatisticas !== 'undefined' ? renderEstatisticas : null),
+      revalidacoes: window.renderRevalidacoes || (typeof renderRevalidacoes !== 'undefined' ? renderRevalidacoes : null)
     };
     var fn = fns[view];
     if (fn) fn();
@@ -573,6 +628,9 @@
     }, 300);
   }
 
+  window.showScreenLoader = showScreenLoader;
+  window.hideScreenLoader = hideScreenLoader;
+  window.withScreenLoader = withScreenLoader;
   window.state = state;
   window.CATEGORIAS_CONTA = CATEGORIAS_CONTA;
   window.VIEW_META = VIEW_META;
