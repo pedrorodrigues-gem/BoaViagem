@@ -1300,7 +1300,7 @@ function renderAlunos() {
   const el = document.getElementById('view-alunos');
   const q = state.search.alunos.trim();
   const filtro = state.filter.alunos;
-  const estados = ['Ativo', 'Todos', 'Concluído', 'Suspenso'];
+  const estados = ['Ativo', 'Todos', 'Concluído', 'Suspenso', 'Transferido'];
 
   // Base de dados a mostrar: se o filtro é "Ativo" e a coleção completa
   // ainda não chegou, usa a lista rápida (state.alunosAtivos) — assim o
@@ -1366,6 +1366,7 @@ function renderAlunos() {
           <td>
             <div class="row-actions">
               <button class="btn btn-ghost btn-sm" onclick="abrirContaCorrente(${a.id})">Conta Corrente</button>
+              <button class="btn btn-ghost btn-sm" onclick="abrirModalTransferirAluno(${a.id})" title="Transferir processo para outra DGV ou DGV PDL">Transferir</button>
               <button class="btn btn-ghost btn-sm" onclick="abrirHistoricoAulasModal(${a.id})">Histórico Aulas</button>
               <button class="btn btn-ghost btn-sm" onclick="abrirFichaIndividualModal(${a.id})">Ficha Individual</button>
               <button class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(${a.id})">Preencher PDF</button>
@@ -3061,7 +3062,7 @@ function openAlunoForm(id) {
         <div class="form-field">
           <label>Estado</label>
           <select name="estado">
-            ${['Ativo', 'Concluído', 'Suspenso'].map(c => `<option ${item?.estado === c ? 'selected' : ''}>${c}</option>`).join('')}
+            ${['Ativo', 'Concluído', 'Suspenso', 'Transferido'].map(c => `<option ${item?.estado === c ? 'selected' : ''}>${c}</option>`).join('')}
           </select>
         </div>
         <div class="form-field"><label>Data de inscrição</label><input name="dataInscricao" type="date" value="${item?.dataInscricao || ''}"></div>
@@ -3198,6 +3199,199 @@ function openAlunoForm(id) {
     } catch (err) { toast(err.message, 'error'); }
   });
 }
+
+async function abrirModalTransferirAluno(alunoId) {
+  let aluno = typeof findAluno === 'function' ? findAluno(alunoId) : null;
+  if (!aluno && state.alunos) aluno = state.alunos.find(a => a.id === alunoId);
+  if (!aluno && state.alunosAtivos) aluno = state.alunosAtivos.find(a => a.id === alunoId);
+
+  if (!aluno) {
+    try {
+      if (typeof window.showScreenLoader === 'function') window.showScreenLoader('A obter dados do aluno...');
+      aluno = await api('GET', `/api/alunos/${alunoId}`);
+    } catch (e) {
+      toast('Não foi possível obter os dados do aluno: ' + (e.message || e), 'error');
+      return;
+    } finally {
+      if (typeof window.hideScreenLoader === 'function') window.hideScreenLoader();
+    }
+  }
+  if (!aluno) {
+    toast('Aluno não encontrado.', 'error');
+    return;
+  }
+
+  // Obter preços configurados nos produtos caso existam (por defeito: 097 = 50€, 098 = 30€)
+  const prod097 = (state.produtos || []).find(p => p.codigo === '097');
+  const prod098 = (state.produtos || []).find(p => p.codigo === '098');
+  const preco097 = prod097?.valor != null ? Number(prod097.valor) : 50.00;
+  const preco098 = prod098?.valor != null ? Number(prod098.valor) : 30.00;
+  const hoje = new Date().toISOString().slice(0, 10);
+
+  const avisoJaTransferido = aluno.estado === 'Transferido'
+    ? `<div class="inline-alert inline-alert-warning" style="margin-bottom:14px">
+         <strong>Aviso:</strong> Este aluno já se encontra com o estado <strong>Transferido</strong>.
+         Se prosseguires, será lançado um novo débito de taxa de transferência na sua conta corrente.
+       </div>`
+    : '';
+
+  openModal(`Transferir Aluno · ${esc(aluno.nome)}`, `
+    <form id="transferirAlunoForm">
+      ${avisoJaTransferido}
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px; padding:12px; background:var(--bg-subtle,#f9fafb); border-radius:var(--radius)">
+        ${avatarHtml(aluno.nome, aluno.foto, 44)}
+        <div style="flex:1">
+          <div style="font-weight:700; font-size:15px">${esc(aluno.nome)}</div>
+          <div class="cell-sub">
+            N.º <strong>#${aluno.numeroAluno ?? aluno.id}</strong>
+            ${aluno.categoria ? ' · Cat. ' + esc(aluno.categoria) : ''}
+            ${aluno.nif ? ' · NIF ' + esc(aluno.nif) : ''}
+          </div>
+        </div>
+        <div>
+          <span class="${badgeClass(aluno.estado)}">${esc(aluno.estado || '—')}</span>
+        </div>
+      </div>
+
+      <p class="muted" style="margin-bottom:14px; font-size:13px; line-height:1.5">
+        Ao confirmar a transferência, o estado do aluno será alterado para <strong style="color:var(--brand-black)">Transferido</strong>
+        e será lançado automaticamente um débito na conta corrente correspondente à taxa de transferência do processo.
+      </p>
+
+      <label style="display:block; font-weight:700; font-size:12px; text-transform:uppercase; color:var(--muted); margin-bottom:8px">
+        Tipo de Transferência *
+      </label>
+
+      <label class="transfer-option-card selected" id="cardTransferOutraDgv">
+        <input type="radio" name="tipoTransferencia" value="outra_dgv" checked>
+        <div style="flex:1">
+          <div class="transfer-option-title">
+            <span>Transferir para outra DGV</span>
+            <span class="transfer-option-badge">Cód. 097</span>
+          </div>
+          <div class="transfer-option-desc">Transferência do Processo para outra Direção-Geral de Viação</div>
+        </div>
+        <div class="transfer-option-price">${fmtMoney(preco097)}</div>
+      </label>
+
+      <label class="transfer-option-card" id="cardTransferDgvPdl">
+        <input type="radio" name="tipoTransferencia" value="dgv_pdl">
+        <div style="flex:1">
+          <div class="transfer-option-title">
+            <span>Transferir para DGV PDL</span>
+            <span class="transfer-option-badge">Cód. 098</span>
+          </div>
+          <div class="transfer-option-desc">Transferência do Processo para a DGV de Ponta Delgada</div>
+        </div>
+        <div class="transfer-option-price">${fmtMoney(preco098)}</div>
+      </label>
+
+      <div class="form-grid" style="margin-top:14px">
+        <div class="form-field full">
+          <label>DGV de Destino / Localidade (opcional)</label>
+          <input name="destino" placeholder="Ex: DGV Angra do Heroísmo, DGV Faial, etc.">
+        </div>
+        <div class="form-field">
+          <label>Data da Transferência *</label>
+          <input name="data" type="date" required value="${hoje}">
+        </div>
+        <div class="form-field full">
+          <label>Observações / Motivo (opcional)</label>
+          <textarea name="notas" rows="2" placeholder="Informações adicionais sobre o pedido ou transferência..."></textarea>
+        </div>
+      </div>
+
+      <div class="form-actions" style="margin-top:18px">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+        <button type="submit" class="btn btn-accent" id="btnConfirmarTransferencia">Confirmar Transferência</button>
+      </div>
+    </form>
+  `);
+
+  const form = document.getElementById('transferirAlunoForm');
+  const cardOutra = document.getElementById('cardTransferOutraDgv');
+  const cardPdl = document.getElementById('cardTransferDgvPdl');
+
+  if (form) {
+    form.querySelectorAll('input[name="tipoTransferencia"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        if (radio.value === 'outra_dgv') {
+          cardOutra?.classList.add('selected');
+          cardPdl?.classList.remove('selected');
+        } else {
+          cardPdl?.classList.add('selected');
+          cardOutra?.classList.remove('selected');
+        }
+      });
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('btnConfirmarTransferencia');
+      if (btn) btn.disabled = true;
+
+      const fd = new FormData(form);
+      const tipo = fd.get('tipoTransferencia') || 'outra_dgv';
+      const destino = fd.get('destino') ? String(fd.get('destino')).trim() : '';
+      const data = fd.get('data') || hoje;
+      const notas = fd.get('notas') ? String(fd.get('notas')).trim() : '';
+
+      try {
+        if (typeof window.showScreenLoader === 'function') {
+          window.showScreenLoader('A registar transferência e débito na conta corrente...');
+        }
+
+        const res = await api('POST', `/api/alunos/${alunoId}/transferir`, {
+          tipoTransferencia: tipo,
+          destino,
+          data,
+          notas
+        });
+
+        // Atualizar estado em memória local
+        if (state.alunos && Array.isArray(state.alunos)) {
+          const idx = state.alunos.findIndex(a => a.id === alunoId);
+          if (idx >= 0) {
+            state.alunos[idx] = { ...state.alunos[idx], estado: 'Transferido', notas: res.aluno?.notas || state.alunos[idx].notas };
+          }
+        }
+        if (state.alunosAtivos && Array.isArray(state.alunosAtivos)) {
+          state.alunosAtivos = state.alunosAtivos.filter(a => a.id !== alunoId);
+        }
+        if (typeof _alunosMap !== 'undefined' && _alunosMap && _alunosMap.has(alunoId)) {
+          const cached = _alunosMap.get(alunoId);
+          _alunosMap.set(alunoId, { ...cached, estado: 'Transferido' });
+        }
+
+        // Atualizar coleções em segundo plano
+        if (typeof refreshCollections === 'function') {
+          refreshCollections(['alunos', 'itensConta', 'dashboard']).catch(() => {});
+        }
+
+        closeModal();
+        toast(`Aluno transferido com sucesso. Item ${res.codigo} (${fmtMoney(res.valor)}) lançado na conta corrente.`, 'success');
+
+        // Se a conta corrente estava aberta para este aluno, recarregar a vista de conta corrente
+        if (state.contaCorrenteAtual?.aluno?.id === alunoId) {
+          abrirContaCorrente(alunoId);
+        }
+
+        // Se a vista atual é alunos, re-renderizar
+        if (state.currentView === 'alunos' || document.getElementById('view-alunos')?.classList.contains('active')) {
+          renderAlunos();
+        }
+      } catch (err) {
+        toast('Erro ao transferir aluno: ' + (err.message || err), 'error');
+        if (btn) btn.disabled = false;
+      } finally {
+        if (typeof window.hideScreenLoader === 'function') {
+          window.hideScreenLoader();
+        }
+      }
+    });
+  }
+}
+window.abrirModalTransferirAluno = abrirModalTransferirAluno;
 
 /* ==================== INSTRUTORES ==================== */
 function renderInstrutores() {
@@ -3799,6 +3993,7 @@ function renderContaCorrenteModal(cc) {
     <div class="panel-head" style="margin-bottom:8px">
       <h3 style="font-size:14px">Itens de conta corrente</h3>
       <div class="row-actions">
+        <button class="btn btn-ghost btn-sm" onclick="abrirModalTransferirAluno(${aluno.id})">Transferir Aluno</button>
         <button class="btn btn-ghost btn-sm" onclick="imprimirContaCorrente(${aluno.id})">Exportar PDF</button>
         <button class="btn btn-accent btn-sm" onclick="abrirItemContaForm(${aluno.id})">+ Novo Item</button>
       </div>
