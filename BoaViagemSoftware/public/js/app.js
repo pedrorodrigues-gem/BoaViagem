@@ -1344,12 +1344,15 @@ function renderAlunos() {
       a.examePsicotecnico?.aplicavel ? selosValidade(a.examePsicotecnico?.dataValidade, 'Exame psicotécnico') : '',
       selosValidade(a.processoIMT?.dataValidade, 'Processo IMT'), (a.cartasCategorias || []).map(c => selosValidade(c.dataValidade, `Carta ${c.categoria}`))
     ].filter(Boolean).join(' ');
+    const contagens = getAlunoContagens(a);
+    const aulasPraticasCount = contagens.aulasPraticas || 0;
+    const progressoPct = Math.min(100, (aulasPraticasCount / 28) * 100);
     return `
         <tr>
           <td class="cell-primary">#${a.numeroAluno ?? a.id}</td>
           <td>
             <div style="display:flex; align-items:center; gap:10px">
-              ${avatarHtml(a.nome, a.foto, 36)}
+              ${avatarHtml(a.nome, a.id, 36, !!a.foto)}
               <div>
                 <div class="cell-primary">${esc(a.nome)}</div>
                 <div class="cell-sub">${esc(a.email || '')} ${a.telefone ? '· ' + esc(a.telefone) : ''} ${a.nif ? '· NIF ' + esc(a.nif) : ''}</div>
@@ -1358,8 +1361,8 @@ function renderAlunos() {
           </td>
           <td>${esc(a.categoria || '—')}</td>
           <td style="min-width:140px">
-            <div class="cell-sub" style="margin-bottom:4px">${getAlunoContagens(a).aulasTeoricas} teóricas · ${getAlunoContagens(a).aulasPraticas} práticas</div>
-            <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, ((getAlunoContagens(a).aulasPraticas || 0) / 28) * 100)}%"></div></div>
+            <div class="cell-sub" style="margin-bottom:4px">${contagens.aulasTeoricas} teóricas · ${contagens.aulasPraticas} práticas</div>
+            <div class="progress-track"><div class="progress-fill" style="width:${progressoPct}%"></div></div>
           </td>
           <td><span class="${badgeClass(a.estado)}">${esc(a.estado || '—')}</span></td>
           <td>${tags || '<span class="muted" style="font-size:12px">Em dia</span>'}</td>

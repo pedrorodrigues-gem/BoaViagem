@@ -308,8 +308,82 @@
     return ESTADOS_CONCLUIDA_NORM.indexOf(normalizeText(estado)) !== -1;
   }
   var ESTADOS_CANCELADA_NORM = ESTADOS_CANCELADA.map(normalizeText);
+  var ESTADOS_CANCELADA_SET = new Set(ESTADOS_CANCELADA_NORM);
   function isEstadoCancelada(estado) {
-    return ESTADOS_CANCELADA_NORM.indexOf(normalizeText(estado)) !== -1;
+    return ESTADOS_CANCELADA_SET.has(normalizeText(estado));
+  }
+
+  var TIPO_TEORICA_NORM = normalizeText('Teórica');
+  var TIPO_PRATICA_NORM = normalizeText('Prática');
+  function isTipo(item, tipoAlvo) {
+    if (!item || !item.tipo) return false;
+    var tNorm = normalizeText(item.tipo);
+    if (tipoAlvo === 'Teórica') return tNorm === TIPO_TEORICA_NORM;
+    if (tipoAlvo === 'Prática') return tNorm === TIPO_PRATICA_NORM;
+    return tNorm === normalizeText(tipoAlvo);
+  }
+
+  // Cache O(1) para contagens de aulas por aluno (evita loops O(N*M) repetidos)
+  var _alunoContagensCache = null;
+  var _lastAulasRef = null;
+  var _lastTurmasRef = null;
+
+  function invalidarContagensAulas() {
+    _alunoContagensCache = null;
+    _lastAulasRef = null;
+    _lastTurmasRef = null;
+  }
+  window.invalidarContagensAulas = invalidarContagensAulas;
+
+  function obterMapaContagensAulas() {
+    var aulas = state.aulas || [];
+    var turmas = state.turmasTeoricas || [];
+    if (_alunoContagensCache && _lastAulasRef === aulas && _lastTurmasRef === turmas) {
+      return _alunoContagensCache;
+    }
+
+    var map = new Map();
+    for (var i = 0; i < aulas.length; i++) {
+      var a = aulas[i];
+      if (!a || !a.alunoId) continue;
+      if (a.estado && ESTADOS_CANCELADA_SET.has(normalizeText(a.estado))) continue;
+      var aId = Number(a.alunoId);
+      var c = map.get(aId);
+      if (!c) {
+        c = { aulasTeoricas: 0, aulasPraticas: 0 };
+        map.set(aId, c);
+      }
+      var tNorm = normalizeText(a.tipo);
+      if (tNorm === TIPO_TEORICA_NORM) {
+        c.aulasTeoricas++;
+      } else if (tNorm === TIPO_PRATICA_NORM) {
+        c.aulasPraticas++;
+      }
+    }
+
+    for (var k = 0; k < turmas.length; k++) {
+      var t = turmas[k];
+      if (!t) continue;
+      if (t.estado && ESTADOS_CANCELADA_SET.has(normalizeText(t.estado))) continue;
+      var inscritos = t.inscritos || [];
+      var presencas = t.presencas || {};
+      for (var j = 0; j < inscritos.length; j++) {
+        var tAlunoId = Number(inscritos[j]);
+        if (presencas[tAlunoId] === true) {
+          var tc = map.get(tAlunoId);
+          if (!tc) {
+            tc = { aulasTeoricas: 0, aulasPraticas: 0 };
+            map.set(tAlunoId, tc);
+          }
+          tc.aulasTeoricas++;
+        }
+      }
+    }
+
+    _alunoContagensCache = map;
+    _lastAulasRef = aulas;
+    _lastTurmasRef = turmas;
+    return map;
   }
 
   function getAlunoContagens(aluno) {
@@ -328,23 +402,8 @@
       };
     }
 
-    var alunoId = Number(aluno.id);
-
-    var aulasTeoricasIndividuais = state.aulas.filter(function (a) {
-      return a.alunoId === alunoId && isTipo(a, 'Teórica') && !isEstadoCancelada(a.estado);
-    }).length;
-
-    var aulasTeoricasTurmas = state.turmasTeoricas.filter(function (t) {
-      return (t.inscritos || []).includes(alunoId) && !isEstadoCancelada(t.estado) && (t.presencas || {})[alunoId] === true;
-    }).length;
-
-    var aulasTeoricas = aulasTeoricasIndividuais + aulasTeoricasTurmas;
-
-    var aulasPraticas = state.aulas.filter(function (a) {
-      return a.alunoId === alunoId && isTipo(a, 'Prática') && !isEstadoCancelada(a.estado);
-    }).length;
-
-    return { aulasTeoricas: aulasTeoricas, aulasPraticas: aulasPraticas };
+    var map = obterMapaContagensAulas();
+    return map.get(Number(aluno.id)) || { aulasTeoricas: 0, aulasPraticas: 0 };
   }
 
   function getAlunosAtivos() {
