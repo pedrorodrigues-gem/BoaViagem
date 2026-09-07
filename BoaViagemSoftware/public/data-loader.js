@@ -27,7 +27,7 @@
     dashboard: ['dashboard'],
     calendario: ['instrutores', 'veiculos', 'espacos', 'aulas', 'turmasTeoricas'],
     aulas: ['aulas', 'turmasTeoricas', 'alunos', 'instrutores', 'veiculos', 'espacos'],
-    alunos: ['espacos'],
+    alunos: ['alunos', 'espacos'],
     instrutores: ['instrutores'],
     veiculos: ['veiculos'],
     pagamentos: ['pagamentos', 'alunos'],
@@ -92,7 +92,6 @@
   }
 
   function isViewDataLoaded(view) {
-    if (view === 'alunos') return alunosAtivosLoaded;
     const deps = VIEW_DEPS[view] || [];
     return deps.every(d => !!loaded[d]);
   }
@@ -104,6 +103,12 @@
   async function ensureAlunosAtivos(opts) {
     opts = opts || {};
     if (alunosAtivosLoaded && !opts.force) return state.alunosAtivos;
+    if (loaded.alunos && !opts.force) {
+      state.alunosAtivos = (state.alunos || []).filter(a => a.estado === 'Ativo');
+      state.alunosAtivosTotal = state.alunosAtivos.length;
+      alunosAtivosLoaded = true;
+      return state.alunosAtivos;
+    }
     if (alunosAtivosPromise && !opts.force) return alunosAtivosPromise;
 
     alunosAtivosPromise = api('GET', '/api/alunos/lista?estado=Ativo&limit=200')
@@ -223,10 +228,23 @@
     state.usuarioAtual = auth.user;
 
     setupHoverPrefetch();
-    ensureAlunosAtivos().catch(() => {});
-    ensureCollection('escola');
-    ensureCollection('dashboard');
-    if (auth.user?.role === 'instrutor') await ensureCollection('instrutores');
+
+    // Carregar todos os alunos automaticamente no arranque inicial (loadEssential)
+    const essenciais = [
+      ensureCollection('alunos'),
+      ensureCollection('escola'),
+      ensureCollection('dashboard')
+    ];
+    if (auth.user?.role === 'instrutor') essenciais.push(ensureCollection('instrutores'));
+
+    await Promise.all(essenciais);
+
+    // Derivar lista de alunos ativos e índices imediatamente em memória
+    state.alunosAtivos = (state.alunos || []).filter(a => a.estado === 'Ativo');
+    state.alunosAtivosTotal = state.alunosAtivos.length;
+    alunosAtivosLoaded = true;
+    if (window.rebuildIndexes) window.rebuildIndexes();
+
     return auth;
   }
 
