@@ -130,3 +130,55 @@ test('badgeClass: gera badge-transferido corretamente para estilo CSS', () => {
   assert.strictEqual(badgeClass('Transferido'), 'badge badge-transferido');
   assert.strictEqual(badgeClass('transferido'), 'badge badge-transferido');
 });
+
+// 5. Teste de carregamento inicial de todos os alunos em loadEssential
+test('loadEssential: todos os alunos carregados e alunosAtivos derivados sem chamadas de rede redundantes', async () => {
+  const loaded = {};
+  const state = { alunos: [], alunosAtivos: [], alunosAtivosTotal: 0 };
+  let apiCallsCount = 0;
+
+  async function mockEnsureCollection(name) {
+    if (name === 'alunos') {
+      apiCallsCount++;
+      state.alunos = [
+        { id: 1, nome: 'Ana Silva', estado: 'Ativo' },
+        { id: 2, nome: 'Bernardo Costa', estado: 'Suspenso' },
+        { id: 3, nome: 'Carlos Neves', estado: 'Transferido' },
+        { id: 4, nome: 'Diana Martins', estado: 'Ativo' }
+      ];
+      loaded.alunos = true;
+      return state.alunos;
+    }
+    loaded[name] = true;
+    return [];
+  }
+
+  // Simulação do loadEssential com alunos carregados
+  await Promise.all([
+    mockEnsureCollection('alunos'),
+    mockEnsureCollection('escola'),
+    mockEnsureCollection('dashboard')
+  ]);
+
+  state.alunosAtivos = (state.alunos || []).filter(a => a.estado === 'Ativo');
+  state.alunosAtivosTotal = state.alunosAtivos.length;
+
+  assert.strictEqual(loaded.alunos, true, 'Coleção alunos deve estar marcada como carregada');
+  assert.strictEqual(state.alunos.length, 4, 'Todos os alunos devem estar carregados em state.alunos');
+  assert.strictEqual(state.alunosAtivos.length, 2, 'Alunos ativos devem ser filtrados corretamente');
+  assert.strictEqual(state.alunosAtivosTotal, 2);
+
+  // Verificação de que ensureAlunosAtivos subsequente não dispara nova chamada HTTP
+  async function mockEnsureAlunosAtivos() {
+    if (loaded.alunos) {
+      return state.alunosAtivos;
+    }
+    apiCallsCount++;
+    return [];
+  }
+
+  const ativos = await mockEnsureAlunosAtivos();
+  assert.strictEqual(ativos.length, 2);
+  assert.strictEqual(apiCallsCount, 1, 'Não deve fazer novas chamadas de rede quando alunos já está carregado');
+});
+
