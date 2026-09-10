@@ -110,6 +110,33 @@
       .trim();
   }
 
+  function getAlunoNumeroDocumento(aluno, ctxOrOptions) {
+    if (!aluno) return '';
+    var options = (ctxOrOptions && ctxOrOptions.options) ? ctxOrOptions.options : ctxOrOptions;
+    if (options && options.documentos && options.documentos[aluno.id]) {
+      var optDoc = String(options.documentos[aluno.id]).trim();
+      if (optDoc) return optDoc;
+    }
+    if (options && options.numeroDocumento && (!options.alunoId || options.alunoId === aluno.id)) {
+      var singleDoc = String(options.numeroDocumento).trim();
+      if (singleDoc) return singleDoc;
+    }
+    var doc = aluno.numeroDocumento ||
+              aluno.numero_documento ||
+              aluno.documentoNumero ||
+              aluno.numDocumento ||
+              aluno.num_documento ||
+              aluno.documento ||
+              aluno.cc ||
+              aluno.bi ||
+              aluno.biCc ||
+              aluno.numCC ||
+              aluno.numeroCC ||
+              aluno.identificacao ||
+              '';
+    return String(doc).trim();
+  }
+
   function getAlunoNumeroLA(aluno) {
     if (!aluno) return '';
     if (aluno.numeroLA) return String(aluno.numeroLA).trim();
@@ -274,13 +301,24 @@
         var tipoDocStr = (aluno.tipoDocumento || 'CC').trim().toUpperCase();
         setField(BASE + 'tipo[0]', tipoDocStr.charAt(0) || 'C');
 
-        var numDocRaw = (aluno.numeroDocumento || '').trim();
-        var docMatch = numDocRaw.match(/^([A-Za-z0-9]{5,10})\s*(.*)$/);
-        var docNum = docMatch ? docMatch[1] : numDocRaw;
-        var docDC = docMatch && docMatch[2] ? docMatch[2] : (aluno.digitoControlo || '');
+        var numDocRaw = getAlunoNumeroDocumento(aluno, ctx);
+        var cleanDoc = numDocRaw.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+        var docNum = numDocRaw;
+        var docDC = aluno.digitoControlo || '';
+
+        if (cleanDoc.length >= 11) {
+          // Formato CC Português completo (8 dígitos + 1 controlo + 2 letras + 1 controlo, ex: 12345678 9 ZZ4)
+          docNum = cleanDoc.slice(0, cleanDoc.length - 4);
+          docDC = cleanDoc.charAt(cleanDoc.length - 4);
+        } else if (cleanDoc.length === 9) {
+          docNum = cleanDoc.slice(0, 8);
+          docDC = cleanDoc.charAt(8);
+        } else if (cleanDoc.length > 0) {
+          docNum = cleanDoc;
+        }
 
         setField(BASE + 'numero[0]', docNum);
-        setField(BASE + 'DocDC[0]', docDC.charAt(0) || '');
+        setField(BASE + 'DocDC[0]', docDC ? String(docDC).charAt(0) : '');
         setField(BASE + 'validade[0]', ctx.fmtDate(aluno.validadeDocumento) || aluno.validadeDocumento || '');
         setField(BASE + 'emissorDI[0]', aluno.emissorDocumento || 'IRN');
 
@@ -310,12 +348,13 @@
 
         // --- Caixas de Caracteres na Secção 5 ---
         setField(BASE + 'tipoDoc[0]', tipoDocStr.charAt(0) || 'C');
-        var fullDocChars = numDocRaw.replace(/[\s-]/g, '').toUpperCase();
         for (var d = 0; d < 15; d++) {
-          setField(BASE + 'docId' + (d + 1) + '[0]', fullDocChars.charAt(d) || '');
+          setField(BASE + 'docId' + (d + 1) + '[0]', cleanDoc.charAt(d) || '');
         }
-        if (docDC) {
-          setField(BASE + 'DocumentDC[0]', docDC.replace(/\s+/g, '').charAt(0) || '');
+        if (cleanDoc.length >= 11) {
+          setField(BASE + 'DocumentDC[0]', cleanDoc.slice(-1));
+        } else if (docDC) {
+          setField(BASE + 'DocumentDC[0]', String(docDC).charAt(0));
         }
 
         // --- Secção 4: Documento Atual / Título detido ---
@@ -369,7 +408,7 @@
           var rowBase = BASE + linhaKey + '.';
 
           setField(rowBase + 'CampoTexto[0]', aluno ? (aluno.nome || '') : '');
-          setField(rowBase + 'CampoTexto[1]', aluno ? (aluno.numeroDocumento || '') : '');
+          setField(rowBase + 'CampoTexto[1]', aluno ? getAlunoNumeroDocumento(aluno, ctx) : '');
           setField(rowBase + 'CampoTexto[2]', aluno ? '0,00' : '');
         }
       }
@@ -406,7 +445,7 @@
           if (aluno) totalCandidatos++;
 
           setField(rowBase + 'CampoTexto[0]', aluno ? (aluno.nome || '') : '');
-          setField(rowBase + 'CampoTexto[1]', aluno ? (aluno.numeroDocumento || '') : '');
+          setField(rowBase + 'CampoTexto[1]', aluno ? getAlunoNumeroDocumento(aluno, ctx) : '');
           setField(rowBase + 'CampoTexto[2]', aluno ? (aluno.nif || '') : '');
           setField(rowBase + 'CampoTexto[3]', aluno ? getAlunoNumeroLA(aluno) : '');
           setField(rowBase + 'CampoTexto[4]', aluno ? TAXA_TEORICO : '');
@@ -464,7 +503,7 @@
           if (aluno) totalCandidatos++;
 
           setField(rowBase + 'CampoTexto[0]', aluno ? (aluno.nome || '') : '');
-          setField(rowBase + 'CampoTexto[1]', aluno ? (aluno.numeroDocumento || '') : '');
+          setField(rowBase + 'CampoTexto[1]', aluno ? getAlunoNumeroDocumento(aluno, ctx) : '');
           setField(rowBase + 'CampoTexto[2]', aluno ? (aluno.nif || '') : '');
           setField(rowBase + 'CampoTexto[3]', aluno ? getAlunoNumeroLA(aluno) : '');
           setField(rowBase + 'CampoTexto[4]', aluno ? TAXA_PRATICO : '');
@@ -584,8 +623,12 @@
               if (maxLen && strVal.length > maxLen) {
                 strVal = strVal.substring(0, maxLen);
               }
-              // Ajuste de tamanho de fonte para campos de matrícula ou LA se necessário
-              if (fieldName.includes('CampoTexto[3]') || fieldName.includes('CampoTexto[5]')) {
+              // Ajuste de tamanho de fonte para colunas estreitas de pautas (ex: CampoTexto[1] para BI/CC que tem 43.4pt em C2Pratico e 60.3pt em C2Teorico)
+              if (fieldName.includes('CampoTexto[1]')) {
+                if (typeof field.setFontSize === 'function') {
+                  field.setFontSize(strVal.length > 10 ? 6.5 : 7.5);
+                }
+              } else if (fieldName.includes('CampoTexto[3]') || fieldName.includes('CampoTexto[5]')) {
                 if (typeof field.setFontSize === 'function') field.setFontSize(8);
               }
               field.setText(strVal);
@@ -665,15 +708,21 @@
 
     function renderAlunoItem(aluno, inputType, checked) {
       var codigo = aluno.codigo != null ? aluno.codigo : aluno.id;
+      var docNum = getAlunoNumeroDocumento(aluno);
       var nomeAttr = esc(String(aluno.nome || '').toLowerCase());
       var codigoAttr = esc(String(codigo).toLowerCase());
+      var docAttr = esc(String(docNum).toLowerCase());
       var codigoLabel = aluno.codigo ? ' <span style="color:#888">(' + esc(aluno.codigo) + ')</span>' : '';
       var catBadge = aluno.categoria ? ' <span class="badge" style="font-size:11px; padding:2px 6px; background:#e2e8f0; color:#334155; border-radius:4px">' + esc(aluno.categoria) + '</span>' : '';
+      var docBadge = docNum
+        ? ' <span style="font-size:11px; padding:1px 6px; background:#f1f5f9; color:#475569; border-radius:4px; font-family:monospace;">CC: ' + esc(docNum) + '</span>'
+        : ' <span style="font-size:11px; padding:1px 6px; background:#fef2f2; color:#b91c1c; border-radius:4px; font-weight:600;">(Sem CC)</span>';
 
-      return '<label class="pdf-autofill-aluno-item" data-nome="' + nomeAttr + '" data-codigo="' + codigoAttr + '" ' +
+      return '<label class="pdf-autofill-aluno-item" data-id="' + aluno.id + '" data-nome="' + nomeAttr + '" data-codigo="' + codigoAttr + '" data-doc="' + docAttr + '" ' +
         'style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:13px; cursor:pointer; padding:4px 6px; border-radius:4px; transition:background 0.15s;">' +
         '<input type="' + inputType + '" name="alunoId" value="' + aluno.id + '" ' + (checked ? 'checked' : '') + '> ' +
         '<span style="flex:1; font-weight:500;">' + esc(aluno.nome || 'Sem nome') + codigoLabel + '</span>' +
+        docBadge +
         catBadge +
         '</label>';
     }
@@ -728,12 +777,33 @@
             <label style="font-weight:bold; font-size:13px">Selecionar Candidato(s)</label>
             <span id="pdfAutofillAlunoHint" style="font-size:12px; color:#64748b;"></span>
           </div>
-          <input type="text" id="pdfAutofillSearch" placeholder="Pesquisar por nome ou código..."
+          <input type="text" id="pdfAutofillSearch" placeholder="Pesquisar por nome, código ou CC..."
             style="width:100%; padding:8px 10px; margin-bottom:8px; border-radius:6px; border:1px solid #cbd5e1; box-sizing:border-box; font-size:13px">
-          <div id="pdfAutofillAlunoList" style="max-height: 220px; overflow-y: auto; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px; background: #fff;">
+          <div id="pdfAutofillAlunoList" style="max-height: 200px; overflow-y: auto; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px; background: #fff;">
             ${renderAlunosList(initialTemplateKey)}
           </div>
         </div>
+
+        <!-- Painel para CC do Candidato quando 1 aluno está selecionado -->
+        <div id="pdfAutofillSingleDocWrap" style="margin-top: 12px; padding: 10px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
+          <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#334155; margin-bottom:4px;">
+            N.º do Documento de Identificação (BI / CC) do Candidato
+          </label>
+          <input type="text" id="pdfAutofillSingleDoc" placeholder="Ex: 12345678 9 ZZ4"
+            style="width:100%; padding:7px 10px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; font-family:monospace; font-weight:600; box-sizing:border-box;">
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">
+            O número de identificação será inserido no documento oficial e guardado na ficha do aluno.
+          </div>
+        </div>
+
+        <!-- Painel de aviso e preenchimento de CCs em falta para múltiplos candidatos -->
+        <div id="pdfAutofillMissingDocsWrap" style="display:none; margin-top:12px; padding:10px 12px; background:#fff7ed; border:1px solid #fed7aa; border-radius:6px;">
+          <div style="font-size:12px; font-weight:700; color:#c2410c; margin-bottom:6px;">
+            ⚠️ Os seguintes candidatos selecionados não têm CC guardado. Insira o N.º de CC para constar no PDF:
+          </div>
+          <div id="pdfAutofillMissingDocsList" style="display:flex; flex-direction:column; gap:6px;"></div>
+        </div>
+
         <button type="submit" style="margin-top:16px; width:100%; padding:11px; background:#0066cc; color:#fff; border:none; border-radius:6px; font-weight:bold; font-size:14px; cursor:pointer">Gerar e Descarregar PDF</button>
       </form>
     `;
@@ -772,6 +842,60 @@
           extraOptionsEl.style.display = 'none';
         }
       }
+      updateDocInputs();
+    }
+
+    function updateDocInputs() {
+      if (!form) return;
+      var checkedBoxes = form.querySelectorAll('input[name="alunoId"]:checked');
+      var selIds = [];
+      checkedBoxes.forEach(function (b) { selIds.push(Number(b.value)); });
+
+      var singleWrap = document.getElementById('pdfAutofillSingleDocWrap');
+      var singleInput = document.getElementById('pdfAutofillSingleDoc');
+      var missingWrap = document.getElementById('pdfAutofillMissingDocsWrap');
+      var missingList = document.getElementById('pdfAutofillMissingDocsList');
+
+      if (selIds.length === 1) {
+        if (singleWrap) singleWrap.style.display = 'block';
+        if (missingWrap) missingWrap.style.display = 'none';
+        var singleAluno = typeof findAluno === 'function' ? findAluno(selIds[0]) : (alunos || []).find(function (a) { return a.id === selIds[0]; });
+        if (singleInput && singleAluno) {
+          singleInput.value = getAlunoNumeroDocumento(singleAluno);
+          if (!singleInput.value) {
+            singleInput.style.borderColor = '#f59e0b';
+            singleInput.placeholder = '⚠️ Digite aqui o CC do aluno (ex: 12345678 9 ZZ4)';
+          } else {
+            singleInput.style.borderColor = '#cbd5e1';
+            singleInput.placeholder = 'Ex: 12345678 9 ZZ4';
+          }
+        }
+      } else if (selIds.length > 1) {
+        if (singleWrap) singleWrap.style.display = 'none';
+        var missingAlunos = selIds.map(function (id) {
+          return typeof findAluno === 'function' ? findAluno(id) : (alunos || []).find(function (a) { return a.id === id; });
+        }).filter(function (a) {
+          return a && !getAlunoNumeroDocumento(a);
+        });
+
+        if (missingAlunos.length > 0) {
+          if (missingWrap) missingWrap.style.display = 'block';
+          if (missingList) {
+            missingList.innerHTML = missingAlunos.map(function (ma) {
+              return '<div style="display:flex; align-items:center; gap:8px;">' +
+                '<span style="font-size:12px; font-weight:600; min-width:140px; color:#1e293b;">' + esc(ma.nome || 'Aluno') + ':</span>' +
+                '<input type="text" class="pdf-missing-doc-input" data-alunoid="' + ma.id + '" placeholder="Ex: 12345678 9 ZZ4" ' +
+                'style="flex:1; padding:5px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:12px; font-family:monospace; box-sizing:border-box;">' +
+                '</div>';
+            }).join('');
+          }
+        } else {
+          if (missingWrap) missingWrap.style.display = 'none';
+        }
+      } else {
+        if (singleWrap) singleWrap.style.display = 'none';
+        if (missingWrap) missingWrap.style.display = 'none';
+      }
     }
 
     function applySearchFilter() {
@@ -781,7 +905,8 @@
       items.forEach(function (item) {
         var nome = item.getAttribute('data-nome') || '';
         var codigo = item.getAttribute('data-codigo') || '';
-        var visible = !term || nome.indexOf(term) !== -1 || codigo.indexOf(term) !== -1;
+        var doc = item.getAttribute('data-doc') || '';
+        var visible = !term || nome.indexOf(term) !== -1 || codigo.indexOf(term) !== -1 || doc.indexOf(term) !== -1;
         item.style.display = visible ? 'flex' : 'none';
       });
     }
@@ -794,11 +919,18 @@
       });
     }
 
+    if (listContainer) {
+      listContainer.addEventListener('change', function () {
+        updateDocInputs();
+      });
+    }
+
     if (searchInput) {
       searchInput.addEventListener('input', applySearchFilter);
     }
 
     updateTemplateOptions(initialTemplateKey);
+    updateDocInputs();
 
     if (form) {
       form.addEventListener('submit', function (e) {
@@ -821,8 +953,41 @@
         var options = {
           dataExame: form.querySelector('#pdfAutofillDataExame')?.value || null,
           horaExame: form.querySelector('#pdfAutofillHoraExame')?.value || null,
-          matricula: form.querySelector('#pdfAutofillMatricula')?.value || null
+          matricula: form.querySelector('#pdfAutofillMatricula')?.value || null,
+          documentos: {}
         };
+
+        if (selectedIds.length === 1) {
+          var sDoc = (form.querySelector('#pdfAutofillSingleDoc')?.value || '').trim();
+          if (sDoc) {
+            options.documentos[selectedIds[0]] = sDoc;
+            options.numeroDocumento = sDoc;
+          }
+        } else {
+          var missingInputs = form.querySelectorAll('.pdf-missing-doc-input');
+          missingInputs.forEach(function (inp) {
+            var aid = Number(inp.getAttribute('data-alunoid'));
+            var v = (inp.value || '').trim();
+            if (aid && v) {
+              options.documentos[aid] = v;
+            }
+          });
+        }
+
+        // Atualizar estado em memória e persistir na base de dados se foram introduzidos novos CCs
+        Object.keys(options.documentos).forEach(function (aidStr) {
+          var aid = Number(aidStr);
+          var novoCC = options.documentos[aid];
+          var a = typeof findAluno === 'function' ? findAluno(aid) : (alunos || []).find(function (x) { return x.id === aid; });
+          if (a && novoCC) {
+            a.numeroDocumento = novoCC;
+            if (window.api && typeof window.api === 'function') {
+              window.api('PUT', '/api/alunos/' + a.id, Object.assign({}, a, { numeroDocumento: novoCC })).catch(function (err) {
+                console.warn('Não foi possível gravar o CC na BD para o aluno ' + aid + ':', err);
+              });
+            }
+          }
+        });
 
         gerarDocumentoAutopreenchido(selectedIds, templateKey, options);
         if (typeof closeModal === 'function') closeModal();
