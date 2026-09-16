@@ -372,8 +372,46 @@ async function fetchCollectionFromSql(req, name) {
   const limit = Number(req.query?.limit || 0);
   const colunas = LISTAGEM_SEM_FOTO[name] ? `id, escola_id, ${LISTAGEM_SEM_FOTO[name]}` : '*';
   const offset = Number(req.query?.offset || 0);
-  let sqlText = `SELECT ${colunas} FROM ${table} WHERE escola_id = @escolaId ORDER BY id`;
+
+  const condicoes = ['escola_id = @escolaId'];
   const params = { escolaId: req.escolaId };
+
+  // Filtro opcional por ano (ex: ?ano=2026)
+  if (req.query?.ano && req.query.ano !== 'Todos' && req.query.ano !== 'all') {
+    const anoNum = Number(req.query.ano);
+    if (Number.isFinite(anoNum) && anoNum > 1900 && anoNum < 2100) {
+      if (name === 'contratos') {
+        condicoes.push('YEAR(data_criacao) = @filtroAno');
+        params.filtroAno = anoNum;
+      } else if (['aulas', 'turmasTeoricas', 'pagamentos', 'examesMarcacoes'].includes(name)) {
+        condicoes.push('YEAR(data) = @filtroAno');
+        params.filtroAno = anoNum;
+      }
+    }
+  }
+
+  // Filtro opcional por estado (ex: ?estado=Ativo)
+  if (req.query?.estado && req.query.estado !== 'Todos' && req.query.estado !== 'all') {
+    condicoes.push('estado = @filtroEstado');
+    params.filtroEstado = String(req.query.estado).trim();
+  }
+
+  // Filtro opcional por período (aulas: Futuras vs Historico)
+  if (req.query?.periodo) {
+    if (req.query.periodo === 'Futuras') {
+      condicoes.push('data >= CAST(GETDATE() AS DATE)');
+    } else if (req.query.periodo === 'Historico') {
+      condicoes.push('data < CAST(GETDATE() AS DATE)');
+    }
+  }
+
+  let orderClause = 'ORDER BY id';
+  if (name === 'pagamentos') orderClause = 'ORDER BY data DESC, id DESC';
+  else if (name === 'contratos') orderClause = 'ORDER BY data_criacao DESC, id DESC';
+  else if (name === 'aulas') orderClause = 'ORDER BY data, hora, id';
+  else if (name === 'turmasTeoricas') orderClause = 'ORDER BY data, hora_inicio, id';
+
+  let sqlText = `SELECT ${colunas} FROM ${table} WHERE ${condicoes.join(' AND ')} ${orderClause}`;
   if (Number.isFinite(limit) && limit > 0) {
     // Use OFFSET/FETCH for SQL Server pagination
     sqlText += ` OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`;
@@ -490,7 +528,7 @@ function collectionRoutes(name, { validate, onCreate, onUpdate, onDelete, onAfte
       const payload = { ...(req.body || {}) };
       delete payload.id;
       if (validate) {
-        const err = validate(payload, tenant, req);
+        const err = await validate(payload, tenant, req);
         if (err) return badRequest(res, err);
       }
       const item = { ...payload };
@@ -528,7 +566,7 @@ function collectionRoutes(name, { validate, onCreate, onUpdate, onDelete, onAfte
         if (!anterior) return notFound(res);
       }
       if (validate) {
-        const err = validate(req.body || {}, tenant, req);
+        const err = await validate(req.body || {}, tenant, req);
         if (err) return badRequest(res, err);
       }
       const atualizado = { ...anterior, ...req.body, id: Number(req.params.id) };
@@ -1200,6 +1238,22 @@ app.use('/api/turmasTeoricas', collectionRoutes('turmasTeoricas', {
 app.use('/api/requisitos', collectionRoutes('requisitos', {
   validate: (p) => (!p.categoria ? 'A categoria é obrigatória' : null)
 }));
+app.get('/api/pagamentos/anos', async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT DISTINCT YEAR(data) AS ano FROM pagamentos WHERE escola_id = @e AND data IS NOT NULL ORDER BY ano DESC`,
+      { e: req.escolaId }
+    );
+    const anos = (r.recordset || []).map(x => x.ano).filter(Boolean);
+    const anoAtual = new Date().getFullYear();
+    if (!anos.includes(anoAtual)) anos.unshift(anoAtual);
+    ok(res, anos);
+  } catch (err) {
+    const anoAtual = new Date().getFullYear();
+    ok(res, [anoAtual, anoAtual - 1, anoAtual - 2]);
+  }
+});
+
 app.use('/api/pagamentos', collectionRoutes('pagamentos', {
   validate: (p) => (!p.valor ? 'O valor do pagamento é obrigatório' : null),
   onCreate: async (item, tenant, req) => {
@@ -1546,10 +1600,30 @@ function calcularValoresContrato(item, tenant) {
   return { itensCarta, usaParcelasPersonalizadas, parcelasPersonalizadas: item.parcelasPersonalizadas || [], planoPagamento: item.planoPagamento, numeroPrestacoes: item.numeroPrestacoes, categoria };
 }
 
+app.get('/api/contratos/anos', async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT DISTINCT YEAR(data_criacao) AS ano FROM contratos WHERE escola_id = @e AND data_criacao IS NOT NULL ORDER BY ano DESC`,
+      { e: req.escolaId }
+    );
+    const anos = (r.recordset || []).map(x => x.ano).filter(Boolean);
+    const anoAtual = new Date().getFullYear();
+    if (!anos.includes(anoAtual)) anos.unshift(anoAtual);
+    ok(res, anos);
+  } catch (err) {
+    const anoAtual = new Date().getFullYear();
+    ok(res, [anoAtual, anoAtual - 1, anoAtual - 2]);
+  }
+});
+
 app.use('/api/contratos', collectionRoutes('contratos', {
-  validate: (p, tenant) => {
+  validate: async (p, tenant, req) => {
     if (!p.alunoId) return 'O aluno é obrigatório';
-    const aluno = tenant.alunos.find(a => a.id === Number(p.alunoId));
+    let aluno = (tenant.alunos || []).find(a => a.id === Number(p.alunoId));
+    if (!aluno) {
+      const ar = await query('SELECT * FROM alunos WHERE id = @id AND escola_id = @e', { id: Number(p.alunoId), e: req.escolaId });
+      if (ar.recordset[0]) aluno = dbRowToJs(ar.recordset[0]);
+    }
     if (!aluno) return 'Aluno inválido';
     const categoria = String(p.categoria || aluno.categoria || '').trim();
     if (!categoria) return 'A categoria do contrato é obrigatória (define a categoria pretendida na ficha do aluno ou escolhe uma no contrato)';
@@ -1620,8 +1694,26 @@ app.use('/api/contratos', collectionRoutes('contratos', {
 app.get('/api/examesMarcacoes', async (req, res) => {
   try {
     const e = req.escolaId;
-    const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 200));
+    const limit = Math.max(1, Math.min(1000, Number(req.query.limit) || 200));
     const offset = Math.max(0, Number(req.query.offset) || 0);
+
+    const condicoes = ['m.escola_id = @e'];
+    const params = { e, offset, limit };
+
+    if (req.query.estado && req.query.estado !== 'Todos' && req.query.estado !== 'all') {
+      condicoes.push('m.estado = @estado');
+      params.estado = String(req.query.estado).trim();
+    }
+    if (req.query.filtro === 'Ativos' || req.query.filtro === 'Marcados') {
+      condicoes.push("(m.estado = 'Marcado' OR m.data >= CAST(GETDATE() AS DATE))");
+    }
+    if (req.query.ano && req.query.ano !== 'Todos' && req.query.ano !== 'all') {
+      const anoNum = Number(req.query.ano);
+      if (Number.isFinite(anoNum) && anoNum > 1900 && anoNum < 2100) {
+        condicoes.push('YEAR(m.data) = @filtroAno');
+        params.filtroAno = anoNum;
+      }
+    }
 
     const result = await query(`
       SELECT m.id, m.escola_id AS escolaId, m.aluno_id AS alunoId, m.tipo, m.data, m.hora,
@@ -1629,10 +1721,10 @@ app.get('/api/examesMarcacoes', async (req, res) => {
              a.nome AS alunoNome
       FROM exames_marcacoes m
       LEFT JOIN alunos a ON a.id = m.aluno_id
-      WHERE m.escola_id = @e
+      WHERE ${condicoes.join(' AND ')}
       ORDER BY m.data DESC, m.id DESC
       OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
-    `, { e, offset, limit });
+    `, params);
 
     ok(res, result.recordset || []);
   } catch (err) {
