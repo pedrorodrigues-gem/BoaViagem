@@ -25,7 +25,18 @@
     espacos: [],
     relatorios: { dadosAtuais: null, mapaAtual: [], esperaAtual: [] },
     estatisticas: null,
-    revalidacoes: []
+    revalidacoes: [],
+    anoAtual: new Date().getFullYear(),
+    calendarioAnosCarregados: new Set([new Date().getFullYear()]),
+    filtroAnoPagamentos: new Date().getFullYear(),
+    pagamentosPorAno: {},
+    pagamentosAnosDisponiveis: [],
+    filtroAnoContratos: new Date().getFullYear(),
+    contratosPorAno: {},
+    contratosAnosDisponiveis: [],
+    alunosFiltroCarregado: 'Ativo',
+    aulasHistoricoCarregado: false,
+    examesCarregadosStatus: 'Marcados'
   };
 
   var CATEGORIAS_CONTA = ['Diversos', 'Exames teóricos', 'Exames práticos', 'Lições práticas', 'Lições teóricas'];
@@ -211,11 +222,23 @@
     });
   }
 
+  var _alunosExtraCache = new Map();
+  function cacheAluno(a) {
+    if (a && a.id != null) {
+      var numId = Number(a.id);
+      _alunosExtraCache.set(numId, a);
+      if (!_alunosMap.has(numId)) _alunosMap.set(numId, a);
+    }
+  }
+
   function findAluno(id) {
     if (id == null) return undefined;
     var numId = Number(id);
     if (_alunosMap.has(numId)) return _alunosMap.get(numId);
-    return state.alunos.find(function (a) { return a.id === id || a.id === numId; });
+    var found = state.alunos.find(function (a) { return a.id === id || a.id === numId; });
+    if (found) return found;
+    if (_alunosExtraCache.has(numId)) return _alunosExtraCache.get(numId);
+    return undefined;
   }
 
   function findInstrutor(id) {
@@ -698,6 +721,7 @@
   window.fetchCollectionAll = fetchCollectionAll;
   window.loadAll = loadAll;
   window.findAluno = findAluno;
+  window.cacheAluno = cacheAluno;
   window.findInstrutor = findInstrutor;
   window.findVeiculo = findVeiculo;
   window.getEspacoNomeById = getEspacoNomeById;

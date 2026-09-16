@@ -311,6 +311,14 @@ async function renderCalendario() {
   const el = document.getElementById('view-calendario');
   state.calendario.modo = state.calendario.modo || 'mes';
   state.calendario.diaRef = state.calendario.diaRef || new Date().toISOString().slice(0, 10);
+  state.calendario.mesRef = state.calendario.mesRef || new Date().toISOString().slice(0, 7);
+
+  const anoRef = Number((state.calendario.modo === 'dia' ? state.calendario.diaRef : state.calendario.mesRef).split('-')[0]);
+  if (typeof ensureCalendarioAno === 'function' && state.calendarioAnosCarregados && !state.calendarioAnosCarregados.has(anoRef)) {
+    el.innerHTML = '<div class="panel" style="margin-top:20px; padding:30px; text-align:center"><p class="muted">A carregar dados de ' + anoRef + '…</p></div>';
+    ensureCalendarioAno(anoRef).then(() => renderCalendario());
+    return;
+  }
 
   const seletorInstrutorHtml = state.usuarioAtual?.role === 'instrutor' ? `
     <select onchange="(function(v){ state.calendario.instrutorId = Number(v); renderCalendario(); })(this.value)" style="font-size:13px; padding:4px 8px; border-radius:6px; border:1px solid var(--border)">
@@ -470,7 +478,12 @@ function mudarDiaCalendario(delta) {
   const d = new Date(`${state.calendario.diaRef}T00:00:00`);
   d.setDate(d.getDate() + delta);
   state.calendario.diaRef = d.toISOString().slice(0, 10);
-  renderCalendario();
+  const ano = d.getFullYear();
+  if (typeof ensureCalendarioAno === 'function' && state.calendarioAnosCarregados && !state.calendarioAnosCarregados.has(ano)) {
+    ensureCalendarioAno(ano).then(() => renderCalendario());
+  } else {
+    renderCalendario();
+  }
 }
 
 function calcularHoraFimStr(hora, duracaoMin) {
@@ -523,8 +536,13 @@ function exportarCalendarioDiaPDF() {
 function mudarMesCalendario(delta) {
   const [ano, mes] = state.calendario.mesRef.split('-').map(Number);
   const d = new Date(ano, mes - 1 + delta, 1);
-  state.calendario.mesRef = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  renderCalendario();
+  const novoAno = d.getFullYear();
+  state.calendario.mesRef = `${novoAno}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  if (typeof ensureCalendarioAno === 'function' && state.calendarioAnosCarregados && !state.calendarioAnosCarregados.has(novoAno)) {
+    ensureCalendarioAno(novoAno).then(() => renderCalendario());
+  } else {
+    renderCalendario();
+  }
 }
 
 /* ---------- Exportar calendário: PDF (impressão) e Google Calendar (.ics) ---------- */
@@ -587,8 +605,29 @@ function renderExamesMarcacoes() {
   else renderExamesMarcacoesTab();
 }
 
+function mudarFiltroExames(f) {
+  state.filter.exames = f;
+  if (f !== 'Marcados' && state.examesCarregadosStatus !== 'Todos') {
+    if (typeof ensureExamesTodos === 'function') {
+      ensureExamesTodos().then(() => renderExamesMarcacoesTab());
+      return;
+    }
+  }
+  renderExamesMarcacoesTab();
+}
+
 function renderExamesMarcacoesTab() {
   const body = document.getElementById('examesTabBody');
+  state.filter.exames = state.filter.exames || 'Marcados';
+  const exFiltro = state.filter.exames;
+  let exList = state.examesMarcacoes || [];
+  if (exFiltro === 'Marcados') {
+    const hojeISO = new Date().toISOString().slice(0, 10);
+    exList = exList.filter(m => m.estado === 'Marcado' || (m.data && m.data >= hojeISO));
+  } else if (exFiltro !== 'Todos') {
+    exList = exList.filter(m => m.estado === exFiltro);
+  }
+
   body.innerHTML = `
     <div class="panel">
       <div class="panel-head"><h3>Marcações de exames</h3></div>
@@ -615,12 +654,20 @@ function renderExamesMarcacoesTab() {
       <p class="muted" style="margin-top:10px">Os exames práticos só podem ser marcados quando a conta corrente do aluno estiver liquidada. O resultado alimenta automaticamente a aba de Estatísticas.</p>
     </div>
     <div class="panel" style="margin-top:16px">
-      <div class="panel-head"><h3>Registos</h3></div>
+      <div class="panel-head" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px">
+        <h3>Registos</h3>
+        <div class="filter-row">
+          <button class="chip ${exFiltro === 'Marcados' ? 'active' : ''}" onclick="mudarFiltroExames('Marcados')">Marcados / Ativos</button>
+          <button class="chip ${exFiltro === 'Todos' ? 'active' : ''}" onclick="mudarFiltroExames('Todos')">Todos</button>
+          <button class="chip ${exFiltro === 'Realizado' ? 'active' : ''}" onclick="mudarFiltroExames('Realizado')">Realizados</button>
+          <button class="chip ${exFiltro === 'Cancelado' ? 'active' : ''}" onclick="mudarFiltroExames('Cancelado')">Cancelados</button>
+        </div>
+      </div>
       <div class="table-wrap">
-        ${state.examesMarcacoes.length ? `<table>
+        ${exList.length ? `<table>
           <thead><tr><th>Aluno</th><th>Tipo</th><th>Data</th><th>Hora</th><th>Hora fim</th><th>Local</th><th>Estado</th><th>Resultado</th><th>Observações</th><th></th></tr></thead>
           <tbody>
-            ${state.examesMarcacoes.map(m => `
+            ${exList.map(m => `
               <tr>
                 <td>${esc(m.alunoNome || getAlunoNomePorId(m.alunoId) || '—')}</td>
                 <td>${esc(m.tipo || '—')}</td>
@@ -641,7 +688,7 @@ function renderExamesMarcacoesTab() {
               </tr>
             `).join('')}
           </tbody>
-        </table>` : emptyState('Sem marcações', 'Ainda não há marcas de exames registadas.')}
+        </table>` : emptyState('Sem marcações', 'Não há exames registados para este filtro.')}
       </div>
     </div>
   `;
@@ -1302,23 +1349,22 @@ function renderAlunos() {
   const filtro = state.filter.alunos;
   const estados = ['Ativo', 'Todos', 'Concluído', 'Suspenso', 'Transferido'];
 
-  // Base de dados a mostrar: se o filtro é "Ativo" e a coleção completa
-  // ainda não chegou, usa a lista rápida (state.alunosAtivos) — assim o
-  // ecrã nunca fica vazio à espera da coleção inteira.
-  const baseAtivos = (typeof isLoaded === 'function' && isLoaded('alunos'))
-    ? state.alunos.filter(a => a.estado === 'Ativo')
-    : (state.alunosAtivos || []);
+  // Base de dados a mostrar: por omissão são os alunos ativos.
+  // Apenas se o utilizador selecionar 'Todos' ou outro estado é que se carrega a totalidade.
+  const baseAtivos = (state.alunosAtivos && state.alunosAtivos.length)
+    ? state.alunosAtivos
+    : (state.alunos || []).filter(a => a.estado === 'Ativo');
 
   let list;
   if (filtro === 'Ativo') {
     list = baseAtivos;
-  } else if (typeof isLoaded === 'function' && isLoaded('alunos')) {
+  } else if (state.alunosFiltroCarregado === 'Todos') {
     list = filtro === 'Todos' ? state.alunos : state.alunos.filter(a => a.estado === filtro);
   } else {
-    // Ainda não temos a coleção completa: mostra o que já existe (ativos)
-    // e dispara o carregamento completo em segundo plano.
     list = baseAtivos;
-    if (typeof ensureCollection === 'function') ensureCollection('alunos');
+    if (typeof ensureAlunosTodos === 'function') {
+      ensureAlunosTodos().then(() => renderAlunos());
+    }
   }
 
   const qLower = q.toLowerCase();
@@ -1331,8 +1377,8 @@ function renderAlunos() {
     );
   }
 
-  const avisoCarregamento = (!isLoaded('alunos') && filtro !== 'Ativo')
-    ? `<div class="inline-alert inline-alert-info" style="margin-bottom:12px">A carregar todos os alunos em segundo plano — os resultados podem estar incompletos por instantes.</div>`
+  const avisoCarregamento = (state.alunosFiltroCarregado !== 'Todos' && filtro !== 'Ativo')
+    ? `<div class="inline-alert inline-alert-info" style="margin-bottom:12px">A carregar todos os alunos da base de dados…</div>`
     : '';
 
   const tableHtml = list.length ? `<table>
@@ -1420,8 +1466,10 @@ function renderAlunos() {
 function mudarFiltroAlunos(estado) {
   state.filter.alunos = estado;
   renderAlunos();
-  if (estado !== 'Ativo' && typeof isLoaded === 'function' && !isLoaded('alunos')) {
-    ensureCollection('alunos').then(() => renderAlunos());
+  if (estado !== 'Ativo' && state.alunosFiltroCarregado !== 'Todos') {
+    if (typeof ensureAlunosTodos === 'function') {
+      ensureAlunosTodos().then(() => renderAlunos());
+    }
   }
 }
 
@@ -3628,7 +3676,7 @@ function renderAulasPraticasTab() {
       <input class="search-input" placeholder="Pesquisar por nome do aluno..." value="${esc(state.search.aulas)}" oninput="updateSearchAndRerender(this, 'aulas', renderAulas)">
       <div class="filter-row">
         <button class="chip ${periodo === 'Futuras' ? 'active' : ''}" onclick="state.filter.aulasPeriodo='Futuras'; renderAulas();">Hoje e futuras</button>
-        <button class="chip ${periodo === 'Historico' ? 'active' : ''}" onclick="state.filter.aulasPeriodo='Historico'; renderAulas();">Histórico</button>
+        <button class="chip ${periodo === 'Historico' ? 'active' : ''}" onclick="state.filter.aulasPeriodo='Historico'; if (!state.aulasHistoricoCarregado && typeof ensureAulasHistorico === 'function') { ensureAulasHistorico().then(() => renderAulas()); } renderAulas();">Histórico</button>
       </div>
       <select onchange="state.filter.aulas=this.value; renderAulas();" style="font-size:13px; padding:4px 8px; border-radius:6px; border:1px solid var(--border)">
         ${estados.map(e => `<option value="${e}" ${filtro === e ? 'selected' : ''}>${e}</option>`).join('')}
@@ -4347,14 +4395,42 @@ function abrirPagamentoContaForm(alunoId) {
   });
 }
 
+async function mudarAnoPagamentos(ano) {
+  if (ano !== 'Todos') ano = Number(ano);
+  state.filtroAnoPagamentos = ano;
+  if (typeof ensurePagamentosAno === 'function') {
+    await ensurePagamentosAno(ano);
+  }
+  renderPagamentos();
+}
+
 /* ==================== PAGAMENTOS + FATURAÇÃO PRIMAVERA ==================== */
 function renderPagamentos() {
   const el = document.getElementById('view-pagamentos');
   const q = state.search.pagamentos.toLowerCase();
-  let list = [...state.pagamentos].sort((a, b) => (b.data || '').localeCompare(a.data || ''));
+  state.filtroAnoPagamentos = state.filtroAnoPagamentos !== undefined ? state.filtroAnoPagamentos : state.anoAtual;
+
+  if (!state.pagamentosAnosDisponiveis || !state.pagamentosAnosDisponiveis.length) {
+    api('GET', '/api/pagamentos/anos').then(anos => {
+      state.pagamentosAnosDisponiveis = anos;
+      const sel = document.getElementById('filtroAnoPagamentosSelect');
+      if (sel) {
+        sel.innerHTML = anos.map(y => `<option value="${y}" ${state.filtroAnoPagamentos == y ? 'selected' : ''}>${y}</option>`).join('') +
+          `<option value="Todos" ${state.filtroAnoPagamentos === 'Todos' ? 'selected' : ''}>Todos os anos</option>`;
+      }
+    }).catch(() => {});
+  }
+
+  let list = [...state.pagamentos];
+  if (state.filtroAnoPagamentos && state.filtroAnoPagamentos !== 'Todos') {
+    const anoStr = String(state.filtroAnoPagamentos);
+    list = list.filter(p => (p.data || '').startsWith(anoStr));
+  }
+  list.sort((a, b) => (b.data || '').localeCompare(a.data || ''));
   if (q) list = list.filter(p => { const a = findAluno(p.alunoId); return a && a.nome.toLowerCase().includes(q); });
 
   const primaveraAtivo = !!state.escola?.primavera?.ativo;
+  const anosDisponiveis = state.pagamentosAnosDisponiveis?.length ? state.pagamentosAnosDisponiveis : [state.anoAtual];
 
   el.innerHTML = `
     ${!primaveraAtivo ? `
@@ -4364,7 +4440,14 @@ function renderPagamentos() {
     ` : ''}
     <div class="toolbar">
       <input class="search-input" placeholder="Pesquisar por nome do aluno..." value="${esc(state.search.pagamentos)}" oninput="updateSearchAndRerender(this, 'pagamentos', renderPagamentos)">
-      <div style="display:flex; gap:8px">
+      <div style="display:flex; align-items:center; gap:6px">
+        <label style="font-size:13px; font-weight:600">Ano:</label>
+        <select id="filtroAnoPagamentosSelect" onchange="mudarAnoPagamentos(this.value)" style="font-size:13px; padding:4px 8px; border-radius:6px; border:1px solid var(--border)">
+          ${anosDisponiveis.map(y => `<option value="${y}" ${state.filtroAnoPagamentos == y ? 'selected' : ''}>${y}</option>`).join('')}
+          <option value="Todos" ${state.filtroAnoPagamentos === 'Todos' ? 'selected' : ''}>Todos os anos</option>
+        </select>
+      </div>
+      <div style="display:flex; gap:8px; margin-left:auto">
         <button class="btn btn-ghost btn-sm" onclick="abrirModalFolhaCaixa()"><span class="icon">🖨️</span> Imprimir Folha de Caixa</button>
         <button class="btn btn-accent btn-sm" onclick="openPagamentoForm()">+ Registar Pagamento</button>
       </div>
@@ -5689,13 +5772,42 @@ function imprimirMapaGeral() {
 /* ==================== CONTRATOS ==================== */
 const PLANOS_PAGAMENTO = ['Pagamento único', 'Mensalidades', 'Personalizado'];
 
+async function mudarAnoContratos(ano) {
+  if (ano !== 'Todos') ano = Number(ano);
+  state.filtroAnoContratos = ano;
+  if (typeof ensureContratosAno === 'function') {
+    await ensureContratosAno(ano);
+  }
+  renderContratos();
+}
+
 function renderContratos() {
   const el = document.getElementById('view-contratos');
   const q = state.search.contratos.toLowerCase();
-  const list = state.contratos.filter(c => {
+  state.filtroAnoContratos = state.filtroAnoContratos !== undefined ? state.filtroAnoContratos : state.anoAtual;
+
+  if (!state.contratosAnosDisponiveis || !state.contratosAnosDisponiveis.length) {
+    api('GET', '/api/contratos/anos').then(anos => {
+      state.contratosAnosDisponiveis = anos;
+      const sel = document.getElementById('filtroAnoContratosSelect');
+      if (sel) {
+        sel.innerHTML = anos.map(y => `<option value="${y}" ${state.filtroAnoContratos == y ? 'selected' : ''}>${y}</option>`).join('') +
+          `<option value="Todos" ${state.filtroAnoContratos === 'Todos' ? 'selected' : ''}>Todos os anos</option>`;
+      }
+    }).catch(() => {});
+  }
+
+  let list = state.contratos || [];
+  if (state.filtroAnoContratos && state.filtroAnoContratos !== 'Todos') {
+    const anoStr = String(state.filtroAnoContratos);
+    list = list.filter(c => (c.dataCriacao || '').startsWith(anoStr));
+  }
+  list = list.filter(c => {
     const aluno = findAluno(c.alunoId);
     return !q || (aluno && aluno.nome.toLowerCase().includes(q));
   }).sort((a, b) => (b.dataCriacao || '').localeCompare(a.dataCriacao || ''));
+
+  const anosDisponiveis = state.contratosAnosDisponiveis?.length ? state.contratosAnosDisponiveis : [state.anoAtual];
 
   el.innerHTML = `
     <div class="panel" style="margin-bottom:20px">
@@ -5715,6 +5827,13 @@ function renderContratos() {
 
     <div class="toolbar">
       <input class="search-input" placeholder="Pesquisar contrato por nome do aluno..." value="${esc(state.search.contratos)}" oninput="updateSearchAndRerender(this, 'contratos', renderContratos)">
+      <div style="display:flex; align-items:center; gap:6px">
+        <label style="font-size:13px; font-weight:600">Ano:</label>
+        <select id="filtroAnoContratosSelect" onchange="mudarAnoContratos(this.value)" style="font-size:13px; padding:4px 8px; border-radius:6px; border:1px solid var(--border)">
+          ${anosDisponiveis.map(y => `<option value="${y}" ${state.filtroAnoContratos == y ? 'selected' : ''}>${y}</option>`).join('')}
+          <option value="Todos" ${state.filtroAnoContratos === 'Todos' ? 'selected' : ''}>Todos os anos</option>
+        </select>
+      </div>
     </div>
     <div class="table-wrap">
       ${list.length ? `<table>
