@@ -225,48 +225,89 @@ function clearAuthCookie(res) {
   res.clearCookie(COOKIE_NAME);
 }
 
+/* Resolve a sessão a partir do cookie sem forçar rejeição HTTP 401 */
+async function resolveSession(req) {
+  const raw = req.signedCookies ? req.signedCookies[COOKIE_NAME] : null;
+  if (!raw) return { authenticated: false };
+
+  let sessao;
+  try { sessao = JSON.parse(raw); } catch { sessao = null; }
+
+  const escolaId = parseInt(sessao?.escolaId, 10);
+  const userId = parseInt(sessao?.userId, 10);
+
+  if (!sessao || isNaN(escolaId) || isNaN(userId)) {
+    return { authenticated: false, shouldClearCookie: true };
+  }
+
+  try {
+    const escolaResult = await query('SELECT * FROM escolas WHERE id = @id', { id: escolaId });
+    const escolaRow = escolaResult?.recordset?.[0];
+    if (!escolaRow) {
+      return { authenticated: false, shouldClearCookie: true, error: 'Escola não encontrada.' };
+    }
+
+    const userResult = await query(
+      `SELECT id, escola_id AS escolaId, nome, username, role, instrutor_id AS instrutorId
+       FROM users WHERE id = @id AND escola_id = @escolaId`,
+      { id: userId, escolaId: escolaId }
+    );
+    const userRow = userResult?.recordset?.[0];
+    if (!userRow) {
+      return { authenticated: false, shouldClearCookie: true, error: 'Utilizador não encontrado.' };
+    }
+
+    const tenant = await loadTenantForEscola(escolaRow.id);
+    return {
+      authenticated: true,
+      escolaId: escolaRow.id,
+      escola: escolaFull(escolaRow),
+      user: userRow,
+      tenant
+    };
+  } catch (dbErr) {
+    console.error('DB auth check failed:', dbErr.message || dbErr);
+    return { authenticated: false, dbError: dbErr };
+  }
+}
+
 /* Middleware: valida o cookie de sessão, carrega escola + utilizador
-   da BD e anexa-os ao request. */
+   da BD e anexa-os ao request. Rejeita com 401 se inválido. */
 async function requireAuth(req, res, next) {
   try {
-    const raw = req.signedCookies ? req.signedCookies[COOKIE_NAME] : null;
-    if (!raw) return res.status(401).json({ success: false, error: 'Sessão inválida. Autentica-te novamente.' });
-
-    let sessao;
-    try { sessao = JSON.parse(raw); } catch { sessao = null; }
-
-    const escolaId = parseInt(sessao?.escolaId, 10);
-    const userId = parseInt(sessao?.userId, 10);
-
-    if (!sessao || isNaN(escolaId) || isNaN(userId)) {
-      clearAuthCookie(res);
-      return res.status(401).json({ success: false, error: 'Sessão inválida. Autentica-te novamente.' });
+    const result = await resolveSession(req);
+    if (result.dbError) {
+      return res.status(503).json({ success: false, error: `Base de dados indisponível: ${result.dbError.message || result.dbError}` });
     }
-
-    try {
-      const escolaResult = await query('SELECT * FROM escolas WHERE id = @id', { id: escolaId });
-      const escolaRow = escolaResult.recordset[0];
-      if (!escolaRow) { clearAuthCookie(res); return res.status(401).json({ success: false, error: 'Escola não encontrada.' }); }
-
-      const userResult = await query(
-        `SELECT id, escola_id AS escolaId, nome, username, role, instrutor_id AS instrutorId
-         FROM users WHERE id = @id AND escola_id = @escolaId`,
-        { id: userId, escolaId: escolaId }
-      );
-      const userRow = userResult.recordset[0];
-      if (!userRow) { clearAuthCookie(res); return res.status(401).json({ success: false, error: 'Utilizador não encontrado.' }); }
-
-      req.escolaId = escolaRow.id;
-      req.escola = escolaFull(escolaRow);
-      req.user = userRow;
-      req.tenant = await loadTenantForEscola(escolaRow.id);
-      return next();
-    } catch (dbErr) {
-      console.error('DB auth failed:', dbErr.message || dbErr);
-      return res.status(503).json({ success: false, error: `Base de dados indisponível: ${dbErr.message || dbErr}` });
+    if (!result.authenticated) {
+      if (result.shouldClearCookie) clearAuthCookie(res);
+      return res.status(401).json({ success: false, error: result.error || 'Sessão inválida. Autentica-te novamente.' });
     }
+    req.escolaId = result.escolaId;
+    req.escola = result.escola;
+    req.user = result.user;
+    req.tenant = result.tenant;
+    return next();
   } catch (ex) {
     res.status(500).json({ success: false, error: `Erro de autenticação: ${ex.message || ex}` });
+  }
+}
+
+/* Middleware: verifica se existe sessão válida sem forçar 401 se ausente */
+async function optionalAuth(req, res, next) {
+  try {
+    const result = await resolveSession(req);
+    if (result.authenticated) {
+      req.escolaId = result.escolaId;
+      req.escola = result.escola;
+      req.user = result.user;
+      req.tenant = result.tenant;
+    } else if (result.shouldClearCookie) {
+      clearAuthCookie(res);
+    }
+    return next();
+  } catch (ex) {
+    return next();
   }
 }
 
@@ -329,4 +370,14 @@ async function autenticar({ username, password }) {
   return { escola: escolaRow, user: userRow };
 }
 
-module.exports = { requireAuth, setAuthCookie, clearAuthCookie, registarEscola, autenticar, loadTenantForEscola, invalidateTenantCache };
+module.exports = {
+  requireAuth,
+  optionalAuth,
+  resolveSession,
+  setAuthCookie,
+  clearAuthCookie,
+  registarEscola,
+  autenticar,
+  loadTenantForEscola,
+  invalidateTenantCache
+};

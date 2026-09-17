@@ -33,7 +33,7 @@ const sql = require('mssql');
 const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
 const { query, escolaPublic, defaultPrimaveraConfig, nestEscolaPrimavera } = require('./db');
-const { requireAuth, setAuthCookie, clearAuthCookie, registarEscola, autenticar, invalidateTenantCache } = require('./auth');
+const { requireAuth, optionalAuth, setAuthCookie, clearAuthCookie, registarEscola, autenticar, invalidateTenantCache } = require('./auth');
 const invoicing = require('./invoicing');
 
 const app = express();
@@ -202,14 +202,31 @@ app.post('/api/auth/logout', (req, res) => {
   ok(res, true);
 });
 
+/* Verificação de sessão (não emite 401 na consola ao verificar na página de login) */
+app.get('/api/auth/me', optionalAuth, (req, res) => {
+  if (!req.user || !req.escola) {
+    return ok(res, {
+      authenticated: false,
+      escola: null,
+      user: null
+    });
+  }
+  ok(res, {
+    authenticated: true,
+    escola: escolaPublic(req.escola),
+    user: {
+      id: req.user.id,
+      nome: req.user.nome,
+      username: req.user.username,
+      role: req.user.role,
+      instrutorId: req.user.instrutorId || null
+    }
+  });
+});
+
 /* A partir daqui, todas as rotas /api/* exigem sessão válida
    e operam apenas sobre os dados da escola autenticada.        */
 app.use('/api', requireAuth);
-
-
-app.get('/api/auth/me', (req, res) => {
-  ok(res, { escola: escolaPublic(req.escola), user: { id: req.user.id, nome: req.user.nome, username: req.user.username, role: req.user.role, instrutorId: req.user.instrutorId || null } });
-});
 
 app.post('/api/auth/mudar-password', requireAuth, async (req, res) => {
   try {
