@@ -57,4 +57,8 @@ registoForm.addEventListener('submit', async (e) => {
 });
 
 // Se já existir sessão válida, avança logo para a app.
-api('GET', '/api/auth/me').then(() => { window.location.href = '/'; }).catch(() => {});
+api('GET', '/api/auth/me').then((auth) => {
+  if (auth && (auth.authenticated || auth.user)) {
+    window.location.href = '/';
+  }
+}).catch(() => {});

@@ -142,6 +142,10 @@
 
   async function loadAll() {
     var auth = await api('GET', '/api/auth/me');
+    if (!auth || !auth.user) {
+      window.location.href = '/login.html';
+      return;
+    }
     var config = null;
     if (auth.user && auth.user.role === 'super') {
       try { config = await api('GET', '/api/config'); } catch (err) { config = null; }
