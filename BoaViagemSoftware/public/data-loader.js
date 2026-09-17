@@ -31,7 +31,17 @@
         produtos: () => api('GET', '/api/produtos'),
         escola: () => api('GET', '/api/escola'),
         dashboard: () => api('GET', '/api/dashboard'),
-        config: () => api('GET', '/api/config'),
+        config: () => {
+            if (state.usuarioAtual && state.usuarioAtual.role !== 'super') {
+                return Promise.resolve(state.config || {});
+            }
+            return api('GET', '/api/config').catch((err) => {
+                if (err && (String(err.message || '').includes('permissão') || String(err.message || '').includes('403'))) {
+                    return state.config || {};
+                }
+                throw err;
+            });
+        },
         revalidacoes: () => api('GET', '/api/revalidacoes')
     };
 
@@ -43,7 +53,7 @@
         instrutores: ['instrutores'],
         veiculos: ['veiculos'],
         pagamentos: ['pagamentos', 'alunos'],
-        contratos: ['contratos', 'alunos', 'produtos', 'espacos', 'config'],
+        contratos: ['contratos', 'alunos', 'produtos', 'espacos'],
         config: ['espacos', 'produtos', 'config'],
         preinscricoes: ['preInscricoes', 'espacos'],
         exames: ['examesMarcacoes', 'alunos', 'instrutores', 'veiculos'],
@@ -84,6 +94,10 @@
             const falhas = [];
             results.forEach((r, i) => {
                 if (r.status === 'rejected') {
+                    if (names[i] === 'config' && state.usuarioAtual && state.usuarioAtual.role !== 'super') {
+                        state.config = state.config || {};
+                        return;
+                    }
                     falhas.push(names[i]);
                     if (state[names[i]] === undefined) state[names[i]] = [];
                 }
