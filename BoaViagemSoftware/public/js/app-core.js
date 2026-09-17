@@ -36,7 +36,19 @@
     contratosAnosDisponiveis: [],
     alunosFiltroCarregado: 'Ativo',
     aulasHistoricoCarregado: false,
-    examesCarregadosStatus: 'Marcados'
+    examesCarregadosStatus: 'Marcados',
+    pagination: {
+      alunos: { page: 1, pageSize: 20 },
+      aulasPraticas: { page: 1, pageSize: 20 },
+      turmasTeoricas: { page: 1, pageSize: 20 },
+      pagamentos: { page: 1, pageSize: 20 },
+      contratos: { page: 1, pageSize: 20 },
+      preinscricoes: { page: 1, pageSize: 20 },
+      exames: { page: 1, pageSize: 20 },
+      revalidacoes: { page: 1, pageSize: 20 },
+      veiculos: { page: 1, pageSize: 15 },
+      instrutores: { page: 1, pageSize: 15 }
+    }
   };
 
   var CATEGORIAS_CONTA = ['Diversos', 'Exames teóricos', 'Exames práticos', 'Lições práticas', 'Lições teóricas'];
@@ -703,11 +715,148 @@
     return '<div class="empty-state"><h4>' + esc(title) + '</h4><p>' + esc(text) + '</p></div>';
   }
 
+  /* ---------- Sistema Universal de Paginação ---------- */
+  function getPagination(key) {
+    if (!state.pagination) state.pagination = {};
+    if (!state.pagination[key]) state.pagination[key] = { page: 1, pageSize: 20 };
+    return state.pagination[key];
+  }
+
+  function paginateList(list, key, defaultPageSize) {
+    list = list || [];
+    var p = getPagination(key);
+    if (defaultPageSize && !p.customSize) {
+      p.pageSize = defaultPageSize;
+    }
+    var total = list.length;
+    var pageSize = Math.max(1, Number(p.pageSize) || 20);
+    var totalPages = Math.max(1, Math.ceil(total / pageSize));
+    var page = Math.min(Math.max(1, Number(p.page) || 1), totalPages);
+    p.page = page;
+
+    var startIndex = (page - 1) * pageSize;
+    var endIndex = Math.min(startIndex + pageSize, total);
+    var items = list.slice(startIndex, endIndex);
+
+    return {
+      items: items,
+      total: total,
+      page: page,
+      totalPages: totalPages,
+      startIndex: startIndex,
+      endIndex: endIndex,
+      pageSize: pageSize
+    };
+  }
+
+  function setPaginationPage(key, newPage, rerenderFn) {
+    var p = getPagination(key);
+    p.page = Math.max(1, Number(newPage) || 1);
+    if (typeof rerenderFn === 'function') {
+      rerenderFn();
+    } else if (typeof window[rerenderFn] === 'function') {
+      window[rerenderFn]();
+    }
+  }
+
+  function setPaginationPageSize(key, newSize, rerenderFn) {
+    var p = getPagination(key);
+    p.pageSize = Math.max(1, Number(newSize) || 20);
+    p.customSize = true;
+    p.page = 1;
+    if (typeof rerenderFn === 'function') {
+      rerenderFn();
+    } else if (typeof window[rerenderFn] === 'function') {
+      window[rerenderFn]();
+    }
+  }
+
+  function renderPaginationControls(key, paginatedData, rerenderFnName) {
+    if (!paginatedData) return '';
+    var total = paginatedData.total || 0;
+    var page = paginatedData.page || 1;
+    var totalPages = paginatedData.totalPages || 1;
+    var startIndex = paginatedData.startIndex || 0;
+    var endIndex = paginatedData.endIndex || 0;
+    var pageSize = paginatedData.pageSize || 20;
+
+    if (!total || total === 0) return '';
+
+    var showingText = 'A mostrar <strong>' + (startIndex + 1) + '</strong> a <strong>' + endIndex + '</strong> de <strong>' + total + '</strong> registos';
+
+    if (totalPages <= 1 && total <= pageSize) {
+      return '<div class="pagination-bar single-page"><div class="pagination-info">' + showingText + '</div></div>';
+    }
+
+    var pageButtons = [];
+    var delta = 2;
+    var left = Math.max(1, page - delta);
+    var right = Math.min(totalPages, page + delta);
+
+    if (left > 1) {
+      pageButtons.push('<button type="button" class="page-btn" onclick="setPaginationPage(\'' + key + '\', 1, \'' + rerenderFnName + '\')">1</button>');
+      if (left > 2) {
+        pageButtons.push('<span class="page-ellipsis">…</span>');
+      }
+    }
+
+    for (var i = left; i <= right; i++) {
+      if (i === page) {
+        pageButtons.push('<button type="button" class="page-btn active" aria-current="page">' + i + '</button>');
+      } else {
+        pageButtons.push('<button type="button" class="page-btn" onclick="setPaginationPage(\'' + key + '\', ' + i + ', \'' + rerenderFnName + '\')">' + i + '</button>');
+      }
+    }
+
+    if (right < totalPages) {
+      if (right < totalPages - 1) {
+        pageButtons.push('<span class="page-ellipsis">…</span>');
+      }
+      pageButtons.push('<button type="button" class="page-btn" onclick="setPaginationPage(\'' + key + '\', ' + totalPages + ', \'' + rerenderFnName + '\')">' + totalPages + '</button>');
+    }
+
+    var prevDisabled = page <= 1 ? 'disabled' : '';
+    var nextDisabled = page >= totalPages ? 'disabled' : '';
+
+    var prevBtn = '<button type="button" class="page-btn page-arrow" ' + prevDisabled + ' onclick="setPaginationPage(\'' + key + '\', ' + (page - 1) + ', \'' + rerenderFnName + '\')" title="Página anterior">‹</button>';
+    var nextBtn = '<button type="button" class="page-btn page-arrow" ' + nextDisabled + ' onclick="setPaginationPage(\'' + key + '\', ' + (page + 1) + ', \'' + rerenderFnName + '\')" title="Página seguinte">›</button>';
+
+    var sizes = [10, 20, 50];
+    var sizeOptions = sizes.map(function(s) {
+      return '<option value="' + s + '" ' + (pageSize === s ? 'selected' : '') + '>' + s + ' / pág.</option>';
+    }).join('');
+
+    var sizeSelect = '<div class="pagination-size-wrap">' +
+      '<select class="pagination-size-select" onchange="setPaginationPageSize(\'' + key + '\', this.value, \'' + rerenderFnName + '\')" title="Registos por página">' +
+      sizeOptions +
+      '</select>' +
+    '</div>';
+
+    return '<div class="pagination-bar">' +
+      '<div class="pagination-info">' + showingText + '</div>' +
+      '<div class="pagination-actions">' +
+        sizeSelect +
+        '<div class="pagination-nav">' +
+          prevBtn +
+          pageButtons.join('') +
+          nextBtn +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
   var _searchDebounceTimers = {};
   function updateSearchAndRerender(inputEl, chave, renderFn) {
     if (_searchDebounceTimers[chave]) clearTimeout(_searchDebounceTimers[chave]);
     var valor = inputEl ? inputEl.value : '';
     state.search[chave] = valor;
+    if (state.pagination) {
+      if (state.pagination[chave]) state.pagination[chave].page = 1;
+      if (chave === 'aulas') {
+        if (state.pagination.aulasPraticas) state.pagination.aulasPraticas.page = 1;
+        if (state.pagination.turmasTeoricas) state.pagination.turmasTeoricas.page = 1;
+      }
+    }
     _searchDebounceTimers[chave] = setTimeout(function () {
       var isFocused = inputEl && (document.activeElement === inputEl);
       var start = inputEl ? inputEl.selectionStart : null;
@@ -769,4 +918,8 @@
   window.updateSearchAndRerender = updateSearchAndRerender;
   window.rebuildIndexes = rebuildIndexes;
   window.debounce = debounce;
+  window.paginateList = paginateList;
+  window.renderPaginationControls = renderPaginationControls;
+  window.setPaginationPage = setPaginationPage;
+  window.setPaginationPageSize = setPaginationPageSize;
 })();

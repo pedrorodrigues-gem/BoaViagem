@@ -607,6 +607,7 @@ function renderExamesMarcacoes() {
 
 function mudarFiltroExames(f) {
   state.filter.exames = f;
+  if (state.pagination && state.pagination.exames) state.pagination.exames.page = 1;
   if (f !== 'Marcados' && state.examesCarregadosStatus !== 'Todos') {
     if (typeof ensureExamesTodos === 'function') {
       ensureExamesTodos().then(() => renderExamesMarcacoesTab());
@@ -627,6 +628,10 @@ function renderExamesMarcacoesTab() {
   } else if (exFiltro !== 'Todos') {
     exList = exList.filter(m => m.estado === exFiltro);
   }
+
+  const pData = paginateList(exList, 'exames', 20);
+  const pageItems = pData.items;
+  const paginationHtml = renderPaginationControls('exames', pData, 'renderExamesMarcacoesTab');
 
   body.innerHTML = `
     <div class="panel">
@@ -667,7 +672,7 @@ function renderExamesMarcacoesTab() {
         ${exList.length ? `<table>
           <thead><tr><th>Aluno</th><th>Tipo</th><th>Data</th><th>Hora</th><th>Hora fim</th><th>Local</th><th>Estado</th><th>Resultado</th><th>Observações</th><th></th></tr></thead>
           <tbody>
-            ${exList.map(m => `
+            ${pageItems.map(m => `
               <tr>
                 <td>${esc(m.alunoNome || getAlunoNomePorId(m.alunoId) || '—')}</td>
                 <td>${esc(m.tipo || '—')}</td>
@@ -688,7 +693,8 @@ function renderExamesMarcacoesTab() {
               </tr>
             `).join('')}
           </tbody>
-        </table>` : emptyState('Sem marcações', 'Não há exames registados para este filtro.')}
+        </table>
+        ${paginationHtml}` : emptyState('Sem marcações', 'Não há exames registados para este filtro.')}
       </div>
     </div>
   `;
@@ -820,6 +826,10 @@ function renderExamesEstatisticasHTML() {
 
 function renderPreInscricoes() {
   const el = document.getElementById('view-preinscricoes');
+  const pData = paginateList(state.preInscricoes, 'preinscricoes', 15);
+  const pageItems = pData.items;
+  const paginationHtml = renderPaginationControls('preinscricoes', pData, 'renderPreInscricoes');
+
   el.innerHTML = `
     <div class="panel">
       <div class="panel-head"><h3>Pré-inscrições</h3></div>
@@ -841,7 +851,7 @@ function renderPreInscricoes() {
         ${state.preInscricoes.length ? `<table>
           <thead><tr><th>Nome</th><th>Email</th><th>Categoria</th><th>Desconto</th><th>Estado</th><th>Pré-inscrição</th><th>Inscrição</th><th>Observações</th><th></th></tr></thead>
           <tbody>
-            ${state.preInscricoes.map(p => `
+            ${pageItems.map(p => `
               <tr>
                 <td>${esc(p.nome)}</td>
                 <td>${esc(p.email)}</td>
@@ -855,7 +865,8 @@ function renderPreInscricoes() {
               </tr>
             `).join('')}
           </tbody>
-        </table>` : emptyState('Sem pré-inscrições', 'Adiciona a primeira pré-inscrição.')}
+        </table>
+        ${paginationHtml}` : emptyState('Sem pré-inscrições', 'Adiciona a primeira pré-inscrição.')}
       </div>
     </div>
   `;
@@ -1377,6 +1388,10 @@ function renderAlunos() {
     );
   }
 
+  const pData = paginateList(list, 'alunos', 20);
+  const pageItems = pData.items;
+  const paginationHtml = renderPaginationControls('alunos', pData, 'renderAlunos');
+
   const avisoCarregamento = (state.alunosFiltroCarregado !== 'Todos' && filtro !== 'Ativo')
     ? `<div class="inline-alert inline-alert-info" style="margin-bottom:12px">A carregar todos os alunos da base de dados…</div>`
     : '';
@@ -1384,7 +1399,7 @@ function renderAlunos() {
   const tableHtml = list.length ? `<table>
     <thead><tr><th>Nº</th><th>Aluno</th><th>Categoria</th><th>Progresso</th><th>Estado</th><th>Documentos</th><th></th></tr></thead>
     <tbody>
-      ${list.map(a => {
+      ${pageItems.map(a => {
     const tags = [
       selosValidade(a.atestadoMedico?.dataValidade, 'Atestado médico'),
       a.examePsicotecnico?.aplicavel ? selosValidade(a.examePsicotecnico?.dataValidade, 'Exame psicotécnico') : '',
@@ -1428,7 +1443,8 @@ function renderAlunos() {
       `;
   }).join('')}
     </tbody>
-  </table>` : emptyState('Nenhum aluno encontrado', 'Ajusta a pesquisa ou adiciona um novo aluno.');
+  </table>
+  ${paginationHtml}` : emptyState('Nenhum aluno encontrado', 'Ajusta a pesquisa ou adiciona um novo aluno.');
 
   const tableWrap = document.getElementById('alunosTableWrap');
   const searchInput = document.getElementById('alunosSearchInput');
@@ -1464,6 +1480,7 @@ function renderAlunos() {
    e ela ainda não estiver carregada, mostra o painel já (com o que houver)
    e vai buscar o resto sem bloquear o clique. */
 function mudarFiltroAlunos(estado) {
+  if (state.pagination && state.pagination.alunos) state.pagination.alunos.page = 1;
   state.filter.alunos = estado;
   renderAlunos();
   if (estado !== 'Ativo' && state.alunosFiltroCarregado !== 'Todos') {
@@ -3449,6 +3466,9 @@ function renderInstrutores() {
   const el = document.getElementById('view-instrutores');
   const q = state.search.instrutores.toLowerCase();
   const list = state.instrutores.filter(i => i.nome.toLowerCase().includes(q));
+  const pData = paginateList(list, 'instrutores', 15);
+  const pageItems = pData.items;
+  const paginationHtml = renderPaginationControls('instrutores', pData, 'renderInstrutores');
 
   el.innerHTML = `
     <div class="toolbar">
@@ -3458,7 +3478,7 @@ function renderInstrutores() {
       ${list.length ? `<table>
         <thead><tr><th>Instrutor</th><th>Cargo</th><th>Título profissional</th><th>Categorias</th><th>Estado</th><th></th></tr></thead>
         <tbody>
-          ${list.map(i => {
+          ${pageItems.map(i => {
     const tag = selosValidade(i.tituloProfissionalValidade, 'Título');
     return `
             <tr>
@@ -3487,7 +3507,8 @@ function renderInstrutores() {
             </tr>`;
   }).join('')}
         </tbody>
-      </table>` : emptyState('Nenhum instrutor encontrado', 'Adiciona um instrutor à equipa pedagógica.')}
+      </table>
+      ${paginationHtml}` : emptyState('Nenhum instrutor encontrado', 'Adiciona um instrutor à equipa pedagógica.')}
     </div>
   `;
 }
@@ -3567,6 +3588,9 @@ function renderVeiculos() {
   const el = document.getElementById('view-veiculos');
   const q = state.search.veiculos.toLowerCase();
   const list = state.veiculos.filter(v => v.matricula.toLowerCase().includes(q) || (v.modelo || '').toLowerCase().includes(q));
+  const pData = paginateList(list, 'veiculos', 15);
+  const pageItems = pData.items;
+  const paginationHtml = renderPaginationControls('veiculos', pData, 'renderVeiculos');
 
   el.innerHTML = `
     <div class="toolbar">
@@ -3576,7 +3600,7 @@ function renderVeiculos() {
       ${list.length ? `<table>
         <thead><tr><th>Veículo</th><th>Categoria</th><th>IPO válida até</th><th>Seguro instrução válido até</th><th>Estado</th><th></th></tr></thead>
         <tbody>
-          ${list.map(v => `
+          ${pageItems.map(v => `
             <tr>
               <td>
                 <div class="cell-primary">${esc(v.matricula)}</div>
@@ -3595,7 +3619,8 @@ function renderVeiculos() {
             </tr>
           `).join('')}
         </tbody>
-      </table>` : emptyState('Nenhum veículo encontrado', 'Adiciona um veículo à frota de instrução.')}
+      </table>
+      ${paginationHtml}` : emptyState('Nenhum veículo encontrado', 'Adiciona um veículo à frota de instrução.')}
     </div>
   `;
 }
@@ -3671,14 +3696,18 @@ function renderAulasPraticasTab() {
   if (filtro !== 'Todos') list = list.filter(a => a.estado === filtro);
   if (q) list = list.filter(a => { const aluno = findAluno(a.alunoId); return aluno && aluno.nome.toLowerCase().includes(q); });
 
+  const pData = paginateList(list, 'aulasPraticas', 20);
+  const pageItems = pData.items;
+  const paginationHtml = renderPaginationControls('aulasPraticas', pData, 'renderAulas');
+
   body.innerHTML = `
     <div class="toolbar">
       <input class="search-input" placeholder="Pesquisar por nome do aluno..." value="${esc(state.search.aulas)}" oninput="updateSearchAndRerender(this, 'aulas', renderAulas)">
       <div class="filter-row">
-        <button class="chip ${periodo === 'Futuras' ? 'active' : ''}" onclick="state.filter.aulasPeriodo='Futuras'; renderAulas();">Hoje e futuras</button>
-        <button class="chip ${periodo === 'Historico' ? 'active' : ''}" onclick="state.filter.aulasPeriodo='Historico'; if (!state.aulasHistoricoCarregado && typeof ensureAulasHistorico === 'function') { ensureAulasHistorico().then(() => renderAulas()); } renderAulas();">Histórico</button>
+        <button class="chip ${periodo === 'Futuras' ? 'active' : ''}" onclick="if (state.pagination && state.pagination.aulasPraticas) state.pagination.aulasPraticas.page=1; state.filter.aulasPeriodo='Futuras'; renderAulas();">Hoje e futuras</button>
+        <button class="chip ${periodo === 'Historico' ? 'active' : ''}" onclick="if (state.pagination && state.pagination.aulasPraticas) state.pagination.aulasPraticas.page=1; state.filter.aulasPeriodo='Historico'; if (!state.aulasHistoricoCarregado && typeof ensureAulasHistorico === 'function') { ensureAulasHistorico().then(() => renderAulas()); } renderAulas();">Histórico</button>
       </div>
-      <select onchange="state.filter.aulas=this.value; renderAulas();" style="font-size:13px; padding:4px 8px; border-radius:6px; border:1px solid var(--border)">
+      <select onchange="if (state.pagination && state.pagination.aulasPraticas) state.pagination.aulasPraticas.page=1; state.filter.aulas=this.value; renderAulas();" style="font-size:13px; padding:4px 8px; border-radius:6px; border:1px solid var(--border)">
         ${estados.map(e => `<option value="${e}" ${filtro === e ? 'selected' : ''}>${e}</option>`).join('')}
       </select>
       <button class="btn btn-accent btn-sm" style="margin-left:auto" onclick="openAulaForm()">+ Nova aula prática</button>
@@ -3687,7 +3716,7 @@ function renderAulasPraticasTab() {
       ${list.length ? `<table>
         <thead><tr><th>Data / Hora</th><th>Aluno</th><th>Instrutor</th><th>Veículo</th><th>Estado</th><th></th></tr></thead>
         <tbody>
-          ${list.map(a => {
+          ${pageItems.map(a => {
     const aluno = findAluno(a.alunoId);
     const instrutor = findInstrutor(a.instrutorId);
     const veiculo = findVeiculo(a.veiculoId);
@@ -3707,7 +3736,8 @@ function renderAulasPraticasTab() {
             </tr>`;
   }).join('')}
         </tbody>
-      </table>` : emptyState('Nenhuma aula prática encontrada', periodo === 'Futuras' ? 'Não há aulas práticas agendadas — muda para "Histórico" para ver aulas passadas.' : 'Agenda uma nova aula prática individual.')}
+      </table>
+      ${paginationHtml}` : emptyState('Nenhuma aula prática encontrada', periodo === 'Futuras' ? 'Não há aulas práticas agendadas — muda para "Histórico" para ver aulas passadas.' : 'Agenda uma nova aula prática individual.')}
     </div>
   `;
 }
@@ -3723,29 +3753,36 @@ function renderTurmasTeoricasTab() {
   list.sort((a, b) => (a.data + a.horaInicio).localeCompare(b.data + b.horaInicio));
   if (periodo === 'Historico') list.reverse();
 
+  const pData = paginateList(list, 'turmasTeoricas', 15);
+  const pageItems = pData.items;
+  const paginationHtml = renderPaginationControls('turmasTeoricas', pData, 'renderAulas');
+
   body.innerHTML = `
     <div class="toolbar">
       <div class="filter-row">
-        <button class="chip ${periodo === 'Agendadas' ? 'active' : ''}" onclick="state.filter.turmasPeriodo='Agendadas'; renderAulas();">Agendadas</button>
-        <button class="chip ${periodo === 'Historico' ? 'active' : ''}" onclick="state.filter.turmasPeriodo='Historico'; renderAulas();">Histórico</button>
+        <button class="chip ${periodo === 'Agendadas' ? 'active' : ''}" onclick="if (state.pagination && state.pagination.turmasTeoricas) state.pagination.turmasTeoricas.page=1; state.filter.turmasPeriodo='Agendadas'; renderAulas();">Agendadas</button>
+        <button class="chip ${periodo === 'Historico' ? 'active' : ''}" onclick="if (state.pagination && state.pagination.turmasTeoricas) state.pagination.turmasTeoricas.page=1; state.filter.turmasPeriodo='Historico'; renderAulas();">Histórico</button>
       </div>
       <button class="btn btn-accent btn-sm" style="margin-left:auto" onclick="openTurmaTeoricaForm()">+ Nova turma teórica</button>
     </div>
-    ${list.length ? list.map(t => `
-      <div class="agenda-item">
-        <div class="agenda-time">${fmtDataHora(t.data, t.horaInicio)}</div>
-        <div class="agenda-info">
-          <div class="name">${esc(t.tema)}</div>
-          <div class="sub">${(t.inscritos || []).length} inscritos · ${esc((findInstrutor(t.instrutorId) || {}).nome || 'Sem instrutor')} · <span class="${badgeClass(t.estado)}">${esc(t.estado || '—')}</span></div>
+    ${list.length ? `
+      ${pageItems.map(t => `
+        <div class="agenda-item">
+          <div class="agenda-time">${fmtDataHora(t.data, t.horaInicio)}</div>
+          <div class="agenda-info">
+            <div class="name">${esc(t.tema)}</div>
+            <div class="sub">${(t.inscritos || []).length} inscritos · ${esc((findInstrutor(t.instrutorId) || {}).nome || 'Sem instrutor')} · <span class="${badgeClass(t.estado)}">${esc(t.estado || '—')}</span></div>
+          </div>
+          <div class="row-actions">
+            <button class="btn btn-ghost btn-sm" onclick="openTurmaTeoricaForm(${t.id})">Editar</button>
+            ${t.estado === 'Agendada'
+              ? `<button class="btn btn-accent btn-sm" onclick="abrirPresencasForm(${t.id})">Marcar presenças</button>`
+              : `<button class="btn btn-ghost btn-sm" onclick="abrirPresencasForm(${t.id})">Presenças (${(t.inscritos || []).length})</button>`}
+          </div>
         </div>
-        <div class="row-actions">
-          <button class="btn btn-ghost btn-sm" onclick="openTurmaTeoricaForm(${t.id})">Editar</button>
-          ${t.estado === 'Agendada'
-            ? `<button class="btn btn-accent btn-sm" onclick="abrirPresencasForm(${t.id})">Marcar presenças</button>`
-            : `<button class="btn btn-ghost btn-sm" onclick="abrirPresencasForm(${t.id})">Presenças (${(t.inscritos || []).length})</button>`}
-        </div>
-      </div>
-    `).join('') : emptyState('Sem turmas teóricas', periodo === 'Agendadas' ? 'Não há turmas agendadas de momento.' : 'Sem histórico de turmas teóricas.')}
+      `).join('')}
+      ${paginationHtml}
+    ` : emptyState('Sem turmas teóricas', periodo === 'Agendadas' ? 'Não há turmas agendadas de momento.' : 'Sem histórico de turmas teóricas.')}
   `;
 }
 
@@ -4427,6 +4464,7 @@ function abrirPagamentoContaForm(alunoId) {
 }
 
 async function mudarAnoPagamentos(ano) {
+  if (state.pagination && state.pagination.pagamentos) state.pagination.pagamentos.page = 1;
   if (ano !== 'Todos') ano = Number(ano);
   state.filtroAnoPagamentos = ano;
   if (typeof ensurePagamentosAno === 'function') {
@@ -4460,6 +4498,10 @@ function renderPagamentos() {
   list.sort((a, b) => (b.data || '').localeCompare(a.data || ''));
   if (q) list = list.filter(p => { const a = findAluno(p.alunoId); return a && a.nome.toLowerCase().includes(q); });
 
+  const pData = paginateList(list, 'pagamentos', 20);
+  const pageItems = pData.items;
+  const paginationHtml = renderPaginationControls('pagamentos', pData, 'renderPagamentos');
+
   const primaveraAtivo = !!state.escola?.primavera?.ativo;
   const anosDisponiveis = state.pagamentosAnosDisponiveis?.length ? state.pagamentosAnosDisponiveis : [state.anoAtual];
 
@@ -4487,7 +4529,7 @@ function renderPagamentos() {
       ${list.length ? `<table>
         <thead><tr><th>Aluno</th><th>Descrição</th><th>Data</th><th>Modo Pag.</th><th>Valor</th><th>Estado</th><th>Faturação</th><th></th></tr></thead>
         <tbody>
-          ${list.map(p => {
+          ${pageItems.map(p => {
     const aluno = findAluno(p.alunoId);
     const fat = p.faturacao;
     const isAnulado = p.estado === 'Anulado';
@@ -4521,7 +4563,8 @@ function renderPagamentos() {
             </tr>`;
   }).join('')}
         </tbody>
-      </table>` : emptyState('Nenhum pagamento encontrado', 'Regista um novo pagamento de um aluno.')}
+      </table>
+      ${paginationHtml}` : emptyState('Nenhum pagamento encontrado', 'Regista um novo pagamento de um aluno.')}
     </div>
   `;
 }
@@ -5821,6 +5864,7 @@ function imprimirMapaGeral() {
 const PLANOS_PAGAMENTO = ['Pagamento único', 'Mensalidades', 'Personalizado'];
 
 async function mudarAnoContratos(ano) {
+  if (state.pagination && state.pagination.contratos) state.pagination.contratos.page = 1;
   if (ano !== 'Todos') ano = Number(ano);
   state.filtroAnoContratos = ano;
   if (typeof ensureContratosAno === 'function') {
@@ -5855,6 +5899,10 @@ function renderContratos() {
     return !q || (aluno && aluno.nome.toLowerCase().includes(q));
   }).sort((a, b) => (b.dataCriacao || '').localeCompare(a.dataCriacao || ''));
 
+  const pData = paginateList(list, 'contratos', 20);
+  const pageItems = pData.items;
+  const paginationHtml = renderPaginationControls('contratos', pData, 'renderContratos');
+
   const anosDisponiveis = state.contratosAnosDisponiveis?.length ? state.contratosAnosDisponiveis : [state.anoAtual];
 
   el.innerHTML = `
@@ -5887,7 +5935,7 @@ function renderContratos() {
       ${list.length ? `<table>
         <thead><tr><th>Aluno</th><th>Categoria</th><th>Valor</th><th>Plano</th><th>Estado</th><th></th></tr></thead>
         <tbody>
-          ${list.map(c => {
+          ${pageItems.map(c => {
     const aluno = findAluno(c.alunoId);
     return `
             <tr>
@@ -5914,7 +5962,8 @@ function renderContratos() {
             </tr>`;
   }).join('')}
         </tbody>
-      </table>` : emptyState('Nenhum contrato encontrado', 'Cria o primeiro contrato de formação para um aluno.')}
+      </table>
+      ${paginationHtml}` : emptyState('Nenhum contrato encontrado', 'Cria o primeiro contrato de formação para um aluno.')}
     </div>
   `;
 }
@@ -6791,6 +6840,10 @@ function renderRevalidacoes() {
     list = list.filter(r => (r.estadoProcesso || 'Registado') === filtroEstado);
   }
 
+  const pData = paginateList(list, 'revalidacoes', 20);
+  const pageItems = pData.items;
+  const paginationHtml = renderPaginationControls('revalidacoes', pData, 'renderRevalidacoes');
+
   // Estatísticas do Módulo
   const total = rawList.length;
   const totalValor = rawList.reduce((acc, r) => acc + (Number(r.valor) || 0), 0);
@@ -6843,13 +6896,13 @@ function renderRevalidacoes() {
     <div class="toolbar" style="flex-wrap:wrap; gap:12px; margin-bottom:16px">
       <input class="search-input" placeholder="Pesquisar por titular, NIF, nº de carta ou telefone..."
              value="${esc(state.search.revalidacoes)}"
-             oninput="state.search.revalidacoes = this.value; renderRevalidacoes();"
+             oninput="updateSearchAndRerender(this, 'revalidacoes', renderRevalidacoes)"
              style="min-width:280px; flex:1">
 
       <div class="filter-row" style="gap:6px; flex-wrap:wrap">
         ${estadosOpcoes.map(est => `
           <button class="chip ${filtroEstado === est ? 'active' : ''}"
-                  onclick="state.filter.revalidacoes='${est}'; renderRevalidacoes();">${esc(est)}</button>
+                  onclick="if (state.pagination && state.pagination.revalidacoes) state.pagination.revalidacoes.page=1; state.filter.revalidacoes='${est}'; renderRevalidacoes();">${esc(est)}</button>
         `).join('')}
       </div>
 
@@ -6876,7 +6929,7 @@ function renderRevalidacoes() {
             </tr>
           </thead>
           <tbody>
-            ${list.map(r => {
+            ${pageItems.map(r => {
               const modoLabel = r.modoPagamento === 'PGTR' ? 'Multibanco/Transf.' : (r.modoPagamento === 'MBWAY' ? 'MBWay' : 'Numerário');
               return `
                 <tr>
@@ -6917,6 +6970,7 @@ function renderRevalidacoes() {
             }).join('')}
           </tbody>
         </table>
+        ${paginationHtml}
       ` : emptyState('Nenhuma revalidação encontrada', 'Regista uma nova revalidação de carta de condução para começar.')}
     </div>
   `;
