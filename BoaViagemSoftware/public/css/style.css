@@ -1199,3 +1199,141 @@ tbody tr:hover { background: var(--surface-2); }
   padding-bottom: 12px;
   margin-bottom: 16px;
 }
+
+/* ---------- PAGINAÇÃO GLOBAL ---------- */
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  font-size: 0.85rem;
+  color: var(--muted);
+  flex-wrap: wrap;
+  box-shadow: var(--shadow-sm);
+}
+
+.pagination-bar.single-page {
+  justify-content: flex-end;
+  padding: 8px 16px;
+  font-size: 0.8rem;
+}
+
+.pagination-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pagination-info strong {
+  color: var(--brand-black);
+  font-weight: 700;
+}
+
+.pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pagination-size-wrap {
+  display: flex;
+  align-items: center;
+}
+
+.pagination-size-select {
+  padding: 4px 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--brand-black);
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.pagination-size-select:hover,
+.pagination-size-select:focus {
+  border-color: var(--brand-blue);
+}
+
+.pagination-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.page-btn {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--brand-black);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+
+.page-btn:hover:not(:disabled):not(.active) {
+  background: var(--surface-2);
+  border-color: var(--brand-blue);
+  color: var(--brand-blue);
+}
+
+.page-btn.active {
+  background: var(--brand-blue);
+  border-color: var(--brand-blue);
+  color: #ffffff;
+  font-weight: 700;
+  cursor: default;
+}
+
+.page-btn.page-arrow {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: var(--border);
+}
+
+.page-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  color: var(--muted);
+  font-weight: 700;
+  user-select: none;
+}
+
+@media (max-width: 650px) {
+  .pagination-bar {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+    gap: 10px;
+  }
+  .pagination-actions {
+    justify-content: center;
+  }
+  .pagination-info {
+    justify-content: center;
+  }
+}
