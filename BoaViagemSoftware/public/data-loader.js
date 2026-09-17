@@ -224,6 +224,10 @@
 
     async function loadEssential() {
         const auth = await api('GET', '/api/auth/me');
+        if (!auth || !auth.user) {
+            window.location.href = '/login.html';
+            return auth;
+        }
         state.escolaAtual = auth.escola;
         state.usuarioAtual = auth.user;
 
