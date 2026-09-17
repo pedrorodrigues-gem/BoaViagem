@@ -726,12 +726,14 @@ function renderExamesMarcacoesTab() {
         observacoes: fd.get('observacoes') || ''
       };
       try {
-        if (payload.tipo === 'Prático') {
-          const conta = await api('GET', `/api/contaCorrente/${payload.alunoId}`);
-          if (Number(conta.saldoTotal || 0) > 0.0001) throw new Error('Não é possível marcar um exame prático enquanto a conta corrente do aluno tiver saldo pendente.');
-        }
-        await api('POST', '/api/examesMarcacoes', payload);
-        await refreshCollections(['examesMarcacoes']);
+        await withScreenLoader(async () => {
+          if (payload.tipo === 'Prático') {
+            const conta = await api('GET', `/api/contaCorrente/${payload.alunoId}`);
+            if (Number(conta.saldoTotal || 0) > 0.0001) throw new Error('Não é possível marcar um exame prático enquanto a conta corrente do aluno tiver saldo pendente.');
+          }
+          await api('POST', '/api/examesMarcacoes', payload);
+          await refreshCollections(['examesMarcacoes']);
+        }, 'A registar marcação de exame…');
         renderExamesMarcacoesTab();
         toast('Marcação de exame guardada.');
       } catch (err) { toast(err.message, 'error'); }
@@ -741,8 +743,10 @@ function renderExamesMarcacoesTab() {
 
 async function atualizarResultadoExame(id, resultado) {
   try {
-    await api('PUT', `/api/examesMarcacoes/${id}`, { resultado: resultado || null });
-    await refreshCollections(['examesMarcacoes']);
+    await withScreenLoader(async () => {
+      await api('PUT', `/api/examesMarcacoes/${id}`, { resultado: resultado || null });
+      await refreshCollections(['examesMarcacoes']);
+    }, 'A atualizar resultado do exame…');
     renderExamesMarcacoesTab();
     toast('Resultado atualizado.');
   } catch (err) { toast(err.message, 'error'); }
@@ -984,9 +988,11 @@ function openTurmaTeoricaForm(id) {
       presencas: item?.presencas || {}
     };
     try {
-      if (item) await api('PUT', `/api/turmasTeoricas/${item.id}`, payload);
-      else await api('POST', '/api/turmasTeoricas', payload);
-      await refreshCollections(['turmasTeoricas', 'alunos']);
+      await withScreenLoader(async () => {
+        if (item) await api('PUT', `/api/turmasTeoricas/${item.id}`, payload);
+        else await api('POST', '/api/turmasTeoricas', payload);
+        await refreshCollections(['turmasTeoricas', 'alunos']);
+      }, item ? 'A guardar turma teórica…' : 'A criar turma teórica…');
       closeModal();
       render();
       toast(item ? 'Turma teórica atualizada.' : 'Turma teórica criada.');
@@ -1243,11 +1249,13 @@ async function abrirPresencasForm(turmaId) {
         });
 
         try {
-          await api('PUT', `/api/turmasTeoricas/${turmaId}/presencas`, {
-            presencas: presencasFinais,
-            estado: 'Concluída'
-          });
-          await refreshCollections(['turmasTeoricas', 'alunos']);
+          await withScreenLoader(async () => {
+            await api('PUT', `/api/turmasTeoricas/${turmaId}/presencas`, {
+              presencas: presencasFinais,
+              estado: 'Concluída'
+            });
+            await refreshCollections(['turmasTeoricas', 'alunos']);
+          }, 'A validar presenças…');
           closeModal();
           render();
           toast('Presenças validadas com sucesso.');
@@ -3257,9 +3265,11 @@ function openAlunoForm(id) {
       notas: fd.get('notas')
     };
     try {
-      if (item) await api('PUT', `/api/alunos/${item.id}`, payload);
-      else await api('POST', '/api/alunos', payload);
-      await Promise.all([refreshCollections(['alunos', 'dashboard']), ensureAlunosAtivos({ force: true })]);
+      await withScreenLoader(async () => {
+        if (item) await api('PUT', `/api/alunos/${item.id}`, payload);
+        else await api('POST', '/api/alunos', payload);
+        await Promise.all([refreshCollections(['alunos', 'dashboard']), ensureAlunosAtivos({ force: true })]);
+      }, item ? 'A guardar dados do aluno…' : 'A criar aluno…');
       closeModal();
       renderAlunos();
       renderDashboard();
@@ -3572,9 +3582,11 @@ function openInstrutorForm(id) {
       categorias
     };
     try {
-      if (item) await api('PUT', `/api/instrutores/${item.id}`, payload);
-      else await api('POST', '/api/instrutores', payload);
-      await refreshCollections(['instrutores', 'dashboard']);
+      await withScreenLoader(async () => {
+        if (item) await api('PUT', `/api/instrutores/${item.id}`, payload);
+        else await api('POST', '/api/instrutores', payload);
+        await refreshCollections(['instrutores', 'dashboard']);
+      }, item ? 'A guardar dados do instrutor…' : 'A criar instrutor…');
       closeModal();
       renderInstrutores();
       renderDashboard();
@@ -3894,9 +3906,11 @@ function openAulaForm(id) {
       notas: fd.get('notas')
     };
     try {
-      if (item) await api('PUT', `/api/aulas/${item.id}`, payload);
-      else await api('POST', '/api/aulas', payload);
-      await refreshCollections(['aulas', 'dashboard', 'alunos']);
+      await withScreenLoader(async () => {
+        if (item) await api('PUT', `/api/aulas/${item.id}`, payload);
+        else await api('POST', '/api/aulas', payload);
+        await refreshCollections(['aulas', 'dashboard', 'alunos']);
+      }, item ? 'A guardar alterações da aula…' : 'A agendar aula…');
       closeModal();
       render();
       renderDashboard();
@@ -4256,8 +4270,10 @@ function abrirItemContaForm(alunoId, itemId) {
       ordem: fd.get('ordem') === '' ? null : Number(fd.get('ordem'))
     };
     try {
-      if (item) await api('PUT', `/api/itensConta/${item.id}`, payload);
-      else await api('POST', '/api/itensConta', payload);
+      await withScreenLoader(async () => {
+        if (item) await api('PUT', `/api/itensConta/${item.id}`, payload);
+        else await api('POST', '/api/itensConta', payload);
+      }, item ? 'A guardar item de conta corrente…' : 'A criar item de conta corrente…');
       toast(item ? 'Item atualizado.' : 'Item criado.');
       await abrirContaCorrente(alunoId);
     } catch (err) { toast(err.message, 'error'); }
@@ -4331,7 +4347,9 @@ function produtoLabelPlain(p) {
 async function removerItemConta(alunoId, itemId) {
   if (!confirm('Tens a certeza que queres remover este item de conta corrente?')) return;
   try {
-    await api('DELETE', `/api/itensConta/${itemId}`);
+    await withScreenLoader(async () => {
+      await api('DELETE', `/api/itensConta/${itemId}`);
+    }, 'A remover item de conta corrente…');
     toast('Item removido.');
     await abrirContaCorrente(alunoId);
   } catch (err) { toast(err.message, 'error'); }
@@ -4455,8 +4473,10 @@ function abrirPagamentoContaForm(alunoId) {
       taxaIva: state.escola?.primavera?.taxaIvaDefault ?? 18
     };
     try {
-      await api('POST', '/api/pagamentos', payload);
-      await refreshCollections(['pagamentos', 'dashboard']);
+      await withScreenLoader(async () => {
+        await api('POST', '/api/pagamentos', payload);
+        await refreshCollections(['pagamentos', 'dashboard']);
+      }, 'A registar pagamento na conta corrente…');
       toast(payload.estado === 'Pago' ? 'Pagamento registado e aplicado ao saldo.' : 'Pagamento registado como pendente.');
       await abrirContaCorrente(alunoId);
     } catch (err) { toast(err.message, 'error'); }
@@ -4624,9 +4644,11 @@ function openPagamentoForm(id) {
       estado: fd.get('estado')
     };
     try {
-      if (item) await api('PUT', `/api/pagamentos/${item.id}`, payload);
-      else await api('POST', '/api/pagamentos', payload);
-      await refreshCollections(['pagamentos', 'dashboard']);
+      await withScreenLoader(async () => {
+        if (item) await api('PUT', `/api/pagamentos/${item.id}`, payload);
+        else await api('POST', '/api/pagamentos', payload);
+        await refreshCollections(['pagamentos', 'dashboard']);
+      }, item ? 'A guardar alterações do pagamento…' : 'A registar pagamento…');
       closeModal();
       renderPagamentos();
       renderDashboard();
@@ -4703,17 +4725,19 @@ function openPrimaveraConfigForm() {
       taxaIvaDefault: Number(fd.get('taxaIvaDefault') || 18)
     };
     try {
-      await api('PUT', '/api/escola/primavera', payload);
-      for (const e of state.espacos) {
-        const val = fd.get(`serie_espaco_${e.id}`);
-        if (val !== null) {
-          const trimmed = val.trim();
-          if (trimmed !== (e.serie || '')) {
-            await api('PUT', `/api/espacos/${e.id}`, { ...e, serie: trimmed || null });
+      await withScreenLoader(async () => {
+        await api('PUT', '/api/escola/primavera', payload);
+        for (const e of state.espacos) {
+          const val = fd.get(`serie_espaco_${e.id}`);
+          if (val !== null) {
+            const trimmed = val.trim();
+            if (trimmed !== (e.serie || '')) {
+              await api('PUT', `/api/espacos/${e.id}`, { ...e, serie: trimmed || null });
+            }
           }
         }
-      }
-      await refreshCollections(['escola', 'espacos']);
+        await refreshCollections(['escola', 'espacos']);
+      }, 'A guardar configuração da Cegid Primavera…');
       closeModal();
       renderPagamentos();
       if (typeof renderConfig === 'function') renderConfig();
@@ -4775,9 +4799,10 @@ function abrirFaturacaoModal(pagamentoId) {
 
 async function emitirDocumentoPagamento(pagamentoId, tipo) {
   try {
-    toast('A comunicar com a Cegid Primavera…');
-    await api('POST', `/api/pagamentos/${pagamentoId}/${tipo}`, {});
-    await refreshCollections(['pagamentos']);
+    await withScreenLoader(async () => {
+      await api('POST', `/api/pagamentos/${pagamentoId}/${tipo}`, {});
+      await refreshCollections(['pagamentos']);
+    }, 'A comunicar com a Cegid Primavera…');
     abrirFaturacaoModal(pagamentoId);
     renderPagamentos();
     toast('Documento emitido com sucesso.');
@@ -4811,14 +4836,15 @@ function abrirReciboForm(pagamentoId) {
     e.preventDefault();
     const fd = new FormData(form);
     try {
-      toast('A comunicar com a Cegid Primavera…');
-      await api('POST', `/api/pagamentos/${pagamentoId}/recibo`, {
-        docOriginalTipo: fd.get('docOriginalTipo'),
-        docOriginalSerie: fd.get('docOriginalSerie'),
-        docOriginalNumero: fd.get('docOriginalNumero'),
-        numPrestacao: Number(fd.get('numPrestacao') || 1)
-      });
-      await refreshCollections(['pagamentos']);
+      await withScreenLoader(async () => {
+        await api('POST', `/api/pagamentos/${pagamentoId}/recibo`, {
+          docOriginalTipo: fd.get('docOriginalTipo'),
+          docOriginalSerie: fd.get('docOriginalSerie'),
+          docOriginalNumero: fd.get('docOriginalNumero'),
+          numPrestacao: Number(fd.get('numPrestacao') || 1)
+        });
+        await refreshCollections(['pagamentos']);
+      }, 'A emitir recibo na Cegid Primavera…');
       renderPagamentos();
       abrirFaturacaoModal(pagamentoId);
       toast('Recibo emitido com sucesso.');
@@ -4850,14 +4876,15 @@ function abrirNotaCreditoForm(pagamentoId) {
     e.preventDefault();
     const fd = new FormData(form);
     try {
-      toast('A comunicar com a Cegid Primavera…');
-      await api('POST', `/api/pagamentos/${pagamentoId}/nota-credito`, {
-        docOriginalTipo: fd.get('docOriginalTipo'),
-        docOriginalSerie: fd.get('docOriginalSerie'),
-        docOriginalNumero: fd.get('docOriginalNumero'),
-        motivo: fd.get('motivo')
-      });
-      await refreshCollections(['pagamentos']);
+      await withScreenLoader(async () => {
+        await api('POST', `/api/pagamentos/${pagamentoId}/nota-credito`, {
+          docOriginalTipo: fd.get('docOriginalTipo'),
+          docOriginalSerie: fd.get('docOriginalSerie'),
+          docOriginalNumero: fd.get('docOriginalNumero'),
+          motivo: fd.get('motivo')
+        });
+        await refreshCollections(['pagamentos']);
+      }, 'A emitir nota de crédito na Cegid Primavera…');
       renderPagamentos();
       abrirFaturacaoModal(pagamentoId);
       toast('Nota de crédito emitida com sucesso.');
@@ -5439,11 +5466,13 @@ function renderConfig() {
 
   document.getElementById('btnGuardarComposicao').addEventListener('click', async () => {
     try {
-      const updated = await api('PUT', '/api/config', { composicaoCarta: composicaoCartaEdit });
-      state.config = updated;
-      composicaoCartaEdit = JSON.parse(JSON.stringify(state.config?.composicaoCarta || {}));
-      CATEGORIAS_TODAS.forEach(cat => { if (!Array.isArray(composicaoCartaEdit[cat])) composicaoCartaEdit[cat] = []; });
-      renderComposicaoCartaBox();
+      await withScreenLoader(async () => {
+        const updated = await api('PUT', '/api/config', { composicaoCarta: composicaoCartaEdit });
+        state.config = updated;
+        composicaoCartaEdit = JSON.parse(JSON.stringify(state.config?.composicaoCarta || {}));
+        CATEGORIAS_TODAS.forEach(cat => { if (!Array.isArray(composicaoCartaEdit[cat])) composicaoCartaEdit[cat] = []; });
+        renderComposicaoCartaBox();
+      }, 'A guardar composição dos planos da carta…');
       toast('Composição da carta guardada com sucesso.');
     } catch (err) {
       toast(err.message, 'error');
@@ -5612,17 +5641,19 @@ function renderSeriesEspacosBox() {
 async function guardarSeriesEspacos() {
   try {
     let alterados = 0;
-    for (const e of state.espacos) {
-      const inp = document.getElementById(`serie_espaco_${e.id}`);
-      if (inp) {
-        const novaSerie = inp.value.trim();
-        if (novaSerie !== (e.serie || '')) {
-          await api('PUT', `/api/espacos/${e.id}`, { ...e, serie: novaSerie || null });
-          alterados++;
+    await withScreenLoader(async () => {
+      for (const e of state.espacos) {
+        const inp = document.getElementById(`serie_espaco_${e.id}`);
+        if (inp) {
+          const novaSerie = inp.value.trim();
+          if (novaSerie !== (e.serie || '')) {
+            await api('PUT', `/api/espacos/${e.id}`, { ...e, serie: novaSerie || null });
+            alterados++;
+          }
         }
       }
-    }
-    await refreshCollections(['espacos', 'escola']);
+      await refreshCollections(['espacos', 'escola']);
+    }, 'A guardar séries dos espaços…');
     renderEspacosList();
     renderSeriesEspacosBox();
     toast(alterados ? 'Séries de faturação dos espaços guardadas com sucesso.' : 'Nenhuma alteração às séries dos espaços.');
@@ -5993,8 +6024,10 @@ function openEscolaForm() {
     const fd = new FormData(form);
     const payload = Object.fromEntries(fd.entries());
     try {
-      await api('PUT', '/api/escola', payload);
-      await refreshCollections(['escola']);
+      await withScreenLoader(async () => {
+        await api('PUT', '/api/escola', payload);
+        await refreshCollections(['escola']);
+      }, 'A guardar dados da escola…');
       closeModal();
       renderContratos();
       toast('Dados da escola atualizados.');
@@ -6061,19 +6094,19 @@ function openContratoForm(id) {
 
   let planoCartaIdAtual = item?.planoCartaId || null;
 
-  async function carregarPlanosCarta() {
+  async function carregarPlanosCarta(resetToFirst) {
     const categoria = document.getElementById('contratoCategoriaSelect')?.value;
     const select = document.getElementById('planoCartaSelect');
     if (!categoria || !select) return [];
     try {
       const planos = await api('GET', `/api/planosCarta/${encodeURIComponent(categoria)}`);
+      if (resetToFirst || !planoCartaIdAtual || !planos.some(p => p.id === Number(planoCartaIdAtual))) {
+        planoCartaIdAtual = planos[0]?.id || null;
+      }
       select.innerHTML = planos.length
         ? planos.map(p => `<option value="${p.id}" ${Number(planoCartaIdAtual) === p.id ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')
         : '<option value="">Sem planos definidos para esta categoria</option>';
-      if (!planos.some(p => p.id === Number(planoCartaIdAtual))) {
-        planoCartaIdAtual = planos[0]?.id || null;
-        select.value = planoCartaIdAtual || '';
-      }
+      select.value = planoCartaIdAtual || '';
       return planos;
     } catch (err) {
       select.innerHTML = '<option value="">Sem planos definidos</option>';
@@ -6081,22 +6114,81 @@ function openContratoForm(id) {
     }
   }
 
-  async function atualizarValorCarta() {
+  function sugerirAulasPorCategoriaEPlano(categoria, itens) {
+    let teoricas = 28;
+    let praticas = 32;
+    const catUpper = String(categoria || '').toUpperCase();
+    if (['A', 'A1', 'A2'].includes(catUpper)) {
+      teoricas = 4;
+      praticas = 12;
+    } else if (catUpper === 'AM') {
+      teoricas = 4;
+      praticas = 5;
+    } else if (catUpper === 'B' || catUpper === 'B1') {
+      teoricas = 28;
+      praticas = 32;
+    } else if (catUpper === 'C') {
+      teoricas = 20;
+      praticas = 16;
+    } else if (catUpper === 'C+E') {
+      teoricas = 0;
+      praticas = 10;
+    } else if (catUpper === 'D') {
+      teoricas = 20;
+      praticas = 18;
+    }
+
+    if (Array.isArray(itens)) {
+      for (const it of itens) {
+        const desc = (it.descricao || '').toLowerCase();
+        const m = desc.match(/(\d+)\s*(?:aulas|práticas|praticas|licoes|lições)/i);
+        if (m && (desc.includes('prát') || desc.includes('prat') || desc.includes('condução') || desc.includes('conducao'))) {
+          const n = Number(m[1]);
+          if (n > 0) praticas = n;
+        }
+      }
+    }
+
+    const campoTeo = document.querySelector('#contratoForm [name="aulasTeoricasIncluidas"]');
+    const campoPrat = document.querySelector('#contratoForm [name="aulasPraticasIncluidas"]');
+    if (campoTeo) campoTeo.value = teoricas;
+    if (campoPrat) campoPrat.value = praticas;
+  }
+
+  async function atualizarValorCarta(recarregarPlanos = true) {
     const categoria = document.getElementById('contratoCategoriaSelect')?.value;
     const aluno = findAluno(alunoIdAtual());
     const desconto = Number(aluno?.desconto || 0);
-    if (!categoria) { itensCartaAtual = []; valorCartaCalculado = 0; renderPlanoBox(); return; }
-    await carregarPlanosCarta();
+    if (!categoria) {
+      itensCartaAtual = [];
+      valorCartaCalculado = 0;
+      setValorTotalInput(0);
+      renderPlanoBox();
+      return;
+    }
+    if (recarregarPlanos) {
+      await carregarPlanosCarta(true);
+    }
+    const select = document.getElementById('planoCartaSelect');
+    if (select && select.value) {
+      planoCartaIdAtual = Number(select.value) || planoCartaIdAtual;
+    }
     try {
       const qs = `?desconto=${desconto}${planoCartaIdAtual ? `&planoCartaId=${planoCartaIdAtual}` : ''}`;
       const res = await api('GET', `/api/precoCarta/${encodeURIComponent(categoria)}${qs}`);
-      itensCartaAtual = res.itens;
-      valorCartaCalculado = res.total;
-      planoCartaIdAtual = res.planoCartaId || planoCartaIdAtual;
+      itensCartaAtual = res.itens || [];
+      valorCartaCalculado = Number(res.total || 0);
+      if (res.planoCartaId) planoCartaIdAtual = res.planoCartaId;
+      if (select && planoCartaIdAtual) select.value = planoCartaIdAtual;
     } catch (err) {
       itensCartaAtual = [];
       valorCartaCalculado = 0;
     }
+
+    if (!item) {
+      sugerirAulasPorCategoriaEPlano(categoria, itensCartaAtual);
+    }
+
     if (planoAtual !== 'Personalizado') setValorTotalInput(valorCartaCalculado);
     renderPlanoBox();
   }
@@ -6135,8 +6227,29 @@ function openContratoForm(id) {
     const prestField = document.getElementById('numeroPrestacoesField');
     if (prestField) prestField.style.display = planoAtual === 'Mensalidades' ? '' : 'none';
 
+    const tabelaModulosHtml = `
+      <div style="font-weight:600; font-size:13px; margin:0 0 6px">Módulos / Composição da carta (${itensCartaAtual.length} ${itensCartaAtual.length === 1 ? 'módulo' : 'módulos'})</div>
+      <div class="table-wrap" style="box-shadow:none; margin-bottom:12px">
+        <table>
+          <thead><tr><th>Código</th><th>Módulo / Item incluído na carta</th><th>Valor</th></tr></thead>
+          <tbody>
+            ${itensCartaAtual.length ? itensCartaAtual.map(r => `
+              <tr>
+                <td class="muted" style="font-size:12px">${esc(r.codigo || '—')}</td>
+                <td>${esc(r.descricao)} ${r.descontavel ? '<span class="muted" style="font-size:12px">(descontável)</span>' : '<span class="muted" style="font-size:12px">(fixo)</span>'}</td>
+                <td class="cell-primary">${fmtMoney(r.valor)}</td>
+              </tr>
+            `).join('') : '<tr><td colspan="3" class="muted" style="text-align:center; padding:12px">Sem composição de módulos definida para esta categoria.</td></tr>'}
+          </tbody>
+          <tfoot><tr><td></td><td style="font-weight:700">Total de referência da carta</td><td style="font-weight:700">${fmtMoney(valorCartaCalculado)}</td></tr></tfoot>
+        </table>
+      </div>
+    `;
+
     if (planoAtual === 'Personalizado') {
       box.innerHTML = `
+        ${tabelaModulosHtml}
+        <div style="font-weight:600; font-size:13px; margin: 10px 0 6px">Parcelas Personalizadas a gerar na Conta Corrente</div>
         <div id="parcelasList">
           ${parcelas.map((p, i) => `
             <div class="form-grid" style="grid-template-columns: 2fr 1fr auto; align-items:end; margin-bottom:8px" data-parcela-row="${i}">
@@ -6148,7 +6261,7 @@ function openContratoForm(id) {
         </div>
         <button type="button" class="btn btn-ghost btn-sm" id="btnAdicionarParcela">+ Adicionar parcela</button>
         <p class="muted" id="parcelasSomaInfo" style="margin-top:10px"></p>
-        <p class="muted" style="margin-top:4px">Plano personalizado: o valor total do contrato passa a ser a soma destas parcelas, em vez do valor calculado pela categoria/desconto do aluno (valor de referência da categoria: ${fmtMoney(valorCartaCalculado)}).</p>
+        <p class="muted" style="margin-top:4px">Plano personalizado: o valor total do contrato passa a ser a soma destas parcelas (valor de referência dos módulos: ${fmtMoney(valorCartaCalculado)}).</p>
       `;
       box.querySelectorAll('[data-parcela-row]').forEach(row => {
         const idx = Number(row.dataset.parcelaRow);
@@ -6161,45 +6274,69 @@ function openContratoForm(id) {
         });
       });
       document.getElementById('btnAdicionarParcela').addEventListener('click', () => { parcelas.push({ descricao: '', valor: '' }); renderPlanoBox(); });
-      document.getElementById('planoCartaSelect').addEventListener('change', (e) => {
-        planoCartaIdAtual = Number(e.target.value) || null;
-        atualizarValorCarta();
-      });
-      document.getElementById('contratoCategoriaSelect').addEventListener('change', () => { atualizarValorCarta(); renderAlertaContratoExistente(); });
       atualizarSomaParcelas();
       return;
     }
 
     setValorTotalInput(valorCartaCalculado);
-    let rows;
     if (planoAtual === 'Mensalidades') {
       const n = numeroPrestacoesAtual();
       const parcela = +(valorCartaCalculado / n).toFixed(2);
       let acumulado = 0;
-      rows = Array.from({ length: n }, (_, i) => {
+      const prestRows = Array.from({ length: n }, (_, i) => {
         const valor = i < n - 1 ? parcela : +(valorCartaCalculado - acumulado).toFixed(2);
         acumulado = +(acumulado + valor).toFixed(2);
-        return { descricao: `Mensalidade ${i + 1}/${n}`, valor, sub: '' };
+        return { descricao: `Mensalidade ${i + 1}/${n}`, valor };
       });
+      box.innerHTML = `
+        ${tabelaModulosHtml}
+        <div style="font-weight:600; font-size:13px; margin: 10px 0 6px">Plano de Prestações a gerar na Conta Corrente (${n} mensalidades)</div>
+        <div class="table-wrap" style="box-shadow:none">
+          <table>
+            <thead><tr><th>N.º</th><th>Descrição da prestação</th><th>Valor</th></tr></thead>
+            <tbody>${prestRows.map((r, i) => `<tr><td class="muted" style="font-size:12px">#${i + 1}</td><td>${esc(r.descricao)}</td><td class="cell-primary">${fmtMoney(r.valor)}</td></tr>`).join('')}</tbody>
+            <tfoot><tr><td></td><td style="font-weight:700">Total das prestações</td><td style="font-weight:700">${fmtMoney(valorCartaCalculado)}</td></tr></tfoot>
+          </table>
+        </div>
+      `;
     } else {
-      rows = itensCartaAtual.length
-        ? itensCartaAtual.map(i => ({ codigo: i.codigo, descricao: i.descricao, valor: i.valor, sub: i.descontavel ? 'descontável' : 'valor fixo' }))
-        : [{ codigo: '', descricao: 'Sem composição de preço definida para esta categoria — define-a em Configurações > Composição da carta.', valor: 0, sub: '' }];
+      box.innerHTML = `
+        ${tabelaModulosHtml}
+        <p class="muted" style="margin-top:6px">Plano de pagamento único: será gerado um débito inicial único na conta corrente do aluno com os módulos acima discriminados, no valor total de ${fmtMoney(valorCartaCalculado)}.</p>
+      `;
     }
-    box.innerHTML = `
-      <div class="table-wrap" style="box-shadow:none">
-        <table>
-          <thead><tr><th>Código</th><th>Descrição do item gerado</th><th>Valor</th></tr></thead>
-          <tbody>${rows.map(r => `<tr><td class="muted" style="font-size:12px">${esc(r.codigo || '—')}</td><td>${esc(r.descricao)} ${r.sub ? `<span class="muted" style="font-size:12px">(${r.sub})</span>` : ''}</td><td>${fmtMoney(r.valor)}</td></tr>`).join('')}</tbody>
-          <tfoot><tr><td></td><td style="font-weight:700">Total</td><td style="font-weight:700">${fmtMoney(valorCartaCalculado)}</td></tr></tfoot>
-        </table>
-      </div>
-    `;
   }
 
-  document.getElementById('planoPagamentoSelect').addEventListener('change', (e) => { planoAtual = e.target.value; renderPlanoBox(); });
-  document.getElementById('contratoCategoriaSelect').addEventListener('change', atualizarValorCarta);
-  document.querySelector('#contratoForm [name="numeroPrestacoes"]').addEventListener('input', renderPlanoBox);
+  const selectPlanoCarta = document.getElementById('planoCartaSelect');
+  if (selectPlanoCarta) {
+    selectPlanoCarta.addEventListener('change', (e) => {
+      planoCartaIdAtual = Number(e.target.value) || null;
+      atualizarValorCarta(false);
+    });
+  }
+
+  const selectCategoria = document.getElementById('contratoCategoriaSelect');
+  if (selectCategoria) {
+    selectCategoria.addEventListener('change', () => {
+      planoCartaIdAtual = null;
+      atualizarValorCarta(true);
+      renderAlertaContratoExistente();
+    });
+  }
+
+  const selectPlanoPag = document.getElementById('planoPagamentoSelect');
+  if (selectPlanoPag) {
+    selectPlanoPag.addEventListener('change', (e) => {
+      planoAtual = e.target.value;
+      if (planoAtual !== 'Personalizado') setValorTotalInput(valorCartaCalculado);
+      renderPlanoBox();
+    });
+  }
+
+  const prestInp = document.querySelector('#contratoForm [name="numeroPrestacoes"]');
+  if (prestInp) {
+    prestInp.addEventListener('input', renderPlanoBox);
+  }
 
   const form = document.getElementById('contratoForm');
   bindAlunoPicker(form);
@@ -6212,12 +6349,11 @@ function openContratoForm(id) {
         const aluno = findAluno(alunoIdAtual());
         if (aluno?.categoria) document.getElementById('contratoCategoriaSelect').value = aluno.categoria;
       }
-      atualizarValorCarta();
+      atualizarValorCarta(true);
       renderAlertaContratoExistente();
     });
   }
-  atualizarValorCarta();
-  document.getElementById('contratoCategoriaSelect').addEventListener('change', () => { atualizarValorCarta(); renderAlertaContratoExistente(); });
+  atualizarValorCarta(true);
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -6254,12 +6390,14 @@ function openContratoForm(id) {
       clausulasAdicionais: fd.get('clausulasAdicionais')
     };
     try {
-      if (item) {
-        await api('PUT', `/api/contratos/${item.id}`, payload);
-      } else {
-        await api('POST', '/api/contratos', { ...payload, estado: 'Pendente', dataCriacao: new Date().toISOString().slice(0, 10), textoContrato: null, assinatura: null });
-      }
-      await refreshCollections(['contratos']);
+      await withScreenLoader(async () => {
+        if (item) {
+          await api('PUT', `/api/contratos/${item.id}`, payload);
+        } else {
+          await api('POST', '/api/contratos', { ...payload, estado: 'Pendente', dataCriacao: new Date().toISOString().slice(0, 10), textoContrato: null, assinatura: null });
+        }
+        await refreshCollections(['contratos']);
+      }, item ? 'A atualizar contrato…' : 'A criar contrato de formação…');
       closeModal();
       renderContratos();
       toast(item ? 'Contrato atualizado.' : 'Contrato criado.');
@@ -6573,72 +6711,73 @@ function abrirAssinaturaContrato(id) {
     const sigTutor = (eMenor && padTutor) ? padTutor.obterImagemBase64() : null;
 
     try {
-      toast('A preparar documento assinado…');
-      let docTexto = texto;
-      if (sigFormando) {
-        docTexto = docTexto.replace(
-          '<div class="assinatura-slot" data-slot="segundo" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;"></div>',
-          `<div class="assinatura-slot" data-slot="segundo" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
-             <img src="${sigFormando}" style="max-width:170px; max-height:60px; display:block; margin:0 auto">
-           </div>`
-        );
-      }
-      if (sigTutor) {
-        docTexto = docTexto.replace(
-          '<div class="assinatura-slot" data-slot="tutor" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;"></div>',
-          `<div class="assinatura-slot" data-slot="tutor" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
-             <img src="${sigTutor}" style="max-width:170px; max-height:60px; display:block; margin:0 auto">
-           </div>`
-        );
-      }
-
-      let pdfBase64 = null;
-      if (window.html2pdf) {
-        const tempDiv = document.createElement('div');
-        tempDiv.style.position = 'fixed';
-        tempDiv.style.left = '-9999px';
-        tempDiv.style.top = '0';
-        tempDiv.style.width = '790px';
-        tempDiv.innerHTML = `
-          <div style="font-family:Inter, Arial, sans-serif; font-size:12px; line-height:1.45; color:#16233B; padding:12px 16px;">
-            ${docTexto}
-            <div style="margin-top:20px; font-size:11.5px; border-top:1px solid #d2dcea; padding-top:10px">
-              <p><strong>Aceite eletronicamente por:</strong> ${esc(nomeDigitado)}</p>
-              ${nomeDigitadoTutor ? `<p><strong>Tutor / Encarregado de Educação:</strong> ${esc(nomeDigitadoTutor)}</p>` : ''}
-              <p><strong>Data/hora:</strong> ${new Date().toLocaleString('pt-PT')}</p>
-            </div>
-          </div>
-        `;
-        document.body.appendChild(tempDiv);
-        try {
-          const opt = {
-            margin: [8, 8, 8, 8],
-            filename: `contrato-${id}-assinado.pdf`,
-            image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true, logging: false },
-            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-          };
-          pdfBase64 = await window.html2pdf().set(opt).from(tempDiv).output('datauristring');
-        } catch (pdfErr) {
-          console.warn('html2pdf client-side falhou, backend usará pdf-lib:', pdfErr);
-        } finally {
-          if (tempDiv.parentNode) tempDiv.remove();
+      await withScreenLoader(async () => {
+        let docTexto = texto;
+        if (sigFormando) {
+          docTexto = docTexto.replace(
+            '<div class="assinatura-slot" data-slot="segundo" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;"></div>',
+            `<div class="assinatura-slot" data-slot="segundo" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
+               <img src="${sigFormando}" style="max-width:170px; max-height:60px; display:block; margin:0 auto">
+             </div>`
+          );
         }
-      }
+        if (sigTutor) {
+          docTexto = docTexto.replace(
+            '<div class="assinatura-slot" data-slot="tutor" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;"></div>',
+            `<div class="assinatura-slot" data-slot="tutor" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
+               <img src="${sigTutor}" style="max-width:170px; max-height:60px; display:block; margin:0 auto">
+             </div>`
+          );
+        }
 
-      // Guardar assinaturas, submeter PDF e sincronizar itens da conta corrente
-      toast('A registar assinatura e submeter contrato…');
-      await api('PUT', `/api/contratos/${id}/assinar`, {
-        nomeDigitado,
-        textoContrato: docTexto,
-        assinaturaImagem: sigFormando,
-        nomeDigitadoTutor,
-        assinaturaTutorImagem: sigTutor,
-        pdfBase64,
-        filename: `contrato-${id}-assinado.pdf`
-      });
+        let pdfBase64 = null;
+        if (window.html2pdf) {
+          const tempDiv = document.createElement('div');
+          tempDiv.style.position = 'fixed';
+          tempDiv.style.left = '-9999px';
+          tempDiv.style.top = '0';
+          tempDiv.style.width = '790px';
+          tempDiv.innerHTML = `
+            <div style="font-family:Inter, Arial, sans-serif; font-size:12px; line-height:1.45; color:#16233B; padding:12px 16px;">
+              ${docTexto}
+              <div style="margin-top:20px; font-size:11.5px; border-top:1px solid #d2dcea; padding-top:10px">
+                <p><strong>Aceite eletronicamente por:</strong> ${esc(nomeDigitado)}</p>
+                ${nomeDigitadoTutor ? `<p><strong>Tutor / Encarregado de Educação:</strong> ${esc(nomeDigitadoTutor)}</p>` : ''}
+                <p><strong>Data/hora:</strong> ${new Date().toLocaleString('pt-PT')}</p>
+              </div>
+            </div>
+          `;
+          document.body.appendChild(tempDiv);
+          try {
+            const opt = {
+              margin: [8, 8, 8, 8],
+              filename: `contrato-${id}-assinado.pdf`,
+              image: { type: 'jpeg', quality: 0.98 },
+              html2canvas: { scale: 2, useCORS: true, logging: false },
+              jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+            pdfBase64 = await window.html2pdf().set(opt).from(tempDiv).output('datauristring');
+          } catch (pdfErr) {
+            console.warn('html2pdf client-side falhou, backend usará pdf-lib:', pdfErr);
+          } finally {
+            if (tempDiv.parentNode) tempDiv.remove();
+          }
+        }
 
-      await refreshCollections(['contratos', 'pagamentos', 'dashboard']);
+        // Guardar assinaturas, submeter PDF e sincronizar itens da conta corrente
+        await api('PUT', `/api/contratos/${id}/assinar`, {
+          nomeDigitado,
+          textoContrato: docTexto,
+          assinaturaImagem: sigFormando,
+          nomeDigitadoTutor,
+          assinaturaTutorImagem: sigTutor,
+          pdfBase64,
+          filename: `contrato-${id}-assinado.pdf`
+        });
+
+        await refreshCollections(['contratos', 'pagamentos', 'dashboard']);
+      }, 'A gerar documento assinado e submeter contrato…');
+
       closeModal();
       renderContratos();
       renderDashboard();
@@ -6746,9 +6885,10 @@ function abrirDocumentoContrato(id) {
         reader.onerror = () => reject(new Error('Não foi possível ler o ficheiro.'));
         reader.readAsDataURL(file);
       });
-      toast('A submeter PDF…');
-      const resultado = await api('POST', `/api/contratos/${id}/pdf-assinado`, { pdfBase64, filename: file.name });
-      await refreshCollections(['contratos']);
+      await withScreenLoader(async () => {
+        await api('POST', `/api/contratos/${id}/pdf-assinado`, { pdfBase64, filename: file.name });
+        await refreshCollections(['contratos']);
+      }, 'A submeter PDF…');
       renderContratos();
       abrirDocumentoContrato(id);
       toast('PDF submetido.', 'success');
@@ -6768,9 +6908,11 @@ function bindForm(collection, id, numberFields, rerender) {
       else payload[key] = val;
     }
     try {
-      if (id) await api('PUT', `/api/${collection}/${id}`, payload);
-      else await api('POST', `/api/${collection}`, payload);
-      await refreshCollections([collection, 'dashboard']);   // era: await loadAll();
+      await withScreenLoader(async () => {
+        if (id) await api('PUT', `/api/${collection}/${id}`, payload);
+        else await api('POST', `/api/${collection}`, payload);
+        await refreshCollections([collection, 'dashboard']);
+      }, id ? 'A guardar alterações…' : 'A criar registo…');
       closeModal();
       rerender();
       renderDashboard();
