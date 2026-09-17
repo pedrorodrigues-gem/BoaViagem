@@ -411,22 +411,21 @@
 
   function getAlunoContagens(aluno) {
     if (!aluno) return { aulasTeoricas: 0, aulasPraticas: 0 };
-    // Se o registo já tem os valores calculados na query SQL, usa-os diretamente em O(1)
-    if (aluno.aulasTeoricasRealizadas != null && aluno.aulasPraticasRealizadas != null) {
+    var tReal = aluno.aulasTeoricasRealizadas != null ? aluno.aulasTeoricasRealizadas : aluno.aulas_teoricas_realizadas;
+    var pReal = aluno.aulasPraticasRealizadas != null ? aluno.aulasPraticasRealizadas : aluno.aulas_praticas_realizadas;
+    if (tReal != null && pReal != null) {
       return {
-        aulasTeoricas: Number(aluno.aulasTeoricasRealizadas) || 0,
-        aulasPraticas: Number(aluno.aulasPraticasRealizadas) || 0
-      };
-    }
-    if (aluno.aulas_teoricas_realizadas != null && aluno.aulas_praticas_realizadas != null) {
-      return {
-        aulasTeoricas: Number(aluno.aulas_teoricas_realizadas) || 0,
-        aulasPraticas: Number(aluno.aulas_praticas_realizadas) || 0
+        aulasTeoricas: Number(tReal) || 0,
+        aulasPraticas: Number(pReal) || 0
       };
     }
 
     var map = obterMapaContagensAulas();
-    return map.get(Number(aluno.id)) || { aulasTeoricas: 0, aulasPraticas: 0 };
+    var fallback = map.get(Number(aluno.id)) || { aulasTeoricas: 0, aulasPraticas: 0 };
+    return {
+      aulasTeoricas: tReal != null ? (Number(tReal) || 0) : fallback.aulasTeoricas,
+      aulasPraticas: pReal != null ? (Number(pReal) || 0) : fallback.aulasPraticas
+    };
   }
 
   function getAlunosAtivos() {

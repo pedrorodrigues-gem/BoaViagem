@@ -975,7 +975,7 @@ function openTurmaTeoricaForm(id) {
     try {
       if (item) await api('PUT', `/api/turmasTeoricas/${item.id}`, payload);
       else await api('POST', '/api/turmasTeoricas', payload);
-      await refreshCollections(['turmasTeoricas']);
+      await refreshCollections(['turmasTeoricas', 'alunos']);
       closeModal();
       render();
       toast(item ? 'Turma teórica atualizada.' : 'Turma teórica criada.');
@@ -1236,7 +1236,7 @@ async function abrirPresencasForm(turmaId) {
             presencas: presencasFinais,
             estado: 'Concluída'
           });
-          await refreshCollections(['turmasTeoricas']);
+          await refreshCollections(['turmasTeoricas', 'alunos']);
           closeModal();
           render();
           toast('Presenças validadas com sucesso.');
@@ -3859,7 +3859,7 @@ function openAulaForm(id) {
     try {
       if (item) await api('PUT', `/api/aulas/${item.id}`, payload);
       else await api('POST', '/api/aulas', payload);
-      await refreshCollections(['aulas', 'dashboard']);
+      await refreshCollections(['aulas', 'dashboard', 'alunos']);
       closeModal();
       render();
       renderDashboard();
@@ -3890,17 +3890,48 @@ async function abrirHistoricoAulasModal(alunoId) {
     const rel = await api('GET', `/api/relatorios/aluno/${alunoId}`);
     const { praticas, teoricasIndividuais, turmasTeoricas } = rel;
 
-    const linhasTeoricas = [
-      ...teoricasIndividuais.map(t => ({ data: t.data, hora: t.hora, duracaoMin: t.duracaoMin, estado: t.estado })),
-      ...turmasTeoricas.map(t => ({
-        data: t.data, hora: t.horaInicio, duracaoMin: t.duracaoMin,
-        estado: t.presente === null ? t.estado : (t.presente ? 'Presente' : 'Faltou')
-      }))
-    ].sort((a, b) => (a.data + a.hora).localeCompare(b.data + b.hora));
+    // Deduplica sessões teóricas que possam existir em simultâneo em aulas e turmas_teoricas (mesma data e hora)
+    const mapaTeoricas = new Map();
+    (turmasTeoricas || []).forEach(t => {
+      const h = t.horaInicio || t.hora || '';
+      const d = String(t.data || '').slice(0, 10);
+      const chave = `${d}_${h}`;
+      mapaTeoricas.set(chave, {
+        data: t.data,
+        hora: h,
+        duracaoMin: t.duracaoMin,
+        estado: t.presente === null ? t.estado : (t.presente ? 'Presente' : 'Faltou'),
+        cancelada: isEstadoCancelada(t.estado),
+        presente: t.presente
+      });
+    });
+    (teoricasIndividuais || []).forEach(t => {
+      const h = t.hora || '';
+      const d = String(t.data || '').slice(0, 10);
+      const chave = `${d}_${h}`;
+      if (!mapaTeoricas.has(chave)) {
+        mapaTeoricas.set(chave, {
+          data: t.data,
+          hora: h,
+          duracaoMin: t.duracaoMin,
+          estado: t.estado,
+          cancelada: isEstadoCancelada(t.estado),
+          presente: isEstadoConcluida(t.estado) ? true : null
+        });
+      }
+    });
 
-    const teoricasNaoCanceladas = [...teoricasIndividuais, ...turmasTeoricas].filter(t => !isEstadoCancelada(t.estado)).length;
-    const praticasNaoCanceladas = praticas.filter(p => !isEstadoCancelada(p.estado)).length;
-    const faltasTeoricas = turmasTeoricas.filter(t => t.presente === false).length;
+    const linhasTeoricas = Array.from(mapaTeoricas.values()).sort((a, b) => (String(a.data) + String(a.hora)).localeCompare(String(b.data) + String(b.hora)));
+    const teoricasNaoCanceladas = linhasTeoricas.filter(t => !t.cancelada).length;
+    const praticasNaoCanceladas = (praticas || []).filter(p => !isEstadoCancelada(p.estado)).length;
+    const faltasTeoricas = (turmasTeoricas || []).filter(t => t.presente === false).length;
+
+    // Sincroniza imediatamente o registo do aluno em memória para a listagem refletir logo a contagem real
+    aluno.aulasTeoricasRealizadas = teoricasNaoCanceladas;
+    aluno.aulasPraticasRealizadas = praticasNaoCanceladas;
+    if (typeof renderAlunos === 'function' && (state.currentView === 'alunos' || document.getElementById('view-alunos')?.classList.contains('active'))) {
+      renderAlunos();
+    }
 
     openModal(`Histórico de Aulas · ${esc(aluno.nome)}`, `
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); margin-bottom:16px">
@@ -5010,10 +5041,27 @@ async function exportarFolhaCaixaPdf(dataStr) {
 
 function renderRelatorioAlunoHTML(rel) {
   const { aluno, requisito, resumo, praticas, teoricasIndividuais, turmasTeoricas, alertasDocumentais } = rel;
-  const linhasTeoricas = [
-    ...teoricasIndividuais.map(t => ({ data: t.data, hora: t.hora, tema: t.notas || 'Aula teórica individual', duracaoMin: t.duracaoMin, estado: t.estado, presenca: t.estado === 'Concluída' ? 'Presente' : t.estado })),
-    ...turmasTeoricas.map(t => ({ data: t.data, hora: t.horaInicio, tema: t.tema, duracaoMin: t.duracaoMin, estado: t.estado, presenca: t.presente === null ? t.estado : (t.presente ? 'Presente' : 'Faltou') }))
-  ].sort((a, b) => (a.data + a.hora).localeCompare(b.data + b.hora));
+  const mapaTeoricasRel = new Map();
+  (turmasTeoricas || []).forEach(t => {
+    const h = t.horaInicio || t.hora || '';
+    const d = String(t.data || '').slice(0, 10);
+    mapaTeoricasRel.set(`${d}_${h}`, {
+      data: t.data, hora: h, tema: t.tema, duracaoMin: t.duracaoMin, estado: t.estado,
+      presenca: t.presente === null ? t.estado : (t.presente ? 'Presente' : 'Faltou')
+    });
+  });
+  (teoricasIndividuais || []).forEach(t => {
+    const h = t.hora || '';
+    const d = String(t.data || '').slice(0, 10);
+    const chave = `${d}_${h}`;
+    if (!mapaTeoricasRel.has(chave)) {
+      mapaTeoricasRel.set(chave, {
+        data: t.data, hora: h, tema: t.notas || 'Aula teórica individual', duracaoMin: t.duracaoMin, estado: t.estado,
+        presenca: t.estado === 'Concluída' ? 'Presente' : t.estado
+      });
+    }
+  });
+  const linhasTeoricas = Array.from(mapaTeoricasRel.values()).sort((a, b) => (String(a.data) + String(a.hora)).localeCompare(String(b.data) + String(b.hora)));
 
   return `
     ${alertasDocumentais && alertasDocumentais.length ? `
@@ -6687,7 +6735,11 @@ async function deleteItem(collection, id, label) {
   showScreenLoader('A remover registo…');
   try {
     const resDel = await api('DELETE', `/api/${collection}/${id}`);
-    const tarefas = [refreshCollections([collection, 'dashboard'])];
+    const colecoesParaAtualizar = [collection, 'dashboard'];
+    if (collection === 'aulas' || collection === 'turmasTeoricas') {
+      colecoesParaAtualizar.push('alunos');
+    }
+    const tarefas = [refreshCollections(colecoesParaAtualizar)];
     if (collection === 'alunos' && typeof ensureAlunosAtivos === 'function') {
       tarefas.push(ensureAlunosAtivos({ force: true }));
     }
@@ -7305,8 +7357,200 @@ function setupGlobalActionBlocker() {
       showScreenLoader('A terminar sessão…');
     });
   }
+
+  // 3. Botão de mudar palavra-passe
+  const btnMudarPwd = document.getElementById('btnMudarPassword');
+  if (btnMudarPwd) {
+    btnMudarPwd.addEventListener('click', () => {
+      abrirModalMudarPassword();
+    });
+  }
 }
 
+/* ==================== MODAL MUDAR PALAVRA-PASSE ==================== */
+function abrirModalMudarPassword() {
+  const formHtml = `
+    <form id="formMudarPassword" class="no-loader" onsubmit="event.preventDefault(); submeterMudarPassword();">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px; padding:12px 14px; background:var(--surface-subtle, #f8fafc); border:1px solid var(--border, #e2e8f0); border-radius:8px;">
+        <div style="font-size:24px; line-height:1">🔑</div>
+        <div>
+          <div style="font-weight:600; font-size:14px; color:var(--text, #1e293b)">Segurança da Conta</div>
+          <div style="font-size:12px; color:var(--text-muted, #64748b)">Atualiza a palavra-passe da tua conta de utilizador.</div>
+        </div>
+      </div>
+
+      <div id="mudarPasswordAlerta" class="inline-alert" style="display:none; margin-bottom:14px"></div>
+
+      <div class="form-grid" style="grid-template-columns:1fr; gap:14px">
+        <div class="form-field full">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
+            <label style="margin:0; font-weight:600; font-size:13px">Palavra-passe atual</label>
+            <button type="button" class="btn-toggle-pwd" onclick="toggleVisibilidadePassword('pwdAtual', this)" style="background:none; border:none; cursor:pointer; font-size:12px; color:var(--accent, #2657c8); padding:0; font-weight:500">👁 Mostrar</button>
+          </div>
+          <input id="pwdAtual" name="passwordAtual" type="password" required autocomplete="current-password" placeholder="Introduz a palavra-passe atual" style="width:100%">
+        </div>
+
+        <div class="form-field full">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
+            <label style="margin:0; font-weight:600; font-size:13px">Nova palavra-passe</label>
+            <button type="button" class="btn-toggle-pwd" onclick="toggleVisibilidadePassword('pwdNova', this)" style="background:none; border:none; cursor:pointer; font-size:12px; color:var(--accent, #2657c8); padding:0; font-weight:500">👁 Mostrar</button>
+          </div>
+          <input id="pwdNova" name="novaPassword" type="password" required minlength="6" autocomplete="new-password" placeholder="Mínimo de 6 caracteres" style="width:100%" oninput="verificarForcaPassword(this.value)">
+          <div id="pwdForcaWrap" style="margin-top:6px; display:none">
+            <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:3px; color:var(--text-muted, #64748b)">
+              <span>Segurança: <strong id="pwdForcaTxt">Fraca</strong></span>
+              <span id="pwdForcaDica">Inclui letras e números</span>
+            </div>
+            <div style="height:4px; border-radius:2px; background:#e2e8f0; overflow:hidden">
+              <div id="pwdForcaBarra" style="height:100%; width:30%; background:#ef4444; transition:all .25s ease"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-field full">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
+            <label style="margin:0; font-weight:600; font-size:13px">Confirmar nova palavra-passe</label>
+            <button type="button" class="btn-toggle-pwd" onclick="toggleVisibilidadePassword('pwdConfirmar', this)" style="background:none; border:none; cursor:pointer; font-size:12px; color:var(--accent, #2657c8); padding:0; font-weight:500">👁 Mostrar</button>
+          </div>
+          <input id="pwdConfirmar" name="confirmarPassword" type="password" required minlength="6" autocomplete="new-password" placeholder="Repete a nova palavra-passe" style="width:100%">
+        </div>
+      </div>
+
+      <div class="form-actions" style="margin-top:20px; display:flex; justify-content:flex-end; gap:10px">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+        <button type="submit" id="btnSalvarPassword" class="btn btn-primary" style="display:flex; align-items:center; gap:6px">
+          <span>Alterar Palavra-passe</span>
+        </button>
+      </div>
+    </form>
+  `;
+
+  openModal('Alterar Palavra-passe', formHtml, { maxWidth: '440px' });
+  setTimeout(() => {
+    const inputAtual = document.getElementById('pwdAtual');
+    if (inputAtual) inputAtual.focus();
+  }, 100);
+}
+
+function toggleVisibilidadePassword(inputId, btn) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  if (el.type === 'password') {
+    el.type = 'text';
+    btn.textContent = '🙈 Ocultar';
+  } else {
+    el.type = 'password';
+    btn.textContent = '👁 Mostrar';
+  }
+}
+
+function verificarForcaPassword(pwd) {
+  const wrap = document.getElementById('pwdForcaWrap');
+  const txt = document.getElementById('pwdForcaTxt');
+  const dica = document.getElementById('pwdForcaDica');
+  const barra = document.getElementById('pwdForcaBarra');
+  if (!wrap || !txt || !barra) return;
+  if (!pwd) {
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = 'block';
+  let score = 0;
+  if (pwd.length >= 6) score++;
+  if (pwd.length >= 8) score++;
+  if (/[A-Z]/.test(pwd)) score++;
+  if (/[0-9]/.test(pwd)) score++;
+  if (/[^A-Za-z0-9]/.test(pwd)) score++;
+
+  if (score <= 2) {
+    txt.textContent = 'Fraca';
+    txt.style.color = '#ef4444';
+    if (dica) dica.textContent = 'Mínimo 6 caracteres';
+    barra.style.width = '30%';
+    barra.style.background = '#ef4444';
+  } else if (score <= 3) {
+    txt.textContent = 'Razoável';
+    txt.style.color = '#f59e0b';
+    if (dica) dica.textContent = 'Adiciona maiúsculas ou símbolos';
+    barra.style.width = '65%';
+    barra.style.background = '#f59e0b';
+  } else {
+    txt.textContent = 'Forte';
+    txt.style.color = '#10b981';
+    if (dica) dica.textContent = 'Excelente!';
+    barra.style.width = '100%';
+    barra.style.background = '#10b981';
+  }
+}
+
+async function submeterMudarPassword() {
+  const alerta = document.getElementById('mudarPasswordAlerta');
+  const btn = document.getElementById('btnSalvarPassword');
+  const pAtual = document.getElementById('pwdAtual')?.value || '';
+  const pNova = document.getElementById('pwdNova')?.value || '';
+  const pConf = document.getElementById('pwdConfirmar')?.value || '';
+
+  function mostrarErro(msg) {
+    if (alerta) {
+      alerta.className = 'inline-alert inline-alert-error';
+      alerta.style.display = 'block';
+      alerta.textContent = msg;
+    } else {
+      toast(msg, 'error');
+    }
+  }
+
+  if (!pAtual) {
+    mostrarErro('Por favor, indica a tua palavra-passe atual.');
+    return;
+  }
+  if (!pNova || pNova.length < 6) {
+    mostrarErro('A nova palavra-passe deve ter pelo menos 6 caracteres.');
+    return;
+  }
+  if (pNova !== pConf) {
+    mostrarErro('A confirmação não coincide com a nova palavra-passe.');
+    return;
+  }
+  if (pAtual === pNova) {
+    mostrarErro('A nova palavra-passe deve ser diferente da atual.');
+    return;
+  }
+
+  if (alerta) alerta.style.display = 'none';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = 'A guardar…';
+  }
+
+  try {
+    const res = await api('POST', '/api/auth/mudar-password', {
+      passwordAtual: pAtual,
+      novaPassword: pNova,
+      confirmarPassword: pConf
+    });
+    closeModal();
+    toast(res?.message || 'Palavra-passe alterada com sucesso!', 'success');
+  } catch (err) {
+    mostrarErro(err.message || 'Erro ao alterar a palavra-passe.');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<span>Alterar Palavra-passe</span>';
+    }
+  }
+}
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('#btnMudarPassword');
+  if (btn) {
+    abrirModalMudarPassword();
+  }
+});
+
+window.abrirModalMudarPassword = abrirModalMudarPassword;
+window.toggleVisibilidadePassword = toggleVisibilidadePassword;
+window.verificarForcaPassword = verificarForcaPassword;
+window.submeterMudarPassword = submeterMudarPassword;
 window.renderRevalidacoes = renderRevalidacoes;
 window.openRevalidacaoForm = openRevalidacaoForm;
 window.alterarEstadoRevalidacao = alterarEstadoRevalidacao;
