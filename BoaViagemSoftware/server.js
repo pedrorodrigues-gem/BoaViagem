@@ -207,7 +207,7 @@ app.post('/api/auth/logout', (req, res) => {
 app.use('/api', requireAuth);
 
 
-app.get('/api/auth/me', requireAuth, (req, res) => {
+app.get('/api/auth/me', (req, res) => {
   ok(res, { escola: escolaPublic(req.escola), user: { id: req.user.id, nome: req.user.nome, username: req.user.username, role: req.user.role, instrutorId: req.user.instrutorId || null } });
 });
 
