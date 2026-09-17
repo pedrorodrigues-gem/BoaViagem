@@ -343,20 +343,79 @@ async function autenticar({ username, password }) {
   if (!user || !pass) return { error: 'Username e password são obrigatórios.' };
 
   const result = await query(
-    `SELECT u.id, u.escola_id AS escolaId, u.nome, u.username, u.password_hash AS passwordHash,
-            u.role, u.instrutor_id AS instrutorId, e.*
+    `SELECT
+       u.id AS user_id,
+       u.escola_id AS user_escola_id,
+       u.nome AS user_nome,
+       u.username AS user_username,
+       u.password_hash AS user_password_hash,
+       u.role AS user_role,
+       u.instrutor_id AS user_instrutor_id,
+       e.id AS escola_id_col,
+       e.nome AS escola_nome,
+       e.username AS escola_username,
+       e.email AS escola_email,
+       e.telefone AS escola_telefone,
+       e.nipc AS escola_nipc,
+       e.morada AS escola_morada,
+       e.numero_licenca_imt AS escola_numero_licenca_imt,
+       e.nome_diretor AS escola_nome_diretor,
+       e.data_criacao AS escola_data_criacao,
+       e.primavera_ativo,
+       e.primavera_base_url,
+       e.primavera_empresa,
+       e.primavera_client_id,
+       e.primavera_api_key,
+       e.primavera_serie,
+       e.primavera_modo_pag,
+       e.primavera_conta_bancaria,
+       e.primavera_filial,
+       e.primavera_taxa_iva_default,
+       e.primavera_armazem,
+       e.primavera_artigo_formacao
      FROM users u
      JOIN escolas e ON e.id = u.escola_id
      WHERE LOWER(u.username) = LOWER(@username)`,
     { username: user }
   );
   const row = result.recordset[0];
-  if (!row || !bcrypt.compareSync(pass, row.passwordHash)) {
+  if (!row || !bcrypt.compareSync(pass, row.user_password_hash)) {
     return { error: 'Credenciais inválidas.' };
   }
 
-  const escolaRow = { ...row };
-  const userRow = { id: row.id, escolaId: row.escolaId, nome: row.nome, username: row.username, role: row.role, instrutorId: row.instrutorId };
+  const userRow = {
+    id: row.user_id,
+    escolaId: row.user_escola_id,
+    nome: row.user_nome,
+    username: row.user_username,
+    role: row.user_role,
+    instrutorId: row.user_instrutor_id
+  };
+
+  const escolaRow = {
+    id: row.escola_id_col,
+    nome: row.escola_nome,
+    username: row.escola_username,
+    email: row.escola_email,
+    telefone: row.escola_telefone,
+    nipc: row.escola_nipc,
+    morada: row.escola_morada,
+    numero_licenca_imt: row.escola_numero_licenca_imt,
+    nome_diretor: row.escola_nome_diretor,
+    data_criacao: row.escola_data_criacao,
+    primavera_ativo: row.primavera_ativo,
+    primavera_base_url: row.primavera_base_url,
+    primavera_empresa: row.primavera_empresa,
+    primavera_client_id: row.primavera_client_id,
+    primavera_api_key: row.primavera_api_key,
+    primavera_serie: row.primavera_serie,
+    primavera_modo_pag: row.primavera_modo_pag,
+    primavera_conta_bancaria: row.primavera_conta_bancaria,
+    primavera_filial: row.primavera_filial,
+    primavera_taxa_iva_default: row.primavera_taxa_iva_default,
+    primavera_armazem: row.primavera_armazem,
+    primavera_artigo_formacao: row.primavera_artigo_formacao
+  };
 
   return { escola: escolaRow, user: userRow };
 }

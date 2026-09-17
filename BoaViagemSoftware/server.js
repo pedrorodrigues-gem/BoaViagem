@@ -63,6 +63,9 @@ async function ensureSchemaColumns() {
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('pagamentos') AND name = 'nao_faturar')
         ALTER TABLE pagamentos ADD nao_faturar BIT NOT NULL DEFAULT 0;
 
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('users') AND name = 'aluno_id')
+        ALTER TABLE users ADD aluno_id INT NULL;
+
       BEGIN TRY
         ALTER TABLE pagamentos ALTER COLUMN aluno_id INT NULL;
       END TRY
@@ -438,8 +441,14 @@ async function fetchCollectionFromSql(req, name) {
   if (name === 'alunos') {
     colunas = `id, escola_id, ${LISTAGEM_SEM_FOTO.alunos},
       (SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = alunos.id AND au.tipo = 'Prática' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) AS aulas_praticas_realizadas,
-      ((SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = alunos.id AND au.tipo = 'Teórica' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) +
-       (SELECT COUNT(*) FROM turma_inscritos ti JOIN turmas_teoricas tt ON tt.id = ti.turma_id WHERE ti.aluno_id = alunos.id AND (ti.presente = 1 OR (ti.presente IS NULL AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AS aulas_teoricas_realizadas`;
+      ((SELECT COUNT(*) FROM turma_inscritos ti JOIN turmas_teoricas tt ON tt.id = ti.turma_id WHERE ti.aluno_id = alunos.id AND (ti.presente = 1 OR (ti.presente IS NULL AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) +
+       (SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = alunos.id AND au.tipo = 'Teórica' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+        AND NOT EXISTS (
+          SELECT 1 FROM turma_inscritos ti2 JOIN turmas_teoricas tt2 ON tt2.id = ti2.turma_id
+          WHERE ti2.aluno_id = alunos.id AND tt2.data = au.data
+            AND (tt2.hora_inicio = au.hora OR tt2.hora_inicio IS NULL OR au.hora IS NULL OR au.hora = '')
+            AND tt2.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+        ))) AS aulas_teoricas_realizadas`;
   }
   const offset = Number(req.query?.offset || 0);
 
@@ -501,8 +510,14 @@ async function fetchItemFromSql(req, name, id) {
   if (name === 'alunos') {
     sqlText = `SELECT *,
       (SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = alunos.id AND au.tipo = 'Prática' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) AS aulas_praticas_realizadas,
-      ((SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = alunos.id AND au.tipo = 'Teórica' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) +
-       (SELECT COUNT(*) FROM turma_inscritos ti JOIN turmas_teoricas tt ON tt.id = ti.turma_id WHERE ti.aluno_id = alunos.id AND (ti.presente = 1 OR (ti.presente IS NULL AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AS aulas_teoricas_realizadas
+      ((SELECT COUNT(*) FROM turma_inscritos ti JOIN turmas_teoricas tt ON tt.id = ti.turma_id WHERE ti.aluno_id = alunos.id AND (ti.presente = 1 OR (ti.presente IS NULL AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) +
+       (SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = alunos.id AND au.tipo = 'Teórica' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+        AND NOT EXISTS (
+          SELECT 1 FROM turma_inscritos ti2 JOIN turmas_teoricas tt2 ON tt2.id = ti2.turma_id
+          WHERE ti2.aluno_id = alunos.id AND tt2.data = au.data
+            AND (tt2.hora_inicio = au.hora OR tt2.hora_inicio IS NULL OR au.hora IS NULL OR au.hora = '')
+            AND tt2.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+        ))) AS aulas_teoricas_realizadas
       FROM alunos WHERE escola_id = @escolaId AND id = @id`;
   }
   const result = await query(sqlText, {
@@ -996,8 +1011,14 @@ app.get('/api/alunos/lista', async (req, res) => {
       a.psicotecnico_aplicavel, a.psicotecnico_data_emissao, a.psicotecnico_data_validade, a.imt_numero,
       a.imt_data_emissao, a.imt_data_validade,
       (SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = a.id AND au.tipo = 'Prática' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) AS aulas_praticas_realizadas,
-      ((SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = a.id AND au.tipo = 'Teórica' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) +
-       (SELECT COUNT(*) FROM turma_inscritos ti JOIN turmas_teoricas tt ON tt.id = ti.turma_id WHERE ti.aluno_id = a.id AND (ti.presente = 1 OR (ti.presente IS NULL AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AS aulas_teoricas_realizadas
+      ((SELECT COUNT(*) FROM turma_inscritos ti JOIN turmas_teoricas tt ON tt.id = ti.turma_id WHERE ti.aluno_id = a.id AND (ti.presente = 1 OR (ti.presente IS NULL AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) +
+       (SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = a.id AND au.tipo = 'Teórica' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+        AND NOT EXISTS (
+          SELECT 1 FROM turma_inscritos ti2 JOIN turmas_teoricas tt2 ON tt2.id = ti2.turma_id
+          WHERE ti2.aluno_id = a.id AND tt2.data = au.data
+            AND (tt2.hora_inicio = au.hora OR tt2.hora_inicio IS NULL OR au.hora IS NULL OR au.hora = '')
+            AND tt2.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+        ))) AS aulas_teoricas_realizadas
     `;
 
     const result = await query(
