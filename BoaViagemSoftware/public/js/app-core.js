@@ -370,6 +370,34 @@
     }
 
     var map = new Map();
+    var teoricasVistas = new Set();
+
+    for (var k = 0; k < turmas.length; k++) {
+      var t = turmas[k];
+      if (!t) continue;
+      if (t.estado && ESTADOS_CANCELADA_SET.has(normalizeText(t.estado))) continue;
+      var inscritos = t.inscritos || [];
+      var presencas = t.presencas || {};
+      var tData = String(t.data || '').slice(0, 10);
+      var tHora = String(t.horaInicio || t.hora || '').trim();
+
+      for (var j = 0; j < inscritos.length; j++) {
+        var tAlunoId = Number(inscritos[j]);
+        if (presencas[tAlunoId] === true) {
+          var tc = map.get(tAlunoId);
+          if (!tc) {
+            tc = { aulasTeoricas: 0, aulasPraticas: 0 };
+            map.set(tAlunoId, tc);
+          }
+          tc.aulasTeoricas++;
+          if (tData) {
+            teoricasVistas.add(tAlunoId + '_' + tData + '_' + tHora);
+            teoricasVistas.add(tAlunoId + '_' + tData);
+          }
+        }
+      }
+    }
+
     for (var i = 0; i < aulas.length; i++) {
       var a = aulas[i];
       if (!a || !a.alunoId) continue;
@@ -382,28 +410,18 @@
       }
       var tNorm = normalizeText(a.tipo);
       if (tNorm === TIPO_TEORICA_NORM) {
-        c.aulasTeoricas++;
+        var aData = String(a.data || '').slice(0, 10);
+        var aHora = String(a.hora || '').trim();
+        var duplicada = (aData && (teoricasVistas.has(aId + '_' + aData + '_' + aHora) || teoricasVistas.has(aId + '_' + aData)));
+        if (!duplicada) {
+          c.aulasTeoricas++;
+          if (aData) {
+            teoricasVistas.add(aId + '_' + aData + '_' + aHora);
+            teoricasVistas.add(aId + '_' + aData);
+          }
+        }
       } else if (tNorm === TIPO_PRATICA_NORM) {
         c.aulasPraticas++;
-      }
-    }
-
-    for (var k = 0; k < turmas.length; k++) {
-      var t = turmas[k];
-      if (!t) continue;
-      if (t.estado && ESTADOS_CANCELADA_SET.has(normalizeText(t.estado))) continue;
-      var inscritos = t.inscritos || [];
-      var presencas = t.presencas || {};
-      for (var j = 0; j < inscritos.length; j++) {
-        var tAlunoId = Number(inscritos[j]);
-        if (presencas[tAlunoId] === true) {
-          var tc = map.get(tAlunoId);
-          if (!tc) {
-            tc = { aulasTeoricas: 0, aulasPraticas: 0 };
-            map.set(tAlunoId, tc);
-          }
-          tc.aulasTeoricas++;
-        }
       }
     }
 

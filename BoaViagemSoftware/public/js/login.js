@@ -56,9 +56,12 @@ registoForm.addEventListener('submit', async (e) => {
   }
 });
 
-// Se já existir sessão válida, avança logo para a app.
-api('GET', '/api/auth/me').then((auth) => {
-  if (auth && (auth.authenticated || auth.user)) {
-    window.location.href = '/';
-  }
-}).catch(() => {});
+// Se já existir sessão válida, avança logo para a app (exceto se passado ?logout ou ?switch na URL).
+const urlParams = new URLSearchParams(window.location.search);
+if (!urlParams.has('logout') && !urlParams.has('switch')) {
+  api('GET', '/api/auth/me').then((auth) => {
+    if (auth && (auth.authenticated || auth.user)) {
+      window.location.href = '/';
+    }
+  }).catch(() => {});
+}
