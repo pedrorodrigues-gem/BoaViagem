@@ -57,7 +57,13 @@ function invalidateTenantCache(escolaId) {
   }
 }
 
-const COLUNAS_LEVES_ALUNOS = 'id, escola_id, pessoa_id, espaco_id, numero_aluno, nome, email, telefone, categoria, estado, data_inscricao, aulas_teoricas, aulas_praticas, notas, data_nascimento, nif, tipo_documento, numero_documento, validade_documento, morada, codigo_postal, localidade, dispensa_modulos, desconto, atestado_data_emissao, atestado_data_validade, atestado_apto, psicotecnico_aplicavel, psicotecnico_data_emissao, psicotecnico_data_validade, imt_numero, imt_data_emissao, imt_data_validade';
+const COLUNAS_LEVES_ALUNOS = `id, escola_id, pessoa_id, espaco_id, numero_aluno, nome, email, telefone, categoria, estado, data_inscricao, aulas_teoricas, aulas_praticas, notas, data_nascimento, nif, tipo_documento, numero_documento, validade_documento, morada, codigo_postal, localidade, dispensa_modulos, desconto, atestado_data_emissao, atestado_data_validade, atestado_apto, psicotecnico_aplicavel, psicotecnico_data_emissao, psicotecnico_data_validade, imt_numero, imt_data_emissao, imt_data_validade,
+  (SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = alunos.id AND au.tipo = 'Prática' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) AS aulas_praticas_realizadas,
+  (SELECT COUNT(*) FROM (
+     SELECT au.data, au.hora FROM aulas au WHERE au.aluno_id = alunos.id AND au.tipo = 'Teórica' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+     UNION
+     SELECT tt.data, tt.hora_inicio AS hora FROM turma_inscritos ti JOIN turmas_teoricas tt ON tt.id = ti.turma_id WHERE ti.aluno_id = alunos.id AND (ti.presente = 1 OR (ti.presente IS NULL AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+   ) subTeoricas) AS aulas_teoricas_realizadas`;
 const COLUNAS_LEVES_INSTRUTORES = 'id, escola_id, pessoa_id, nome, email, telefone, estado, cargo, nif, titulo_profissional_numero, titulo_profissional_validade';
 
 async function loadTenantForEscola(escolaId) {

@@ -211,6 +211,53 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
   ok(res, { escola: escolaPublic(req.escola), user: { id: req.user.id, nome: req.user.nome, username: req.user.username, role: req.user.role, instrutorId: req.user.instrutorId || null } });
 });
 
+app.post('/api/auth/mudar-password', requireAuth, async (req, res) => {
+  try {
+    const { passwordAtual, novaPassword, confirmarPassword } = req.body || {};
+    const atualStr = String(passwordAtual || '').trim();
+    const novaStr = String(novaPassword || '').trim();
+    const confStr = String(confirmarPassword !== undefined ? confirmarPassword : '').trim();
+
+    if (!atualStr) {
+      return badRequest(res, 'A palavra-passe atual é obrigatória.');
+    }
+    if (!novaStr || novaStr.length < 6) {
+      return badRequest(res, 'A nova palavra-passe deve ter pelo menos 6 caracteres.');
+    }
+    if (confirmarPassword !== undefined && novaStr !== confStr) {
+      return badRequest(res, 'A confirmação não coincide com a nova palavra-passe.');
+    }
+    if (atualStr === novaStr) {
+      return badRequest(res, 'A nova palavra-passe deve ser diferente da palavra-passe atual.');
+    }
+
+    const userId = Number(req.user.id);
+    const userRes = await query('SELECT id, password_hash FROM users WHERE id=@id AND escola_id=@escolaId', {
+      id: userId,
+      escolaId: req.escolaId
+    });
+    const userRow = userRes.recordset[0];
+    if (!userRow) return notFound(res, 'Utilizador não encontrado.');
+
+    const match = bcrypt.compareSync(atualStr, userRow.password_hash);
+    if (!match) {
+      return badRequest(res, 'A palavra-passe atual está incorreta.');
+    }
+
+    const novaHash = bcrypt.hashSync(novaStr, 10);
+    await query('UPDATE users SET password_hash=@novaHash WHERE id=@id AND escola_id=@escolaId', {
+      novaHash,
+      id: userId,
+      escolaId: req.escolaId
+    });
+
+    invalidateTenantCache(req.escolaId);
+    ok(res, { message: 'Palavra-passe alterada com sucesso.' });
+  } catch (ex) {
+    res.status(500).json({ success: false, error: `Falha ao alterar palavra-passe: ${ex.message || ex}` });
+  }
+});
+
 /* As coleções carregadas para req.tenant no middleware requireAuth (auth.js)
    nem sempre passam pelo mesmo caminho de normalização que fetchCollectionFromSql
    (dbRowToJs/formatDateValue) — por isso campos de data podem chegar como
@@ -370,7 +417,16 @@ async function fetchCollectionFromSql(req, name) {
   // the behaviour remains the same (return all rows) to preserve backwards
   // compatibility for existing clients until the frontend is adapted.
   const limit = Number(req.query?.limit || 0);
-  const colunas = LISTAGEM_SEM_FOTO[name] ? `id, escola_id, ${LISTAGEM_SEM_FOTO[name]}` : '*';
+  let colunas = LISTAGEM_SEM_FOTO[name] ? `id, escola_id, ${LISTAGEM_SEM_FOTO[name]}` : '*';
+  if (name === 'alunos') {
+    colunas = `id, escola_id, ${LISTAGEM_SEM_FOTO.alunos},
+      (SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = alunos.id AND au.tipo = 'Prática' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) AS aulas_praticas_realizadas,
+      (SELECT COUNT(*) FROM (
+         SELECT au.data, au.hora FROM aulas au WHERE au.aluno_id = alunos.id AND au.tipo = 'Teórica' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+         UNION
+         SELECT tt.data, tt.hora_inicio AS hora FROM turma_inscritos ti JOIN turmas_teoricas tt ON tt.id = ti.turma_id WHERE ti.aluno_id = alunos.id AND (ti.presente = 1 OR (ti.presente IS NULL AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+       ) subTeoricas) AS aulas_teoricas_realizadas`;
+  }
   const offset = Number(req.query?.offset || 0);
 
   const condicoes = ['escola_id = @escolaId'];
@@ -427,7 +483,18 @@ async function fetchCollectionFromSql(req, name) {
 
 async function fetchItemFromSql(req, name, id) {
   const table = collectionTableName(name);
-  const result = await query(`SELECT * FROM ${table} WHERE escola_id = @escolaId AND id = @id`, {
+  let sqlText = `SELECT * FROM ${table} WHERE escola_id = @escolaId AND id = @id`;
+  if (name === 'alunos') {
+    sqlText = `SELECT *,
+      (SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = alunos.id AND au.tipo = 'Prática' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) AS aulas_praticas_realizadas,
+      (SELECT COUNT(*) FROM (
+         SELECT au.data, au.hora FROM aulas au WHERE au.aluno_id = alunos.id AND au.tipo = 'Teórica' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+         UNION
+         SELECT tt.data, tt.hora_inicio AS hora FROM turma_inscritos ti JOIN turmas_teoricas tt ON tt.id = ti.turma_id WHERE ti.aluno_id = alunos.id AND (ti.presente = 1 OR (ti.presente IS NULL AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+       ) subTeoricas) AS aulas_teoricas_realizadas
+      FROM alunos WHERE escola_id = @escolaId AND id = @id`;
+  }
+  const result = await query(sqlText, {
     escolaId: req.escolaId,
     id: Number(id)
   });
@@ -918,8 +985,11 @@ app.get('/api/alunos/lista', async (req, res) => {
       a.psicotecnico_aplicavel, a.psicotecnico_data_emissao, a.psicotecnico_data_validade, a.imt_numero,
       a.imt_data_emissao, a.imt_data_validade,
       (SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = a.id AND au.tipo = 'Prática' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) AS aulas_praticas_realizadas,
-      ((SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = a.id AND au.tipo = 'Teórica' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) +
-       (SELECT COUNT(*) FROM turma_inscritos ti JOIN turmas_teoricas tt ON tt.id = ti.turma_id WHERE ti.aluno_id = a.id AND ti.presente = 1 AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AS aulas_teoricas_realizadas
+      (SELECT COUNT(*) FROM (
+         SELECT au.data, au.hora FROM aulas au WHERE au.aluno_id = a.id AND au.tipo = 'Teórica' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+         UNION
+         SELECT tt.data, tt.hora_inicio AS hora FROM turma_inscritos ti JOIN turmas_teoricas tt ON tt.id = ti.turma_id WHERE ti.aluno_id = a.id AND (ti.presente = 1 OR (ti.presente IS NULL AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado'))) AND tt.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')
+       ) subTeoricas) AS aulas_teoricas_realizadas
     `;
 
     const result = await query(
