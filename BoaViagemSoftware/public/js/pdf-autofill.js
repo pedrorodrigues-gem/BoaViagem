@@ -242,7 +242,7 @@
         const BASE = 'F[0].Page_1[0].';
 
         // --- Tipo de requerimento (topo) ---
-        setField(BASE + 'requerimento[0]', MOD1_REQUERIMENTO_VALUES.CARTA_CONDUCAO);
+        setField(BASE + 'requerimento[0]', MOD1_REQUERIMENTO_VALUES.LICENCA_APRENDIZAGEM);
 
         // --- Motivo do Pedido (Padrão: Emissão de Carta) ---
         setField(BASE + 'emissao[0]', true);
