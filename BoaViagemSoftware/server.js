@@ -84,6 +84,15 @@ async function ensureSchemaColumns() {
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'assinatura_tutor_imagem')
         ALTER TABLE contratos ADD assinatura_tutor_imagem VARBINARY(MAX) NULL;
 
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('alunos') AND name = 'tipo_desconto')
+        ALTER TABLE alunos ADD tipo_desconto NVARCHAR(20) NULL DEFAULT 'valor';
+
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('alunos') AND name = 'cartas_categorias')
+        ALTER TABLE alunos ADD cartas_categorias NVARCHAR(MAX) NULL;
+
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'tipo_desconto')
+        ALTER TABLE contratos ADD tipo_desconto NVARCHAR(20) NULL DEFAULT 'valor';
+
       IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'revalidacoes')
       BEGIN
         CREATE TABLE revalidacoes (
@@ -348,7 +357,7 @@ function fotoParaBuffer(value) {
    a uma coluna (ex: itensCarta, parcelasPersonalizadas, avisoRecibo),
    evitando erros de SQL "Invalid column name". */
 const COLUMNS_BY_TABLE = {
-  alunos: ['pessoa_id', 'espaco_id', 'numero_aluno', 'nome', 'email', 'telefone', 'categoria', 'estado', 'data_inscricao', 'aulas_teoricas', 'aulas_praticas', 'notas', 'data_nascimento', 'nif', 'tipo_documento', 'numero_documento', 'validade_documento', 'morada', 'codigo_postal', 'localidade', 'dispensa_modulos', 'desconto', 'foto', 'atestado_data_emissao', 'atestado_data_validade', 'atestado_apto', 'psicotecnico_aplicavel', 'psicotecnico_data_emissao', 'psicotecnico_data_validade', 'imt_numero', 'imt_data_emissao', 'imt_data_validade'],
+  alunos: ['pessoa_id', 'espaco_id', 'numero_aluno', 'nome', 'email', 'telefone', 'categoria', 'estado', 'data_inscricao', 'aulas_teoricas', 'aulas_praticas', 'notas', 'data_nascimento', 'nif', 'tipo_documento', 'numero_documento', 'validade_documento', 'morada', 'codigo_postal', 'localidade', 'dispensa_modulos', 'desconto', 'tipo_desconto', 'cartas_categorias', 'foto', 'atestado_data_emissao', 'atestado_data_validade', 'atestado_apto', 'psicotecnico_aplicavel', 'psicotecnico_data_emissao', 'psicotecnico_data_validade', 'imt_numero', 'imt_data_emissao', 'imt_data_validade'],
   instrutores: ['pessoa_id', 'nome', 'email', 'telefone', 'estado', 'cargo', 'nif', 'titulo_profissional_numero', 'titulo_profissional_validade', 'foto'],
   pessoas: ['nome', 'tipo_pessoa', 'origem_collection', 'origem_id', 'email', 'telefone', 'estado'],
   espacos: ['nome', 'observacoes', 'serie'],
@@ -357,7 +366,7 @@ const COLUMNS_BY_TABLE = {
   turmas_teoricas: ['espaco_id', 'instrutor_id', 'tema', 'data', 'hora_inicio', 'hora_fim', 'sala', 'estado'],
   requisitos: ['categoria', 'horas_teoricas_min', 'horas_praticas_min', 'km_pratica_min'],
   produtos: ['codigo', 'descricao', 'categoria', 'valor', 'descontavel', 'taxa_iva'],
-  contratos: ['aluno_id', 'categoria', 'plano_carta_id', 'plano_pagamento', 'numero_prestacoes', 'estado', 'valor_carta_calculado', 'desconto_aplicado', 'valor_total', 'texto_contrato', 'assinatura_nome_digitado', 'assinatura_data_hora', 'assinatura_tutor_nome_digitado'],
+  contratos: ['aluno_id', 'categoria', 'plano_carta_id', 'plano_pagamento', 'numero_prestacoes', 'estado', 'valor_carta_calculado', 'desconto_aplicado', 'tipo_desconto', 'valor_total', 'texto_contrato', 'assinatura_nome_digitado', 'assinatura_data_hora', 'assinatura_tutor_nome_digitado'],
   pagamentos: ['aluno_id', 'valor', 'data', 'descricao', 'taxa_iva', 'estado', 'modo_pagamento', 'nao_faturar', 'artigo', 'item_conta_id'],
   itens_conta: ['aluno_id', 'origem_contrato_id', 'codigo', 'descricao', 'categoria', 'valor', 'taxa_iva', 'estado', 'origem_plano', 'ordem'],  pre_inscricoes: ['nome', 'email', 'categoria', 'desconto', 'estado', 'observacoes', 'data_pre_inscricao', 'data_inscricao', 'aluno_id'],
   exames_marcacoes: ['aluno_id', 'tipo', 'data', 'hora', 'hora_fim', 'duracao', 'local', 'estado', 'observacoes', 'resultado'],
@@ -432,7 +441,7 @@ function collectionTableName(name) {
 }
 
 const LISTAGEM_SEM_FOTO = {
-  alunos: 'pessoa_id, espaco_id, numero_aluno, nome, email, telefone, categoria, estado, data_inscricao, aulas_teoricas, aulas_praticas, notas, data_nascimento, nif, tipo_documento, numero_documento, validade_documento, morada, codigo_postal, localidade, dispensa_modulos, desconto, atestado_data_emissao, atestado_data_validade, atestado_apto, psicotecnico_aplicavel, psicotecnico_data_emissao, psicotecnico_data_validade, imt_numero, imt_data_emissao, imt_data_validade',
+  alunos: 'pessoa_id, espaco_id, numero_aluno, nome, email, telefone, categoria, estado, data_inscricao, aulas_teoricas, aulas_praticas, notas, data_nascimento, nif, tipo_documento, numero_documento, validade_documento, morada, codigo_postal, localidade, dispensa_modulos, desconto, tipo_desconto, cartas_categorias, atestado_data_emissao, atestado_data_validade, atestado_apto, psicotecnico_aplicavel, psicotecnico_data_emissao, psicotecnico_data_validade, imt_numero, imt_data_emissao, imt_data_validade',
   instrutores: 'pessoa_id, nome, email, telefone, estado, cargo, nif, titulo_profissional_numero, titulo_profissional_validade'
 };
 
@@ -736,27 +745,68 @@ function obterPlanoCarta(tenant, categoria, planoCartaId) {
   return planos[0];
 }
 
-function itensCartaPorCategoria(tenant, categoria, desconto, planoCartaId) {
+function itensCartaPorCategoria(tenant, categoria, desconto, planoCartaId, tipoDesconto = 'valor') {
   const plano = obterPlanoCarta(tenant, categoria, planoCartaId);
   const composicao = plano ? plano.linhas : [];
-  const d = Math.max(0, Math.min(100, Number(desconto) || 0));
-  return composicao.map(linha => {
+  const linhasBase = composicao.map(linha => {
     const produto = (tenant.produtos || []).find(p => p.id === Number(linha.produtoId));
     if (!produto) return null;
     const quantidade = Math.max(1, Number(linha.quantidade) || 1);
     const valorBase = +((Number(produto.valor) || 0) * quantidade).toFixed(2);
     const descontavel = !!produto.descontavel;
-    const valor = descontavel ? +(valorBase * (1 - d / 100)).toFixed(2) : valorBase;
     return {
       produtoId: produto.id,
-      codigo: produto.codigo || null, // NOVO
+      codigo: produto.codigo || null,
       descricao: quantidade > 1 ? `${produto.descricao} (x${quantidade})` : produto.descricao,
       categoria: produto.categoria || 'Diversos',
       quantidade, valorBase, descontavel,
-      taxaIva: Number(produto.taxaIva ?? 23),
-      valor
+      taxaIva: Number(produto.taxaIva ?? 23)
     };
   }).filter(Boolean);
+
+  const isPercentagem = String(tipoDesconto || '').toLowerCase() === 'percentagem' || String(tipoDesconto || '').trim() === '%';
+
+  if (isPercentagem) {
+    const d = Math.max(0, Math.min(100, Number(desconto) || 0));
+    return linhasBase.map(item => {
+      const descItem = item.descontavel ? +((item.valorBase * d) / 100).toFixed(2) : 0;
+      const valor = item.descontavel ? Math.max(0, +(item.valorBase * (1 - d / 100)).toFixed(2)) : item.valorBase;
+      return {
+        ...item,
+        descontoItem: descItem,
+        valor
+      };
+    });
+  }
+
+  // Desconto em Valor (€):
+  const dVal = Math.max(0, Number(desconto) || 0);
+  const totalDescontavel = +linhasBase.filter(i => i.descontavel).reduce((s, i) => s + i.valorBase, 0).toFixed(2);
+  const totalGeral = +linhasBase.reduce((s, i) => s + i.valorBase, 0).toFixed(2);
+  const baseAlvo = totalDescontavel > 0 ? totalDescontavel : totalGeral;
+  const descontoEfetivo = Math.min(dVal, baseAlvo);
+
+  let acumuladoDesconto = 0;
+  return linhasBase.map((item, idx, arr) => {
+    const elegivel = totalDescontavel > 0 ? item.descontavel : true;
+    if (!elegivel || baseAlvo <= 0 || descontoEfetivo <= 0) {
+      return { ...item, descontoItem: 0, valor: item.valorBase };
+    }
+    const isLastElegivel = !arr.slice(idx + 1).some(x => totalDescontavel > 0 ? x.descontavel : true);
+    let descItem;
+    if (isLastElegivel) {
+      descItem = +(descontoEfetivo - acumuladoDesconto).toFixed(2);
+    } else {
+      descItem = +((item.valorBase / baseAlvo) * descontoEfetivo).toFixed(2);
+      acumuladoDesconto = +(acumuladoDesconto + descItem).toFixed(2);
+    }
+    const valor = Math.max(0, +(item.valorBase - descItem).toFixed(2));
+    return {
+      ...item,
+      descontoItem: descItem,
+      valor
+    };
+  });
 }
 
 /* ------------------------------------------------------------
@@ -772,6 +822,17 @@ function nestAlunoExtras(aluno) {
   aluno.atestadoMedico = { dataEmissao: aluno.atestadoDataEmissao ?? null, dataValidade: aluno.atestadoDataValidade ?? null, apto: aluno.atestadoApto ?? null };
   aluno.examePsicotecnico = { aplicavel: !!aluno.psicotecnicoAplicavel, dataEmissao: aluno.psicotecnicoDataEmissao ?? null, dataValidade: aluno.psicotecnicoDataValidade ?? null };
   aluno.processoIMT = { numero: aluno.imtNumero ?? null, dataEmissao: aluno.imtDataEmissao ?? null, dataValidade: aluno.imtDataValidade ?? null };
+
+  if (typeof aluno.cartasCategorias === 'string' && aluno.cartasCategorias.trim()) {
+    try {
+      aluno.cartasCategorias = JSON.parse(aluno.cartasCategorias);
+    } catch (_) {
+      aluno.cartasCategorias = [];
+    }
+  } else if (!Array.isArray(aluno.cartasCategorias)) {
+    aluno.cartasCategorias = [];
+  }
+  aluno.tipoDesconto = aluno.tipoDesconto || aluno.tipo_desconto || 'valor';
 
   if (Buffer.isBuffer(aluno.foto)) {
     aluno.foto = aluno.foto.length ? `data:image/jpeg;base64,${aluno.foto.toString('base64')}` : null;
@@ -805,6 +866,14 @@ function flattenAlunoExtras(item) {
       // qualquer outro tipo inesperado — mesma lógica de segurança
       delete item.foto;
     }
+  }
+
+  // --- CARTAS DE CONDUÇÃO DETIDAS (JSON) ---
+  if (item.cartasCategorias !== undefined) {
+    item.cartasCategorias = Array.isArray(item.cartasCategorias) ? JSON.stringify(item.cartasCategorias) : null;
+  }
+  if (item.tipoDesconto !== undefined) {
+    item.tipo_desconto = item.tipoDesconto;
   }
 
   // --- RESTO DAS TUAS REGRAS EXISTENTES ---
@@ -1013,7 +1082,7 @@ app.get('/api/alunos/lista', async (req, res) => {
       a.id, a.escola_id, a.pessoa_id, a.espaco_id, a.numero_aluno, a.nome, a.email, a.telefone, a.categoria,
       a.estado, a.data_inscricao, a.aulas_teoricas, a.aulas_praticas, a.notas, a.data_nascimento, a.nif,
       a.tipo_documento, a.numero_documento, a.validade_documento, a.morada, a.codigo_postal, a.localidade,
-      a.dispensa_modulos, a.desconto, a.atestado_data_emissao, a.atestado_data_validade, a.atestado_apto,
+      a.dispensa_modulos, a.desconto, a.tipo_desconto, a.cartas_categorias, a.atestado_data_emissao, a.atestado_data_validade, a.atestado_apto,
       a.psicotecnico_aplicavel, a.psicotecnico_data_emissao, a.psicotecnico_data_validade, a.imt_numero,
       a.imt_data_emissao, a.imt_data_validade,
       (SELECT COUNT(*) FROM aulas au WHERE au.aluno_id = a.id AND au.tipo = 'Prática' AND au.estado NOT IN ('Cancelada','Cancelado','Anulada','Anulado')) AS aulas_praticas_realizadas,
@@ -1689,20 +1758,25 @@ async function gravarParcelasPersonalizadas(contratoId, parcelas) {
 }
 
 function calcularValoresContrato(item, tenant) {
-  const aluno = tenant.alunos.find(a => a.id === Number(item.alunoId));
-  const desconto = Number(aluno?.desconto || 0);
+  const aluno = (tenant.alunos || []).find(a => a.id === Number(item.alunoId));
+  const rawDesconto = item.descontoAplicado !== undefined && item.descontoAplicado !== null && item.descontoAplicado !== ''
+    ? item.descontoAplicado
+    : (item.desconto !== undefined && item.desconto !== null && item.desconto !== '' ? item.desconto : aluno?.desconto);
+  const desconto = Number(rawDesconto || 0);
+  const tipoDesconto = item.tipoDesconto || aluno?.tipoDesconto || 'valor';
   const categoria = item.categoria || aluno?.categoria || '—';
-  const itensCarta = itensCartaPorCategoria(tenant, categoria, desconto, item.planoCartaId);
+  const itensCarta = itensCartaPorCategoria(tenant, categoria, desconto, item.planoCartaId, tipoDesconto);
   const valorCalculado = +itensCarta.reduce((s, i) => s + (Number(i.valor) || 0), 0).toFixed(2);
   const usaParcelasPersonalizadas = item.planoPagamento === 'Personalizado' && Array.isArray(item.parcelasPersonalizadas) && item.parcelasPersonalizadas.length > 0;
 
   item.valorCartaCalculado = valorCalculado;
   item.descontoAplicado = desconto;
+  item.tipoDesconto = tipoDesconto;
   item.valorTotal = usaParcelasPersonalizadas
     ? +item.parcelasPersonalizadas.reduce((s, p) => s + (Number(p.valor) || 0), 0).toFixed(2)
     : valorCalculado;
 
-  return { itensCarta, usaParcelasPersonalizadas, parcelasPersonalizadas: item.parcelasPersonalizadas || [], planoPagamento: item.planoPagamento, numeroPrestacoes: item.numeroPrestacoes, categoria };
+  return { itensCarta, usaParcelasPersonalizadas, parcelasPersonalizadas: item.parcelasPersonalizadas || [], planoPagamento: item.planoPagamento, numeroPrestacoes: item.numeroPrestacoes, categoria, desconto, tipoDesconto };
 }
 
 app.get('/api/contratos/anos', async (req, res) => {
@@ -1783,7 +1857,9 @@ app.use('/api/contratos', collectionRoutes('contratos', {
     delete row.assinaturaTutorImagem;
     row.pdfAssinado = row.pdfAssinadoFilename ? { filename: row.pdfAssinadoFilename, uploadedAt: row.pdfAssinadoUploadedAt, size: row.pdfAssinadoTamanhoBytes } : null;
     const aluno = (tenant.alunos || []).find(a => a.id === row.alunoId);
-    row.itensCarta = itensCartaPorCategoria(tenant, row.categoria, Number(aluno?.desconto ?? row.descontoAplicado ?? 0), row.planoCartaId);
+    row.tipoDesconto = row.tipoDesconto || row.tipo_desconto || aluno?.tipoDesconto || 'valor';
+    const descContrato = row.descontoAplicado !== undefined && row.descontoAplicado !== null ? row.descontoAplicado : (aluno?.desconto ?? 0);
+    row.itensCarta = itensCartaPorCategoria(tenant, row.categoria, Number(descContrato || 0), row.planoCartaId, row.tipoDesconto);
     const faturaResult = await query(`SELECT TOP 1 * FROM documentos_fiscais WHERE contrato_id=@id AND tipo IN ('FA','FR') ORDER BY data_emissao DESC`, { id: row.id });
     row.faturacao = faturaResult.recordset[0] ? dbRowToJs(faturaResult.recordset[0]) : null;
     const recibosResult = await query(`SELECT * FROM documentos_fiscais WHERE contrato_id=@id AND tipo='RE' ORDER BY data_emissao`, { id: row.id });
@@ -2068,6 +2144,17 @@ app.put('/api/config', async (req, res) => {
   try {
     const body = req.body || {};
     const composicaoCartaRecebida = body.composicaoCarta && typeof body.composicaoCarta === 'object' ? body.composicaoCarta : {};
+
+    // 1. Obter todos os planos existentes desta escola em 1 única query
+    const existingPlanosRes = await query('SELECT id, categoria, nome FROM planos_carta WHERE escola_id=@escolaId', { escolaId: req.escolaId });
+    const existingMap = new Map((existingPlanosRes.recordset || []).map(p => [p.id, p]));
+
+    const receivedPlanIds = new Set();
+    const plansToUpdate = [];
+    const plansToInsert = [];
+    const planLinesToInsert = [];
+    const touchedPlanIds = [];
+
     for (const categoria of Object.keys(composicaoCartaRecebida)) {
       const planosRecebidos = Array.isArray(composicaoCartaRecebida[categoria]) ? composicaoCartaRecebida[categoria] : [];
       for (const plano of planosRecebidos) {
@@ -2076,30 +2163,73 @@ app.put('/api/config', async (req, res) => {
           .filter(l => l && l.produtoId !== undefined && l.produtoId !== null && l.produtoId !== '')
           .map(l => ({ produtoId: Number(l.produtoId), quantidade: Math.max(1, Number(l.quantidade) || 1) }));
 
-        let planoId = plano.id ? Number(plano.id) : null;
-        if (planoId) {
-          const chk = await query('SELECT id FROM planos_carta WHERE id=@id AND escola_id=@escolaId', { id: planoId, escolaId: req.escolaId });
-          if (!chk.recordset[0]) planoId = null;
-        }
-        if (planoId) {
-          await query('UPDATE planos_carta SET categoria=@categoria, nome=@nome WHERE id=@id AND escola_id=@escolaId', { categoria, nome, id: planoId, escolaId: req.escolaId });
-          await query('DELETE FROM plano_carta_linhas WHERE plano_carta_id=@id', { id: planoId });
+        const planoId = plano.id ? Number(plano.id) : null;
+        if (planoId && existingMap.has(planoId)) {
+          receivedPlanIds.add(planoId);
+          touchedPlanIds.push(planoId);
+          const exist = existingMap.get(planoId);
+          if (exist.nome !== nome || exist.categoria !== categoria) {
+            plansToUpdate.push({ id: planoId, categoria, nome });
+          }
+          for (const l of linhas) {
+            planLinesToInsert.push({ planoId, produtoId: l.produtoId, quantidade: l.quantidade });
+          }
         } else {
-          const ins = await query(
-            'INSERT INTO planos_carta (escola_id, categoria, nome) OUTPUT inserted.id VALUES (@escolaId, @categoria, @nome)',
-            { escolaId: req.escolaId, categoria, nome }
-          );
-          planoId = ins.recordset[0].id;
-        }
-        for (const linha of linhas) {
-          await query(
-            'INSERT INTO plano_carta_linhas (plano_carta_id, produto_id, quantidade) VALUES (@planoId, @produtoId, @quantidade)',
-            { planoId, produtoId: linha.produtoId, quantidade: linha.quantidade }
-          );
+          plansToInsert.push({ categoria, nome, linhas });
         }
       }
     }
 
+    // 2. Remover planos e linhas eliminados pelo utilizador nas categorias enviadas
+    for (const p of existingMap.values()) {
+      if (composicaoCartaRecebida[p.categoria] && !receivedPlanIds.has(p.id)) {
+        await query('DELETE FROM plano_carta_linhas WHERE plano_carta_id=@id', { id: p.id });
+        await query('DELETE FROM planos_carta WHERE id=@id AND escola_id=@escolaId', { id: p.id, escolaId: req.escolaId });
+      }
+    }
+
+    // 3. Executar updates de planos alterados
+    for (const p of plansToUpdate) {
+      await query('UPDATE planos_carta SET categoria=@categoria, nome=@nome WHERE id=@id AND escola_id=@escolaId', { categoria: p.categoria, nome: p.nome, id: p.id, escolaId: req.escolaId });
+    }
+
+    // 4. Executar inserts de novos planos
+    for (const p of plansToInsert) {
+      const ins = await query(
+        'INSERT INTO planos_carta (escola_id, categoria, nome) OUTPUT inserted.id VALUES (@escolaId, @categoria, @nome)',
+        { escolaId: req.escolaId, categoria: p.categoria, nome: p.nome }
+      );
+      const newId = ins.recordset[0]?.id;
+      if (newId) {
+        touchedPlanIds.push(newId);
+        for (const l of p.linhas) {
+          planLinesToInsert.push({ planoId: newId, produtoId: l.produtoId, quantidade: l.quantidade });
+        }
+      }
+    }
+
+    // 5. Apagar linhas antigas dos planos tocados em bloco
+    if (touchedPlanIds.length > 0) {
+      const validIds = touchedPlanIds.map(id => Number(id)).filter(Number.isFinite);
+      if (validIds.length > 0) {
+        await query(`DELETE FROM plano_carta_linhas WHERE plano_carta_id IN (${validIds.join(',')})`);
+      }
+    }
+
+    // 6. Inserir todas as novas linhas em lote (chunks de 50)
+    for (let i = 0; i < planLinesToInsert.length; i += 50) {
+      const chunk = planLinesToInsert.slice(i, i + 50);
+      const valuesClause = chunk.map((_, cIdx) => `(@p${cIdx}, @prod${cIdx}, @q${cIdx})`).join(', ');
+      const params = {};
+      chunk.forEach((item, cIdx) => {
+        params[`p${cIdx}`] = item.planoId;
+        params[`prod${cIdx}`] = item.produtoId;
+        params[`q${cIdx}`] = item.quantidade;
+      });
+      await query(`INSERT INTO plano_carta_linhas (plano_carta_id, produto_id, quantidade) VALUES ${valuesClause}`, params);
+    }
+
+    // 7. Obter estado consolidado para devolver ao cliente
     const planosResult = await query('SELECT * FROM planos_carta WHERE escola_id=@escolaId', { escolaId: req.escolaId });
     const linhasResult = await query(
       `SELECT l.* FROM plano_carta_linhas l JOIN planos_carta p ON p.id = l.plano_carta_id WHERE p.escola_id=@escolaId`,
@@ -2127,11 +2257,12 @@ app.get('/api/precoCarta/:categoria', (req, res) => {
   const { tenant } = currentTenant(req);
   const categoria = String(req.params.categoria || '').trim();
   const desconto = Number(req.query.desconto || 0);
+  const tipoDesconto = req.query.tipoDesconto || 'valor';
   const planoCartaId = req.query.planoCartaId ? Number(req.query.planoCartaId) : null;
-  const itens = itensCartaPorCategoria(tenant, categoria, desconto, planoCartaId);
+  const itens = itensCartaPorCategoria(tenant, categoria, desconto, planoCartaId, tipoDesconto);
   const total = +itens.reduce((s, i) => s + (Number(i.valor) || 0), 0).toFixed(2);
   const plano = obterPlanoCarta(tenant, categoria, planoCartaId);
-  ok(res, { categoria, desconto, planoCartaId: plano?.id || null, planoNome: plano?.nome || null, itens, total });
+  ok(res, { categoria, desconto, tipoDesconto, planoCartaId: plano?.id || null, planoNome: plano?.nome || null, itens, total });
 });
 
 app.get('/api/planosCarta/:categoria', (req, res) => {
@@ -2644,7 +2775,11 @@ app.put('/api/contratos/:id/assinar', async (req, res) => {
         if (!jaTemFatura.recordset.length) {
           try {
             const aluno = nestAlunoExtras(dbRowToJs(alunoRow));
-            contrato.itensCarta = itensCartaPorCategoria(tenant, contrato.categoria, Number(aluno.desconto || 0), contrato.planoCartaId);
+            const descContrato = contrato.descontoAplicado !== undefined && contrato.descontoAplicado !== null
+              ? contrato.descontoAplicado
+              : (contrato.desconto_aplicado !== undefined && contrato.desconto_aplicado !== null ? contrato.desconto_aplicado : aluno.desconto);
+            const tipoDescContrato = contrato.tipoDesconto || contrato.tipo_desconto || aluno.tipoDesconto || 'valor';
+            contrato.itensCarta = itensCartaPorCategoria(tenant, contrato.categoria, Number(descContrato || 0), contrato.planoCartaId, tipoDescContrato);
             const serieDoc = await obterSerieParaAluno(req, aluno);
             const out = await invoicing.emitirFaturaContrato(req.escola, tenant, aluno, contrato, { serie: serieDoc });
             if (out && out.resultado && out.resultado.sucesso) {
@@ -2728,7 +2863,11 @@ app.post('/api/contratos/:id/pdf-assinado', async (req, res) => {
         if (!jaTemFatura.recordset.length) {
           try {
             const aluno = nestAlunoExtras(dbRowToJs(alunoRow));
-            contrato.itensCarta = itensCartaPorCategoria(tenant, contrato.categoria, Number(aluno.desconto || 0), contrato.planoCartaId);
+            const descContrato = contrato.descontoAplicado !== undefined && contrato.descontoAplicado !== null
+              ? contrato.descontoAplicado
+              : (contrato.desconto_aplicado !== undefined && contrato.desconto_aplicado !== null ? contrato.desconto_aplicado : aluno.desconto);
+            const tipoDescContrato = contrato.tipoDesconto || contrato.tipo_desconto || aluno.tipoDesconto || 'valor';
+            contrato.itensCarta = itensCartaPorCategoria(tenant, contrato.categoria, Number(descContrato || 0), contrato.planoCartaId, tipoDescContrato);
             const serieDoc = await obterSerieParaAluno(req, aluno);
             const out = await invoicing.emitirFaturaContrato(req.escola, tenant, aluno, contrato, { serie: serieDoc });
             if (out && out.resultado && out.resultado.sucesso) {
