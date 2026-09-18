@@ -1927,7 +1927,7 @@ app.post('/api/examesMarcacoes', async (req, res) => {
     const dataExame = String(payload.data || '').trim();
     if (!alunoId || !tipo || !dataExame) return badRequest(res, 'Aluno, tipo e data são obrigatórios.');
     if (!['Teórico', 'Prático'].includes(tipo)) return badRequest(res, 'Tipo inválido. Usa Teórico ou Prático.');
-    if (tipo === 'Prático') {
+    if (tipo === 'Prático' && !payload.ignorarSaldo && !payload.forcar) {
       const saldo = saldoContaCorrenteAluno(tenant, alunoId);
       if (saldo > 0.0001) return badRequest(res, 'Não é possível marcar um exame prático enquanto a conta corrente do aluno tiver saldo pendente.');
     }
@@ -1944,6 +1944,7 @@ app.post('/api/examesMarcacoes', async (req, res) => {
         estado: payload.estado || 'Marcado', observacoes: payload.observacoes || '', resultado
       }
     );
+    invalidateTenantCache(req.escolaId);
     ok(res, result.recordset[0]);
   } catch (ex) {
     res.status(503).json({ success: false, error: `Falha ao criar marcação: ${ex.message || ex}` });
