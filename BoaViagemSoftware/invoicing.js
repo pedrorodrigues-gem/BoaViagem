@@ -15,19 +15,23 @@ function obterEntidadeAluno(tenant, aluno) {
 }
 
 /* Converte uma taxa de IVA (em %) no código de 2 dígitos usado pelo gateway
-   Primavera (ex: 23 -> "23"). Se a taxa não vier definida numa linha em
+   Primavera (ex: 16 -> "16"). Se a taxa não vier definida numa linha em
    concreto (ex: itens gerados por planos "Mensalidades"/"Personalizado",
    que não correspondem 1:1 a um produto do catálogo), usa a taxa por
-   omissão configurada na escola (ou 23%, a taxa normal, como último recurso). */
+   omissão configurada na escola (ou 16%, a taxa normal, como último recurso). */
 function codIvaFromTaxa(taxa, taxaOmissao) {
   const n = Number(taxa);
-  const valor = Number.isFinite(n) ? n : (Number(taxaOmissao) || 23);
+  const valor = Number.isFinite(n) ? n : (Number(taxaOmissao) || 16);
   return String(Math.round(valor)).padStart(2, '0');
 }
 
 function codIva(pagamento, escola) {
-  const taxa = pagamento.taxaIva ?? escola.primavera.taxaIvaDefault ?? 23;
-  return codIvaFromTaxa(taxa, escola.primavera.taxaIvaDefault);
+  const p = escola?.primavera || {};
+  const rawTaxa = pagamento?.taxaIva ?? pagamento?.taxa_iva;
+  const taxa = (rawTaxa !== undefined && rawTaxa !== null)
+    ? rawTaxa
+    : (p.taxaIvaDefault ?? 16);
+  return codIvaFromTaxa(taxa, p.taxaIvaDefault);
 }
 
 function corpoEmail(escola, tipoLabel) {
@@ -42,14 +46,17 @@ ${escola.nome}`;
 }
 
 function linhasFromPagamento(pagamento, escola) {
-  const p = escola.primavera;
+  const p = escola?.primavera || {};
+  const artigo = (pagamento && (pagamento.artigo || pagamento.codigo)) || p.artigoFormacao || 'FORMACAO';
+  const descricao = (pagamento && pagamento.descricao) || 'Serviços de formação para condução';
   return [{
-    Artigo: p.artigoFormacao || 'FORMACAO',
+    Artigo: artigo,
     Quantidade: 1.0,
-    PrecoUnitario: Number(pagamento.valor) || 0,
-    Desconto: Number(pagamento.desconto || 0),
+    PrecoUnitario: Number(pagamento?.valor) || 0,
+    Desconto: Number(pagamento?.desconto || 0),
     Armazem: p.armazem || 'A1',
-    DescricaoNovoArtigo: pagamento.descricao || 'Serviços de formação para condução',
+    Descricao: descricao,
+    DescricaoNovoArtigo: descricao,
     CodIvaNovoArtigo: codIva(pagamento, escola),
     IvaDedutivel: false
   }];
@@ -243,6 +250,9 @@ module.exports = {
   obterEntidadeAluno,
   emitirFatura,
   linhasFromContrato,
+  linhasFromPagamento,
+  codIva,
+  codIvaFromTaxa,
   emitirFaturaContrato,
   emitirNotaCredito,
   emitirRecibo,

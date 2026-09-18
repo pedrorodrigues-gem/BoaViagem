@@ -63,6 +63,12 @@ async function ensureSchemaColumns() {
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('pagamentos') AND name = 'nao_faturar')
         ALTER TABLE pagamentos ADD nao_faturar BIT NOT NULL DEFAULT 0;
 
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('pagamentos') AND name = 'artigo')
+        ALTER TABLE pagamentos ADD artigo NVARCHAR(50) NULL;
+
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('pagamentos') AND name = 'item_conta_id')
+        ALTER TABLE pagamentos ADD item_conta_id INT NULL;
+
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('users') AND name = 'aluno_id')
         ALTER TABLE users ADD aluno_id INT NULL;
 
@@ -352,7 +358,7 @@ const COLUMNS_BY_TABLE = {
   requisitos: ['categoria', 'horas_teoricas_min', 'horas_praticas_min', 'km_pratica_min'],
   produtos: ['codigo', 'descricao', 'categoria', 'valor', 'descontavel', 'taxa_iva'],
   contratos: ['aluno_id', 'categoria', 'plano_carta_id', 'plano_pagamento', 'numero_prestacoes', 'estado', 'valor_carta_calculado', 'desconto_aplicado', 'valor_total', 'texto_contrato', 'assinatura_nome_digitado', 'assinatura_data_hora', 'assinatura_tutor_nome_digitado'],
-  pagamentos: ['aluno_id', 'valor', 'data', 'descricao', 'taxa_iva', 'estado', 'modo_pagamento', 'nao_faturar'],
+  pagamentos: ['aluno_id', 'valor', 'data', 'descricao', 'taxa_iva', 'estado', 'modo_pagamento', 'nao_faturar', 'artigo', 'item_conta_id'],
   itens_conta: ['aluno_id', 'origem_contrato_id', 'codigo', 'descricao', 'categoria', 'valor', 'taxa_iva', 'estado', 'origem_plano', 'ordem'],  pre_inscricoes: ['nome', 'email', 'categoria', 'desconto', 'estado', 'observacoes', 'data_pre_inscricao', 'data_inscricao', 'aluno_id'],
   exames_marcacoes: ['aluno_id', 'tipo', 'data', 'hora', 'hora_fim', 'duracao', 'local', 'estado', 'observacoes', 'resultado'],
   revalidacoes: ['aluno_id', 'nome', 'nif', 'telefone', 'email', 'numero_carta', 'categoria', 'tipo_revalidacao', 'data_pedido', 'data_validade_anterior', 'valor', 'modo_pagamento', 'estado_processo', 'estado_pagamento', 'pagamento_id', 'notas']
@@ -2381,6 +2387,55 @@ async function handleEmissao(req, res, tipo) {
     const aluno = nestAlunoExtras(dbRowToJs(alunoRow));
     const pagamento = dbRowToJs(pagamentoRow);
     const { tenant } = currentTenant(req);
+
+    // Garantir que o artigo e a taxa de IVA correspondem exatamente ao item da conta corrente
+    if (!pagamento.artigo) {
+      if (pagamento.item_conta_id || pagamento.itemContaId) {
+        const itemContaRes = await query(
+          'SELECT * FROM itens_conta WHERE id=@id AND escola_id=@escolaId',
+          { id: pagamento.item_conta_id || pagamento.itemContaId, escolaId: req.escolaId }
+        );
+        if (itemContaRes.recordset[0]) {
+          const it = dbRowToJs(itemContaRes.recordset[0]);
+          if (it.codigo) pagamento.artigo = it.codigo;
+          if (pagamento.taxaIva == null && it.taxaIva != null) pagamento.taxaIva = it.taxaIva;
+        }
+      }
+      if (!pagamento.artigo && pagamento.alunoId && pagamento.descricao) {
+        const itemContaDescRes = await query(
+          'SELECT TOP 1 * FROM itens_conta WHERE aluno_id=@alunoId AND escola_id=@escolaId AND (descricao=@desc OR @desc LIKE \'%\' + descricao + \'%\') ORDER BY id DESC',
+          { alunoId: pagamento.alunoId, escolaId: req.escolaId, desc: pagamento.descricao }
+        );
+        if (itemContaDescRes.recordset[0]) {
+          const it = dbRowToJs(itemContaDescRes.recordset[0]);
+          if (it.codigo) pagamento.artigo = it.codigo;
+          if (pagamento.taxaIva == null && it.taxaIva != null) pagamento.taxaIva = it.taxaIva;
+        }
+      }
+      if (!pagamento.artigo && pagamento.descricao) {
+        const prodRes = await query(
+          'SELECT TOP 1 * FROM produtos WHERE escola_id=@escolaId AND (descricao=@desc OR @desc LIKE \'%\' + descricao + \'%\')',
+          { escolaId: req.escolaId, desc: pagamento.descricao }
+        );
+        if (prodRes.recordset[0]) {
+          const pr = dbRowToJs(prodRes.recordset[0]);
+          if (pr.codigo) pagamento.artigo = pr.codigo;
+          if (pagamento.taxaIva == null && pr.taxaIva != null) pagamento.taxaIva = pr.taxaIva;
+        }
+      }
+    }
+
+    // Se temos artigo mas taxaIva ainda não foi resolvida, consultar na tabela produtos
+    if (pagamento.artigo && pagamento.taxaIva == null) {
+      const prodTaxaRes = await query(
+        'SELECT TOP 1 * FROM produtos WHERE escola_id=@escolaId AND codigo=@codigo',
+        { escolaId: req.escolaId, codigo: pagamento.artigo }
+      );
+      if (prodTaxaRes.recordset[0]) {
+        const pr = dbRowToJs(prodTaxaRes.recordset[0]);
+        if (pr.taxaIva != null) pagamento.taxaIva = pr.taxaIva;
+      }
+    }
 
     const serieDoc = await obterSerieParaAluno(req, aluno);
     const options = { serie: serieDoc, ...(req.body || {}) };
