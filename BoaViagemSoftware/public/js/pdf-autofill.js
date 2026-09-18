@@ -693,10 +693,13 @@
       link.click();
       document.body.removeChild(link);
 
-      if (typeof toast === 'function') toast('PDF preenchido com sucesso!');
+      if (templateKey !== 'modC2Teorico' && templateKey !== 'modC2Pratico') {
+        if (typeof toast === 'function') toast('PDF preenchido com sucesso!');
+      }
     } catch (err) {
       console.error('Erro ao preencher PDF:', err);
       if (typeof toast === 'function') toast('Erro ao gerar PDF: ' + err.message, 'error');
+      throw err;
     }
   }
 
@@ -1097,42 +1100,63 @@
           });
         }
 
-        // Atualizar estado em memória e persistir na base de dados se foram introduzidos novos CCs
-        Object.keys(options.documentos).forEach(function (aidStr) {
-          var aid = Number(aidStr);
-          var novoCC = options.documentos[aid];
-          var a = typeof findAluno === 'function' ? findAluno(aid) : (alunos || []).find(function (x) { return x.id === aid; });
-          if (a && novoCC) {
-            a.numeroDocumento = novoCC;
-            if (window.api && typeof window.api === 'function') {
-              window.api('PUT', '/api/alunos/' + a.id, Object.assign({}, a, { numeroDocumento: novoCC })).catch(function (err) {
-                console.warn('Não foi possível gravar o CC na BD para o aluno ' + aid + ':', err);
-              });
-            }
-          }
-        });
+        var msgLoader = (templateKey === 'modC2Teorico' || templateKey === 'modC2Pratico')
+          ? 'A gerar pauta e a registar marcações de exame…'
+          : 'A gerar e a descarregar documento oficial…';
 
-        await gerarDocumentoAutopreenchido(selectedIds, templateKey, options);
+        var wrapLoader = (typeof window.withScreenLoader === 'function')
+          ? window.withScreenLoader
+          : async function (fn) { return await fn(); };
 
-        // Se for C2 Teórico ou C2 Prático, criar as marcações de exame automaticamente
-        if (templateKey === 'modC2Teorico' || templateKey === 'modC2Pratico') {
-          var criarMarcacaoChk = form.querySelector('#pdfAutofillCriarMarcacao');
-          var deveCriar = !criarMarcacaoChk || criarMarcacaoChk.checked;
-          if (deveCriar) {
-            var resMarc = await criarMarcacoesExameAutomaticas(selectedIds, templateKey, options);
-            if (resMarc.criados > 0) {
-              if (typeof toast === 'function') {
-                toast('Pauta PDF gerada e ' + (resMarc.criados === 1 ? '1 marcação' : resMarc.criados + ' marcações') + ' de exame ' + resMarc.tipoExame.toLowerCase() + ' registada(s) no sistema!');
+        try {
+          await wrapLoader(async function () {
+            // Atualizar estado em memória e persistir na base de dados se foram introduzidos novos CCs
+            var docPromises = [];
+            Object.keys(options.documentos).forEach(function (aidStr) {
+              var aid = Number(aidStr);
+              var novoCC = options.documentos[aid];
+              var a = typeof findAluno === 'function' ? findAluno(aid) : (alunos || []).find(function (x) { return x.id === aid; });
+              if (a && novoCC) {
+                a.numeroDocumento = novoCC;
+                if (window.api && typeof window.api === 'function') {
+                  docPromises.push(
+                    window.api('PUT', '/api/alunos/' + a.id, Object.assign({}, a, { numeroDocumento: novoCC })).catch(function (err) {
+                      console.warn('Não foi possível gravar o CC na BD para o aluno ' + aid + ':', err);
+                    })
+                  );
+                }
               }
-            } else if (resMarc.atualizados > 0) {
-              if (typeof toast === 'function') {
-                toast('Pauta PDF gerada e ' + resMarc.atualizados + ' marcação(ões) existente(s) atualizada(s)!');
+            });
+            if (docPromises.length > 0) {
+              await Promise.all(docPromises);
+            }
+
+            await gerarDocumentoAutopreenchido(selectedIds, templateKey, options);
+
+            // Se for C2 Teórico ou C2 Prático, criar as marcações de exame automaticamente
+            if (templateKey === 'modC2Teorico' || templateKey === 'modC2Pratico') {
+              var criarMarcacaoChk = form.querySelector('#pdfAutofillCriarMarcacao');
+              var deveCriar = !criarMarcacaoChk || criarMarcacaoChk.checked;
+              if (deveCriar) {
+                var resMarc = await criarMarcacoesExameAutomaticas(selectedIds, templateKey, options);
+                if (resMarc.criados > 0) {
+                  if (typeof toast === 'function') {
+                    toast('Pauta PDF gerada e ' + (resMarc.criados === 1 ? '1 marcação' : resMarc.criados + ' marcações') + ' de exame ' + resMarc.tipoExame.toLowerCase() + ' registada(s) no sistema!');
+                  }
+                } else if (resMarc.atualizados > 0) {
+                  if (typeof toast === 'function') {
+                    toast('Pauta PDF gerada e ' + resMarc.atualizados + ' marcação(ões) existente(s) atualizada(s)!');
+                  }
+                }
               }
             }
-          }
+          }, msgLoader);
+
+          if (typeof closeModal === 'function') closeModal();
+        } catch (err) {
+          console.error('Erro no processamento da pauta/marcação:', err);
+          if (typeof toast === 'function') toast('Erro ao processar pedido: ' + (err.message || err), 'error');
         }
-
-        if (typeof closeModal === 'function') closeModal();
       });
     }
   }
