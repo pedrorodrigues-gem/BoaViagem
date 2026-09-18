@@ -4430,13 +4430,60 @@ function imprimirContaCorrente(alunoId) {
   exportarHtmlParaPdf(html, `conta-corrente-${(aluno.nome || 'aluno').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}.pdf`);
 }
 
+function obterTaxaIvaItem(it) {
+  if (!it) return state.escola?.primavera?.taxaIvaDefault ?? 18;
+  const rawIva = it.taxaIva ?? it.taxa_iva;
+  if (rawIva != null && !Number.isNaN(Number(rawIva))) {
+    return Number(rawIva);
+  }
+  if (it.codigo) {
+    const prod = (state.produtos || []).find(p => p.codigo && String(p.codigo).toLowerCase() === String(it.codigo).toLowerCase());
+    if (prod) {
+      const prodIva = prod.taxaIva ?? prod.taxa_iva;
+      if (prodIva != null && !Number.isNaN(Number(prodIva))) {
+        return Number(prodIva);
+      }
+    }
+  }
+  if (it.descricao) {
+    const prod = (state.produtos || []).find(p => p.descricao && p.descricao.toLowerCase() === it.descricao.toLowerCase());
+    if (prod) {
+      const prodIva = prod.taxaIva ?? prod.taxa_iva;
+      if (prodIva != null && !Number.isNaN(Number(prodIva))) {
+        return Number(prodIva);
+      }
+    }
+  }
+  return state.escola?.primavera?.taxaIvaDefault ?? 18;
+}
+
 function abrirPagamentoContaForm(alunoId) {
   openModal('Registar Pagamento / Depósito', `
     <form id="pagamentoContaForm">
       <div class="form-grid">
-        <div class="form-field"><label>Valor do depósito (€)</label><input name="valor" type="number" step="0.01" min="0" required></div>
-        <div class="form-field"><label>Data</label><input name="data" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
-        <div class="form-field full"><label>Descrição (opcional)</label><input name="descricao" placeholder="Ex: Depósito inicial"></div>
+        <div class="form-field full">
+          <label>Item da Conta Corrente <span style="color:var(--danger)">*</span></label>
+          <select name="itemContaSelect" id="pagamentoContaItemSelect" required>
+            <option value="">A carregar itens da conta corrente…</option>
+          </select>
+          <input type="hidden" name="itemContaId" id="pagamentoContaItemContaId">
+          <input type="hidden" name="artigo" id="pagamentoContaArtigo">
+          <input type="hidden" name="descricao" id="pagamentoContaDescricao">
+          <small id="pagamentoContaItemInfo" class="muted" style="display:block; margin-top:4px"></small>
+        </div>
+        <div class="form-field">
+          <label>Valor a pagar (€)</label>
+          <input name="valor" id="pagamentoContaValor" type="number" step="0.01" min="0" required>
+        </div>
+        <div class="form-field">
+          <label>Taxa de IVA (%)</label>
+          <input name="taxaIva" id="pagamentoContaTaxaIva" type="number" step="1" min="0" max="100" value="${state.escola?.primavera?.taxaIvaDefault ?? 18}">
+          <small id="pagamentoContaIvaBadge" class="muted" style="display:block; margin-top:2px"></small>
+        </div>
+        <div class="form-field">
+          <label>Data</label>
+          <input name="data" type="date" value="${new Date().toISOString().slice(0, 10)}">
+        </div>
         <div class="form-field">
           <label>Modo de Pagamento</label>
           <select name="modoPagamento">
@@ -4444,7 +4491,7 @@ function abrirPagamentoContaForm(alunoId) {
             <option value="PGTR">PGTR (Cartão / Transferência)</option>
           </select>
         </div>
-        <div class="form-field">
+        <div class="form-field full">
           <label>Estado</label>
           <select name="estado">
             <option value="Pago">Pago (aplica já ao saldo)</option>
@@ -4452,7 +4499,7 @@ function abrirPagamentoContaForm(alunoId) {
           </select>
         </div>
       </div>
-      <p class="muted" style="margin-top:6px">Ao gravar como "Pago", o valor é automaticamente distribuído pelos itens de conta corrente em dívida, por ordem: paga por inteiro o primeiro item em falta e, com o que sobrar, paga parcialmente o item seguinte.</p>
+      <p class="muted" style="margin-top:6px">Ao gravar como "Pago", o valor é registado e associado ao item selecionado da conta corrente.</p>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" onclick="abrirContaCorrente(${alunoId})">Cancelar</button>
         <button type="submit" class="btn btn-accent">Registar</button>
@@ -4460,17 +4507,104 @@ function abrirPagamentoContaForm(alunoId) {
     </form>
   `);
   const form = document.getElementById('pagamentoContaForm');
+  const selectItemConta = document.getElementById('pagamentoContaItemSelect');
+  const itemInfo = document.getElementById('pagamentoContaItemInfo');
+  const descHidden = document.getElementById('pagamentoContaDescricao');
+  const artigoHidden = document.getElementById('pagamentoContaArtigo');
+  const itemContaIdHidden = document.getElementById('pagamentoContaItemContaId');
+  const valorInput = document.getElementById('pagamentoContaValor');
+  const taxaIvaInput = document.getElementById('pagamentoContaTaxaIva');
+  const ivaBadge = document.getElementById('pagamentoContaIvaBadge');
+
+  let itens = (state.contaCorrenteAtual && state.contaCorrenteAtual.aluno?.id === alunoId && Array.isArray(state.contaCorrenteAtual.itens))
+    ? state.contaCorrenteAtual.itens
+    : [];
+
+  function atualizarCampos() {
+    const selectedId = Number(selectItemConta?.value);
+    const it = itens.find(x => x.id === selectedId);
+    if (!it) {
+      if (descHidden) descHidden.value = '';
+      if (artigoHidden) artigoHidden.value = '';
+      if (itemContaIdHidden) itemContaIdHidden.value = '';
+      if (ivaBadge) ivaBadge.textContent = '';
+      if (itemInfo) itemInfo.textContent = '';
+      return;
+    }
+    if (descHidden) descHidden.value = it.descricao || '';
+    if (artigoHidden) artigoHidden.value = it.codigo || '';
+    if (itemContaIdHidden) itemContaIdHidden.value = it.id;
+    const pendente = it.saldo !== undefined ? it.saldo : it.valor;
+    if (valorInput && (!valorInput.value || Number(valorInput.value) === 0 || valorInput.value === String(valorInput.defaultValue))) {
+      valorInput.value = pendente > 0 ? pendente : it.valor;
+    }
+    const taxa = obterTaxaIvaItem(it);
+    if (taxaIvaInput) taxaIvaInput.value = taxa;
+    if (ivaBadge) ivaBadge.innerHTML = `<span style="color:var(--success)">✓ Taxa de IVA obtida do artigo: <strong>${taxa}%</strong></span>`;
+    if (itemInfo) {
+      const saldoPendente = fmtMoney(it.saldo !== undefined ? it.saldo : it.valor);
+      itemInfo.innerHTML = `Código do artigo: <strong>${esc(it.codigo || 'sem código')}</strong> · Saldo pendente: <strong>${saldoPendente}</strong>`;
+    }
+  }
+
+  async function inicializarItens() {
+    if (!itens.length) {
+      try {
+        const cc = await api('GET', `/api/contaCorrente/${alunoId}`);
+        itens = Array.isArray(cc?.itens) ? cc.itens : [];
+      } catch (err) {
+        if (selectItemConta) selectItemConta.innerHTML = '<option value="">Erro ao carregar conta corrente</option>';
+        if (itemInfo) itemInfo.innerHTML = `<span style="color:var(--danger)">Erro: ${esc(err.message)}</span>`;
+        return;
+      }
+    }
+
+    if (!itens.length) {
+      if (selectItemConta) selectItemConta.innerHTML = '<option value="">O aluno não possui itens na conta corrente</option>';
+      if (itemInfo) itemInfo.innerHTML = '<span style="color:var(--warning)">⚠ Este aluno ainda não tem itens nem contrato lançado na conta corrente.</span>';
+      return;
+    }
+
+    let opts = '<option value="">-- Selecionar item da conta corrente --</option>';
+    itens.forEach(it => {
+      const saldoFormatado = fmtMoney(it.saldo !== undefined ? it.saldo : it.valor);
+      const taxa = obterTaxaIvaItem(it);
+      opts += `<option value="${it.id}">${it.codigo ? `[${esc(it.codigo)}] ` : ''}${esc(it.descricao)} — Total: ${fmtMoney(it.valor)} | Pendente: ${saldoFormatado} (IVA: ${taxa}%) [${esc(it.estado || 'Pendente')}]</option>`;
+    });
+    if (selectItemConta) selectItemConta.innerHTML = opts;
+
+    if (itens.length === 1) {
+      selectItemConta.value = itens[0].id;
+      atualizarCampos();
+    }
+  }
+
+  selectItemConta?.addEventListener('change', atualizarCampos);
+  inicializarItens();
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
+    const selectedId = Number(selectItemConta?.value);
+    const it = itens.find(x => x.id === selectedId);
+    if (!it && !fd.get('descricao')) {
+      toast('Seleciona um item da conta corrente do aluno.', 'error');
+      return;
+    }
+    const itemContaId = it ? it.id : (Number(fd.get('itemContaId')) || null);
+    const artigo = it ? (it.codigo || null) : (fd.get('artigo') || null);
+    const descricao = it ? it.descricao : (fd.get('descricao') || 'Depósito');
+    const taxaIva = Number(fd.get('taxaIva') ?? (it ? obterTaxaIvaItem(it) : 18));
     const payload = {
       alunoId,
+      itemContaId,
+      artigo,
       valor: Number(fd.get('valor')),
       data: fd.get('data'),
-      descricao: fd.get('descricao') || 'Depósito',
+      descricao,
       modoPagamento: fd.get('modoPagamento') || 'PGNUM',
       estado: fd.get('estado'),
-      taxaIva: state.escola?.primavera?.taxaIvaDefault ?? 18
+      taxaIva
     };
     try {
       await withScreenLoader(async () => {
@@ -4589,18 +4723,23 @@ function renderPagamentos() {
   `;
 }
 
-function openPagamentoForm(id) {
+function openPagamentoForm(id, initialAlunoId) {
   const item = id ? state.pagamentos.find(p => p.id === id) : null;
+  const alunoIdInicial = item?.alunoId || initialAlunoId || null;
+
   openModal(item ? 'Editar Pagamento' : 'Novo Pagamento', `
     <form id="entityForm">
       <div class="form-grid">
-        ${renderAlunoPickerHtml(item?.alunoId, { hint: 'Escolhe um aluno existente ou escreve o nome completo.' })}
+        ${renderAlunoPickerHtml(alunoIdInicial, { hint: 'Escolhe um aluno existente ou escreve o nome completo.' })}
         <div class="form-field full">
-          <label>Artigo / descrição do serviço</label>
-          <select name="descricao">
-            <option value="">Selecionar artigo</option>
-            ${['Inscrição inicial', 'Aulas teóricas', 'Aulas práticas', 'Aulas de reforço', 'Exames / avaliação', 'Pack completo'].map(opt => `<option value="${opt}" ${item?.descricao === opt ? 'selected' : ''}>${esc(opt)}</option>`).join('')}
+          <label>Item da Conta Corrente (Artigo a liquidar) <span style="color:var(--danger)">*</span></label>
+          <select name="itemContaSelect" id="pagamentoItemContaSelect" required>
+            <option value="">${alunoIdInicial ? 'A carregar itens da conta corrente…' : 'Seleciona primeiro um aluno acima'}</option>
           </select>
+          <input type="hidden" name="descricao" id="pagamentoDescricaoHidden" value="${esc(item?.descricao || '')}">
+          <input type="hidden" name="artigo" id="pagamentoArtigoHidden" value="${esc(item?.artigo || item?.codigo || '')}">
+          <input type="hidden" name="itemContaId" id="pagamentoItemContaIdHidden" value="${item?.itemContaId || item?.item_conta_id || ''}">
+          <div id="pagamentoItemInfo" class="muted" style="font-size:12px; margin-top:4px"></div>
         </div>
         <div class="form-field"><label>Valor (€)</label><input name="valor" type="number" step="0.01" min="0" required value="${item?.valor ?? ''}"></div>
         <div class="form-field"><label>Data</label><input name="data" type="date" value="${item?.data || new Date().toISOString().slice(0, 10)}"></div>
@@ -4611,21 +4750,156 @@ function openPagamentoForm(id) {
             <option value="PGTR" ${(item?.modoPagamento === 'PGTR') ? 'selected' : ''}>PGTR (Cartão / Transferência)</option>
           </select>
         </div>
-        <div class="form-field"><label>Taxa de IVA (%)</label><input name="taxaIva" type="number" min="0" max="100" value="${item?.taxaIva ?? state.escola?.primavera?.taxaIvaDefault ?? 18}"></div>
+        <div class="form-field">
+          <label>Taxa de IVA (%)</label>
+          <input name="taxaIva" id="pagamentoTaxaIvaInput" type="number" min="0" max="100" value="${item?.taxaIva ?? state.escola?.primavera?.taxaIvaDefault ?? 18}">
+          <div id="pagamentoIvaBadge" class="muted" style="font-size:11.5px; margin-top:2px"></div>
+        </div>
         <div class="form-field">
           <label>Estado</label>
           <select name="estado">${['Pago', 'Pendente'].map(c => `<option ${item?.estado === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
         </div>
       </div>
-      <p class="muted" style="margin-top:4px">O NIF e o email usados na faturação são os que estão na ficha do aluno selecionado. Quando marcado como "Pago", o valor é aplicado automaticamente à conta corrente do aluno.</p>
+      <p class="muted" style="margin-top:4px">O NIF e o email usados na faturação são os que estão na ficha do aluno selecionado. O código do artigo e a taxa de IVA associada ao item da conta corrente serão transmitidos para a Cegid Primavera.</p>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
         <button type="submit" class="btn btn-accent">${item ? 'Guardar alterações' : 'Registar pagamento'}</button>
       </div>
     </form>
   `);
+
   const form = document.getElementById('entityForm');
   bindAlunoPicker(form);
+
+  let itensContaAluno = [];
+
+  function atualizarCamposItemSelecionado() {
+    const select = document.getElementById('pagamentoItemContaSelect');
+    const descHidden = document.getElementById('pagamentoDescricaoHidden');
+    const artigoHidden = document.getElementById('pagamentoArtigoHidden');
+    const itemContaIdHidden = document.getElementById('pagamentoItemContaIdHidden');
+    const valorInput = form.querySelector('[name="valor"]');
+    const taxaIvaInput = form.querySelector('[name="taxaIva"]');
+    const ivaBadge = document.getElementById('pagamentoIvaBadge');
+    const itemInfo = document.getElementById('pagamentoItemInfo');
+
+    const selectedId = Number(select?.value);
+    const it = itensContaAluno.find(x => x.id === selectedId);
+    if (!it) {
+      if (!item) {
+        if (descHidden) descHidden.value = '';
+        if (artigoHidden) artigoHidden.value = '';
+        if (itemContaIdHidden) itemContaIdHidden.value = '';
+        if (ivaBadge) ivaBadge.textContent = '';
+        if (itemInfo) itemInfo.textContent = '';
+      }
+      return;
+    }
+
+    if (descHidden) descHidden.value = it.descricao || '';
+    if (artigoHidden) artigoHidden.value = it.codigo || '';
+    if (itemContaIdHidden) itemContaIdHidden.value = it.id;
+
+    // Se o valor estiver vazio ou for criação de pagamento, preenche com o saldo pendente do item
+    if (!item || !valorInput.value || Number(valorInput.value) === 0) {
+      const pendente = it.saldo !== undefined ? it.saldo : it.valor;
+      if (valorInput) valorInput.value = (pendente > 0 ? pendente : it.valor);
+    }
+
+    const taxa = obterTaxaIvaItem(it);
+    if (taxaIvaInput) taxaIvaInput.value = taxa;
+
+    if (ivaBadge) {
+      ivaBadge.innerHTML = `<span style="color:var(--success)">✓ Taxa de IVA obtida do artigo: <strong>${taxa}%</strong></span>`;
+    }
+    if (itemInfo) {
+      const saldoPendente = fmtMoney(it.saldo !== undefined ? it.saldo : it.valor);
+      itemInfo.innerHTML = `Código do artigo: <strong>${esc(it.codigo || 'sem código')}</strong> · Saldo pendente: <strong>${saldoPendente}</strong>`;
+    }
+  }
+
+  async function carregarItensContaAluno(alunoId) {
+    const select = document.getElementById('pagamentoItemContaSelect');
+    const itemInfo = document.getElementById('pagamentoItemInfo');
+    if (!select) return;
+    if (!alunoId) {
+      select.innerHTML = '<option value="">Seleciona primeiro um aluno acima</option>';
+      select.disabled = true;
+      if (itemInfo) itemInfo.textContent = '';
+      itensContaAluno = [];
+      return;
+    }
+
+    select.disabled = true;
+    select.innerHTML = '<option value="">A carregar itens da conta corrente…</option>';
+    if (itemInfo) itemInfo.textContent = '';
+
+    try {
+      const cc = await api('GET', `/api/contaCorrente/${alunoId}`);
+      itensContaAluno = Array.isArray(cc?.itens) ? cc.itens : [];
+      if (!itensContaAluno.length) {
+        select.innerHTML = '<option value="">O aluno não possui itens na conta corrente</option>';
+        select.disabled = false;
+        if (itemInfo) itemInfo.innerHTML = '<span style="color:var(--warning)">⚠ Este aluno ainda não tem itens nem contrato lançado na conta corrente.</span>';
+        return;
+      }
+
+      select.disabled = false;
+      let optionsHtml = '<option value="">-- Selecionar item da conta corrente --</option>';
+      let itemMatched = false;
+
+      itensContaAluno.forEach(it => {
+        const isSelected = item && (
+          (item.itemContaId && Number(item.itemContaId) === it.id) ||
+          (item.artigo && it.codigo && String(item.artigo).toLowerCase() === String(it.codigo).toLowerCase()) ||
+          (!item.artigo && item.descricao === it.descricao)
+        );
+        if (isSelected) itemMatched = true;
+        const saldoFormatado = fmtMoney(it.saldo !== undefined ? it.saldo : it.valor);
+        const taxa = obterTaxaIvaItem(it);
+        const label = `${it.codigo ? `[${esc(it.codigo)}] ` : ''}${esc(it.descricao)} — Total: ${fmtMoney(it.valor)} | Pendente: ${saldoFormatado} (IVA: ${taxa}%) [${esc(it.estado || 'Pendente')}]`;
+        optionsHtml += `<option value="${it.id}" ${isSelected ? 'selected' : ''}>${label}</option>`;
+      });
+
+      if (item && !itemMatched && item.descricao) {
+        optionsHtml = `<option value="" selected>${item.artigo ? `[${esc(item.artigo)}] ` : ''}${esc(item.descricao)} (Item atual do pagamento)</option>` + optionsHtml;
+      }
+
+      select.innerHTML = optionsHtml;
+      if (itemMatched || (item && !itemMatched)) {
+        atualizarCamposItemSelecionado();
+      }
+    } catch (err) {
+      select.disabled = false;
+      select.innerHTML = '<option value="">Erro ao carregar conta corrente</option>';
+      if (itemInfo) itemInfo.innerHTML = `<span style="color:var(--danger)">Erro: ${esc(err.message)}</span>`;
+    }
+  }
+
+  const selectItemConta = document.getElementById('pagamentoItemContaSelect');
+  selectItemConta?.addEventListener('change', atualizarCamposItemSelecionado);
+
+  const alunoNomeInput = form.querySelector('[name="alunoNome"]');
+  const alunoIdHidden = form.querySelector('[name="alunoId"]');
+  let ultimoAlunoIdCarregado = null;
+
+  function verificarMudancaAluno() {
+    const idAtual = Number(alunoIdHidden?.value || 0);
+    if (idAtual !== ultimoAlunoIdCarregado) {
+      ultimoAlunoIdCarregado = idAtual;
+      carregarItensContaAluno(idAtual);
+    }
+  }
+
+  alunoNomeInput?.addEventListener('change', verificarMudancaAluno);
+  alunoNomeInput?.addEventListener('input', () => setTimeout(verificarMudancaAluno, 200));
+  alunoIdHidden?.addEventListener('change', verificarMudancaAluno);
+
+  if (alunoIdInicial) {
+    ultimoAlunoIdCarregado = alunoIdInicial;
+    carregarItensContaAluno(alunoIdInicial);
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
@@ -4634,15 +4908,31 @@ function openPagamentoForm(id) {
       toast('Seleciona ou escreve o nome de um aluno existente.', 'error');
       return;
     }
+
+    const selectedId = Number(selectItemConta?.value);
+    const it = itensContaAluno.find(x => x.id === selectedId);
+
+    const itemContaId = it ? it.id : (Number(fd.get('itemContaId')) || null);
+    const artigo = it ? (it.codigo || null) : (fd.get('artigo') || null);
+    const descricao = it ? it.descricao : (fd.get('descricao') || (item ? item.descricao : ''));
+
+    if (!descricao && !it) {
+      toast('Seleciona um item da conta corrente do aluno.', 'error');
+      return;
+    }
+
     const payload = {
       alunoId,
-      descricao: fd.get('descricao'),
+      itemContaId,
+      artigo,
+      descricao,
       valor: Number(fd.get('valor')),
       data: fd.get('data'),
       modoPagamento: fd.get('modoPagamento') || 'PGNUM',
-      taxaIva: Number(fd.get('taxaIva') || 18),
+      taxaIva: Number(fd.get('taxaIva') ?? 18),
       estado: fd.get('estado')
     };
+
     try {
       await withScreenLoader(async () => {
         if (item) await api('PUT', `/api/pagamentos/${item.id}`, payload);
