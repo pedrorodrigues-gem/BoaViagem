@@ -51,7 +51,7 @@ function linhasFromPagamento(pagamento, escola) {
     Armazem: p.armazem || 'A1',
     DescricaoNovoArtigo: pagamento.descricao || 'Serviços de formação para condução',
     CodIvaNovoArtigo: codIva(pagamento, escola),
-    IvaDedutivel: true
+    IvaDedutivel: false
   }];
 }
 
