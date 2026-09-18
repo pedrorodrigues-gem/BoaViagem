@@ -700,11 +700,114 @@
     }
   }
 
-  function openAutoFillPdfModal(alunoId) {
+  async function criarMarcacoesExameAutomaticas(selectedIds, templateKey, options) {
+    if (!selectedIds || !selectedIds.length) return { criados: 0, atualizados: 0, tipoExame: '' };
+    var tipoExame = templateKey === 'modC2Pratico' ? 'Prático' : 'Teórico';
+    var dataExame = (options && options.dataExame) ? options.dataExame : new Date().toISOString().slice(0, 10);
+    var horaExame = (options && options.horaExame) ? options.horaExame : '';
+    var matricula = (options && options.matricula) ? String(options.matricula).trim() : '';
+    var localExame = (options && options.localExame) ? String(options.localExame).trim() : 'SCTT';
+
+    var horaFim = '';
+    if (horaExame) {
+      if (typeof window.calcularHoraFimStr === 'function') {
+        horaFim = window.calcularHoraFimStr(horaExame, 60);
+      } else {
+        var parts = String(horaExame).split(':').map(Number);
+        if (!isNaN(parts[0]) && !isNaN(parts[1])) {
+          var tot = parts[0] * 60 + parts[1] + 60;
+          var hh = Math.floor((tot % 1440) / 60);
+          var mm = tot % 60;
+          horaFim = String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+        }
+      }
+    }
+
+    var marcacoesExistentes = (window.state && window.state.examesMarcacoes) || [];
+    var criados = 0;
+    var atualizados = 0;
+
+    for (var i = 0; i < selectedIds.length; i++) {
+      var aid = selectedIds[i];
+      var obs = 'Marcação automática via Pauta C2 ' + tipoExame;
+      if (tipoExame === 'Prático' && matricula) {
+        obs += ' (Viatura: ' + matricula + ')';
+      }
+
+      // Evitar duplicar marcações de exame para o mesmo aluno, tipo e dia
+      var jaExiste = marcacoesExistentes.find(function (m) {
+        return Number(m.alunoId) === Number(aid) &&
+               String(m.tipo || '').toLowerCase() === tipoExame.toLowerCase() &&
+               String(m.data || '').slice(0, 10) === String(dataExame).slice(0, 10) &&
+               (m.estado === 'Marcado' || !m.estado);
+      });
+
+      if (jaExiste) {
+        var updatePayload = {};
+        if (horaExame && !jaExiste.hora) {
+          updatePayload.hora = horaExame;
+          updatePayload.horaFim = horaFim;
+        }
+        if (localExame && !jaExiste.local) {
+          updatePayload.local = localExame;
+        }
+        if (Object.keys(updatePayload).length > 0 && window.api) {
+          try {
+            await window.api('PUT', '/api/examesMarcacoes/' + jaExiste.id, updatePayload);
+            atualizados++;
+          } catch (e) {
+            console.warn('Falha ao atualizar marcação existente ' + jaExiste.id + ':', e);
+          }
+        }
+        continue;
+      }
+
+      var payload = {
+        alunoId: aid,
+        tipo: tipoExame,
+        data: dataExame,
+        hora: horaExame || '',
+        duracao: 60,
+        horaFim: horaFim || '',
+        local: localExame || 'SCTT',
+        estado: 'Marcado',
+        resultado: null,
+        ignorarSaldo: true,
+        observacoes: obs
+      };
+
+      if (window.api && typeof window.api === 'function') {
+        try {
+          await window.api('POST', '/api/examesMarcacoes', payload);
+          criados++;
+        } catch (err) {
+          console.warn('Não foi possível criar marcação de exame para o aluno ' + aid + ':', err);
+        }
+      }
+    }
+
+    if (criados > 0 || atualizados > 0) {
+      if (typeof window.refreshCollections === 'function') {
+        await window.refreshCollections(['examesMarcacoes']);
+      }
+      if (typeof window.renderExamesMarcacoesTab === 'function') {
+        var exTabBody = document.getElementById('examesTabBody');
+        if (exTabBody) {
+          window.renderExamesMarcacoesTab();
+        }
+      }
+    }
+
+    return { criados: criados, atualizados: atualizados, tipoExame: tipoExame };
+  }
+
+  function openAutoFillPdfModal(alunoId, preferredTemplateKey, presetOptions) {
     var selected = alunoId ? [alunoId] : [];
     var alunos = (window.state && window.state.alunos) || [];
     var templateKeys = Object.keys(OFFICIAL_PDF_TEMPLATES);
-    var initialTemplateKey = templateKeys[0];
+    var initialTemplateKey = (preferredTemplateKey && OFFICIAL_PDF_TEMPLATES[preferredTemplateKey])
+      ? preferredTemplateKey
+      : templateKeys[0];
 
     function renderAlunoItem(aluno, inputType, checked) {
       var codigo = aluno.codigo != null ? aluno.codigo : aluno.id;
@@ -742,6 +845,10 @@
     }
 
     var hoje = new Date().toISOString().slice(0, 10);
+    var presetData = (presetOptions && presetOptions.dataExame) ? presetOptions.dataExame : hoje;
+    var presetHora = (presetOptions && presetOptions.horaExame) ? presetOptions.horaExame : '';
+    var presetMatricula = (presetOptions && presetOptions.matricula) ? presetOptions.matricula : '';
+    var presetLocal = (presetOptions && presetOptions.localExame) ? presetOptions.localExame : 'SCTT';
 
     var modalHtml = `
       <form id="pdfAutofillForm">
@@ -749,7 +856,8 @@
           <label style="display:block; font-weight:bold; margin-bottom:6px; font-size:13px">Modelo de Documento Oficial</label>
           <select id="pdfAutofillTemplateSelect" name="templateKey" style="width:100%; padding:9px 12px; border-radius:6px; border:1px solid #cbd5e1; font-size:14px; background:#fff">
             ${templateKeys.map(function (key) {
-              return '<option value="' + key + '">' + esc(OFFICIAL_PDF_TEMPLATES[key].label) + '</option>';
+              var isSel = key === initialTemplateKey ? 'selected' : '';
+              return '<option value="' + key + '" ' + isSel + '>' + esc(OFFICIAL_PDF_TEMPLATES[key].label) + '</option>';
             }).join('')}
           </select>
         </div>
@@ -758,18 +866,28 @@
           <div style="display:flex; gap:10px; flex-wrap:wrap;">
             <div style="flex:1; min-width:140px;">
               <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Data de Exame</label>
-              <input type="date" name="dataExame" id="pdfAutofillDataExame" value="${hoje}" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
+              <input type="date" name="dataExame" id="pdfAutofillDataExame" value="${presetData}" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
             </div>
             <div id="pdfAutofillHoraWrap" style="flex:1; min-width:110px;">
               <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Hora de Exame</label>
-              <input type="time" name="horaExame" id="pdfAutofillHoraExame" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
+              <input type="time" name="horaExame" id="pdfAutofillHoraExame" value="${presetHora}" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
             </div>
             <div id="pdfAutofillMatriculaWrap" style="flex:1; min-width:130px; display:none;">
               <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Matrícula (opcional)</label>
-              <input type="text" name="matricula" id="pdfAutofillMatricula" placeholder="Ex: AA-00-BB" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
+              <input type="text" name="matricula" id="pdfAutofillMatricula" value="${esc(presetMatricula)}" placeholder="Ex: AA-00-BB" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
+            </div>
+            <div id="pdfAutofillLocalWrap" style="flex:1; min-width:110px;">
+              <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Local do Exame</label>
+              <input type="text" name="localExame" id="pdfAutofillLocalExame" value="${esc(presetLocal)}" placeholder="Ex: SCTT" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
             </div>
           </div>
           <div id="pdfAutofillTaxaHint" style="font-size:12px; color:#0369a1; margin-top:8px; font-weight:500;"></div>
+          <div id="pdfAutofillCriarMarcacaoWrap" style="margin-top:10px; padding-top:8px; border-top:1px solid #e2e8f0; display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="pdfAutofillCriarMarcacao" checked style="cursor:pointer; width:16px; height:16px;">
+            <label for="pdfAutofillCriarMarcacao" style="font-size:12.5px; font-weight:600; color:#1e293b; cursor:pointer;">
+              📅 Criar marcação de exame automaticamente no sistema para os candidatos selecionados
+            </label>
+          </div>
         </div>
 
         <div>
@@ -819,6 +937,7 @@
     var horaWrap = document.getElementById('pdfAutofillHoraWrap');
     var matriculaWrap = document.getElementById('pdfAutofillMatriculaWrap');
     var taxaHintEl = document.getElementById('pdfAutofillTaxaHint');
+    var criarMarcacaoWrap = document.getElementById('pdfAutofillCriarMarcacaoWrap');
 
     function updateTemplateOptions(templateKey) {
       if (hintEl) {
@@ -833,13 +952,16 @@
           if (horaWrap) horaWrap.style.display = 'block';
           if (matriculaWrap) matriculaWrap.style.display = 'none';
           if (taxaHintEl) taxaHintEl.textContent = 'Taxa regulamentar: 16,00 € por candidato (calculada no total)';
+          if (criarMarcacaoWrap) criarMarcacaoWrap.style.display = 'flex';
         } else if (templateKey === 'modC2Pratico') {
           extraOptionsEl.style.display = 'block';
-          if (horaWrap) horaWrap.style.display = 'none';
+          if (horaWrap) horaWrap.style.display = 'block';
           if (matriculaWrap) matriculaWrap.style.display = 'block';
           if (taxaHintEl) taxaHintEl.textContent = 'Taxa regulamentar: 31,50 € por candidato (calculada no total)';
+          if (criarMarcacaoWrap) criarMarcacaoWrap.style.display = 'flex';
         } else {
           extraOptionsEl.style.display = 'none';
+          if (criarMarcacaoWrap) criarMarcacaoWrap.style.display = 'none';
         }
       }
       updateDocInputs();
@@ -933,7 +1055,7 @@
     updateDocInputs();
 
     if (form) {
-      form.addEventListener('submit', function (e) {
+      form.addEventListener('submit', async function (e) {
         e.preventDefault();
         var checkedBoxes = form.querySelectorAll('input[name="alunoId"]:checked');
         var selectedIds = [];
@@ -954,6 +1076,7 @@
           dataExame: form.querySelector('#pdfAutofillDataExame')?.value || null,
           horaExame: form.querySelector('#pdfAutofillHoraExame')?.value || null,
           matricula: form.querySelector('#pdfAutofillMatricula')?.value || null,
+          localExame: form.querySelector('#pdfAutofillLocalExame')?.value || 'SCTT',
           documentos: {}
         };
 
@@ -989,7 +1112,26 @@
           }
         });
 
-        gerarDocumentoAutopreenchido(selectedIds, templateKey, options);
+        await gerarDocumentoAutopreenchido(selectedIds, templateKey, options);
+
+        // Se for C2 Teórico ou C2 Prático, criar as marcações de exame automaticamente
+        if (templateKey === 'modC2Teorico' || templateKey === 'modC2Pratico') {
+          var criarMarcacaoChk = form.querySelector('#pdfAutofillCriarMarcacao');
+          var deveCriar = !criarMarcacaoChk || criarMarcacaoChk.checked;
+          if (deveCriar) {
+            var resMarc = await criarMarcacoesExameAutomaticas(selectedIds, templateKey, options);
+            if (resMarc.criados > 0) {
+              if (typeof toast === 'function') {
+                toast('Pauta PDF gerada e ' + (resMarc.criados === 1 ? '1 marcação' : resMarc.criados + ' marcações') + ' de exame ' + resMarc.tipoExame.toLowerCase() + ' registada(s) no sistema!');
+              }
+            } else if (resMarc.atualizados > 0) {
+              if (typeof toast === 'function') {
+                toast('Pauta PDF gerada e ' + resMarc.atualizados + ' marcação(ões) existente(s) atualizada(s)!');
+              }
+            }
+          }
+        }
+
         if (typeof closeModal === 'function') closeModal();
       });
     }

@@ -635,7 +635,13 @@ function renderExamesMarcacoesTab() {
 
   body.innerHTML = `
     <div class="panel">
-      <div class="panel-head"><h3>Marcações de exames</h3></div>
+      <div class="panel-head" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px">
+        <h3>Marcações de exames</h3>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(null, 'modC2Teorico')" title="Preencher pauta oficial C2 Teórico e agendar exames automaticamente">📄 Pauta C2 Teórico (PDF)</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(null, 'modC2Pratico')" title="Preencher pauta oficial C2 Prático e agendar exames automaticamente">📄 Pauta C2 Prático (PDF)</button>
+        </div>
+      </div>
       <form id="examesForm" class="form-grid">
         ${renderAlunoPickerHtml(null, { label: 'Aluno', required: true, hint: 'Podes escolher da lista ou escrever o nome' })}
         <div class="form-field"><label>Tipo</label><select name="tipo"><option>Teórico</option><option>Prático</option></select></div>
@@ -689,7 +695,12 @@ function renderExamesMarcacoesTab() {
                   </select>
                 </td>
                 <td>${esc(m.observacoes || '—')}</td>
-                <td><button class="btn btn-danger-ghost btn-sm" onclick="deleteItem('examesMarcacoes', ${m.id}, 'esta marcação')">Remover</button></td>
+                <td>
+                  <div style="display:flex; gap:4px; align-items:center; justify-content:flex-end;">
+                    <button class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(${m.alunoId}, '${m.tipo === 'Prático' ? 'modC2Pratico' : 'modC2Teorico'}', { dataExame: '${m.data || ''}', horaExame: '${m.hora || ''}' })" title="Imprimir Pauta C2 oficial para este aluno">Pauta C2</button>
+                    <button class="btn btn-danger-ghost btn-sm" onclick="deleteItem('examesMarcacoes', ${m.id}, 'esta marcação')">Remover</button>
+                  </div>
+                </td>
               </tr>
             `).join('')}
           </tbody>
