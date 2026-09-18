@@ -3041,16 +3041,24 @@ function bindFotoPicker(form, prefix, fotoAtual, nomeAtualFn) {
 
 function renderCartasCategoriasListHTML(lista) {
   return lista.length ? lista.map((c, i) => `
-    <div class="form-grid" style="grid-template-columns: 1fr 1fr auto; align-items:end; margin-bottom:6px" data-carta-row="${i}">
+    <div class="form-grid" style="grid-template-columns: 100px 1fr 140px 140px auto; align-items:end; margin-bottom:8px; gap:8px" data-carta-row="${i}">
       <div class="form-field" style="margin-bottom:0">
         <label>Categoria</label>
         <select data-carta-categoria>${CATEGORIAS_TODAS.map(cat => `<option ${c.categoria === cat ? 'selected' : ''}>${cat}</option>`).join('')}</select>
       </div>
       <div class="form-field" style="margin-bottom:0">
-        <label>Data de expiração</label>
+        <label>N.º da Carta</label>
+        <input type="text" data-carta-numero placeholder="Ex: L-123456" value="${esc(c.numeroCarta || c.numero || '')}">
+      </div>
+      <div class="form-field" style="margin-bottom:0">
+        <label>Data de emissão</label>
+        <input type="date" data-carta-emissao value="${c.dataEmissao || ''}">
+      </div>
+      <div class="form-field" style="margin-bottom:0">
+        <label>Data de validade</label>
         <input type="date" data-carta-validade value="${c.dataValidade || ''}">
       </div>
-      <button type="button" class="btn btn-danger-ghost btn-sm" data-carta-remover>Remover</button>
+      <button type="button" class="btn btn-danger-ghost btn-sm" data-carta-remover style="margin-bottom:4px">Remover</button>
     </div>
   `).join('') : `<p class="muted" style="margin-bottom:6px">Nenhuma categoria detida registada.</p>`;
 }
@@ -3064,13 +3072,15 @@ function bindCartasCategoriasEditor(form, cartasCategoriasEdit) {
     box.querySelectorAll('[data-carta-row]').forEach(row => {
       const idx = Number(row.dataset.cartaRow);
       row.querySelector('[data-carta-categoria]').addEventListener('change', e => { cartasCategoriasEdit[idx].categoria = e.target.value; });
+      row.querySelector('[data-carta-numero]').addEventListener('input', e => { cartasCategoriasEdit[idx].numeroCarta = e.target.value; cartasCategoriasEdit[idx].numero = e.target.value; });
+      row.querySelector('[data-carta-emissao]').addEventListener('change', e => { cartasCategoriasEdit[idx].dataEmissao = e.target.value; });
       row.querySelector('[data-carta-validade]').addEventListener('change', e => { cartasCategoriasEdit[idx].dataValidade = e.target.value; });
       row.querySelector('[data-carta-remover]').addEventListener('click', () => { cartasCategoriasEdit.splice(idx, 1); render(); });
     });
   }
   render();
   btnAdd.addEventListener('click', () => {
-    cartasCategoriasEdit.push({ categoria: CATEGORIAS_TODAS[0], dataValidade: '' });
+    cartasCategoriasEdit.push({ categoria: CATEGORIAS_TODAS[0], numeroCarta: '', dataEmissao: '', dataValidade: '' });
     render();
   });
 }
@@ -3130,7 +3140,16 @@ function openAlunoForm(id) {
           <label>Plano de preço da carta</label>
           <select id="alunoPlanoCartaSelect"></select>
         </div>
-        <div class="form-field"><label>Desconto do aluno (%)</label><input name="desconto" id="alunoDescontoInput" type="number" min="0" max="100" step="1" value="${item?.desconto ?? 0}"></div>
+        <div class="form-field">
+          <label>Desconto do aluno</label>
+          <div style="display:flex; gap:8px">
+            <input name="desconto" id="alunoDescontoInput" type="number" min="0" step="0.01" value="${item?.desconto ?? 0}" style="flex:1">
+            <select name="tipoDesconto" id="alunoTipoDescontoSelect" style="width:135px">
+              <option value="valor" ${item?.tipoDesconto !== 'percentagem' ? 'selected' : ''}>€ (Valor fixo)</option>
+              <option value="percentagem" ${item?.tipoDesconto === 'percentagem' ? 'selected' : ''}>% (Percentagem)</option>
+            </select>
+          </div>
+        </div>
         <div class="form-field full">
           <p class="muted">O valor da carta e o desconto ficam definidos já aqui, na ficha do aluno — o desconto aplica-se apenas aos módulos práticos/teóricos; taxas de inscrição, exame e emissão mantêm-se sempre fixas. Este valor só se torna efetivamente conta corrente quando é criado o contrato.</p>
         </div>
@@ -3143,7 +3162,7 @@ function openAlunoForm(id) {
         </div>
         <div class="form-field"><label>Data de inscrição</label><input name="dataInscricao" type="date" value="${item?.dataInscricao || ''}"></div>
         <div class="form-field full"><label>Dispensa de módulos (ex: já detém categoria B)</label><input name="dispensaModulos" value="${esc(item?.dispensaModulos || '')}" placeholder="Ex: dispensa de módulos teóricos comuns"></div>
-        <div class="form-field full"><label>Cartas de condução já detidas (categoria + data de expiração)</label><div id="cartasCategoriasList"></div><button type="button" class="btn btn-ghost btn-sm" id="btnAdicionarCartaCategoria">+ Adicionar categoria</button></div>
+        <div class="form-field full"><label>Cartas de condução já detidas (categoria, n.º da carta, emissão e validade)</label><div id="cartasCategoriasList"></div><button type="button" class="btn btn-ghost btn-sm" id="btnAdicionarCartaCategoria">+ Adicionar categoria</button></div>
         <div class="form-field"><label>N.º processo / licença de aprendizagem (IMT)</label><input name="pi_numero" value="${esc(pi.numero || '')}"></div>
         <div class="form-field"><label>Data de emissão</label><input name="pi_dataEmissao" type="date" value="${pi.dataEmissao || ''}"></div>
         <div class="form-field"><label>Data de validade</label><input name="pi_dataValidade" type="date" value="${pi.dataValidade || ''}"></div>
@@ -3193,6 +3212,7 @@ function openAlunoForm(id) {
     if (!box) return;
     const categoria = document.getElementById('alunoCategoriaSelect')?.value;
     const desconto = Number(document.getElementById('alunoDescontoInput')?.value) || 0;
+    const tipoDesconto = document.getElementById('alunoTipoDescontoSelect')?.value || 'valor';
     if (!categoria) return;
 
     // Carrega os planos de preço disponíveis para a categoria escolhida.
@@ -3210,7 +3230,7 @@ function openAlunoForm(id) {
     } catch (err) { /* segue sem bloquear a pré-visualização */ }
 
     try {
-      const qs = `?desconto=${desconto}${alunoPlanoCartaIdAtual ? `&planoCartaId=${alunoPlanoCartaIdAtual}` : ''}`;
+      const qs = `?desconto=${desconto}&tipoDesconto=${encodeURIComponent(tipoDesconto)}${alunoPlanoCartaIdAtual ? `&planoCartaId=${alunoPlanoCartaIdAtual}` : ''}`;
       const res = await api('GET', `/api/precoCarta/${encodeURIComponent(categoria)}${qs}`);
       box.innerHTML = `
         <label>Valor da carta — categoria ${esc(categoria)}${res.planoNome ? ` · plano "${esc(res.planoNome)}"` : ''}</label>
@@ -3221,7 +3241,7 @@ function openAlunoForm(id) {
                 <tr>
                   <td class="muted" style="font-size:12px; white-space:nowrap">${esc(i.codigo || '—')}</td>
                   <td>${esc(i.descricao)}</td>
-                  <td class="muted" style="font-size:12px">${i.descontavel ? `desconto ${desconto}%` : 'valor fixo'}</td>
+                  <td class="muted" style="font-size:12px">${i.descontavel ? (tipoDesconto === 'percentagem' ? `desconto ${desconto}%` : `desconto ${fmtMoney(i.descontoItem || 0)}`) : 'valor fixo'}</td>
                   <td style="text-align:right">${fmtMoney(i.valor)}</td>
                 </tr>
               `).join('') : `<tr><td colspan="4" class="muted">Sem plano de preço definido para esta categoria — define-o em Configurações &gt; Composição da carta.</td></tr>`}
@@ -3238,6 +3258,7 @@ function openAlunoForm(id) {
   document.getElementById('alunoCategoriaSelect').addEventListener('change', () => { alunoPlanoCartaIdAtual = null; atualizarPrevisaoCartaAluno(); });
   document.getElementById('alunoPlanoCartaSelect').addEventListener('change', (e) => { alunoPlanoCartaIdAtual = Number(e.target.value) || null; atualizarPrevisaoCartaAluno(); });
   document.getElementById('alunoDescontoInput').addEventListener('input', atualizarPrevisaoCartaAluno);
+  document.getElementById('alunoTipoDescontoSelect')?.addEventListener('change', atualizarPrevisaoCartaAluno);
   bindFotoPicker(form, 'aluno', item?.foto || '', () => form.querySelector('[name="nome"]')?.value || item?.nome || '');
   atualizarPrevisaoCartaAluno();
 
@@ -3255,9 +3276,10 @@ function openAlunoForm(id) {
       email: fd.get('email'), telefone: fd.get('telefone'),
       categoria: fd.get('categoria'), estado: fd.get('estado'), dataInscricao: fd.get('dataInscricao'),
       desconto: Number(fd.get('desconto') || 0),
+      tipoDesconto: fd.get('tipoDesconto') || 'valor',
       dispensaModulos: fd.get('dispensaModulos'),
       processoIMT: { numero: fd.get('pi_numero'), dataEmissao: fd.get('pi_dataEmissao'), dataValidade: fd.get('pi_dataValidade') },
-      cartasCategorias: cartasCategoriasEdit.filter(c => c.categoria && c.dataValidade),
+      cartasCategorias: cartasCategoriasEdit.filter(c => c.categoria && (c.dataValidade || c.numeroCarta || c.dataEmissao)),
       atestadoMedico: { dataEmissao: fd.get('am_dataEmissao'), dataValidade: fd.get('am_dataValidade'), apto: fd.get('am_apto') === 'true' },
       examePsicotecnico: { aplicavel: !!fd.get('ep_aplicavel'), dataEmissao: fd.get('ep_dataEmissao'), dataValidade: fd.get('ep_dataValidade') },
       espacoId: Number(fd.get('espacoId') || 0),
@@ -6347,11 +6369,21 @@ function openContratoForm(id) {
           <select name="planoCartaId" id="planoCartaSelect"></select>
         </div>
         <div class="form-field">
+          <label>Desconto aplicado ao contrato</label>
+          <div style="display:flex; gap:8px">
+            <input name="descontoAplicado" id="contratoDescontoInput" type="number" step="0.01" min="0" value="${item?.descontoAplicado ?? ''}" placeholder="0.00" style="flex:1">
+            <select name="tipoDesconto" id="contratoTipoDescontoSelect" style="width:130px">
+              <option value="valor" ${item?.tipoDesconto !== 'percentagem' ? 'selected' : ''}>€ (Valor fixo)</option>
+              <option value="percentagem" ${item?.tipoDesconto === 'percentagem' ? 'selected' : ''}>% (Percentagem)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-field">
           <label>Valor total (€)</label>
           <input name="valorTotal" id="contratoValorTotalInput" type="number" step="0.01" min="0" required readonly value="${item?.valorTotal ?? ''}">
         </div>
         <div class="form-field full">
-          <p class="muted" style="margin-top:-6px">O valor total é calculado automaticamente a partir da categoria e do desconto próprio do aluno (definido na ficha do aluno). Só é possível alterá-lo escolhendo o plano "Personalizado" com parcelas próprias.</p>
+          <p class="muted" style="margin-top:-6px">O valor total é calculado automaticamente a partir da categoria, do plano de preço e do desconto acordado (podes alterá-lo livremente acima para este contrato). Só no plano "Personalizado" é que o total resulta da soma das parcelas manuais.</p>
         </div>
         <div class="form-field">
           <label>Plano de pagamento</label>
@@ -6448,7 +6480,31 @@ function openContratoForm(id) {
   async function atualizarValorCarta(recarregarPlanos = true) {
     const categoria = document.getElementById('contratoCategoriaSelect')?.value;
     const aluno = findAluno(alunoIdAtual());
-    const desconto = Number(aluno?.desconto || 0);
+    const descontoInp = document.getElementById('contratoDescontoInput');
+    const tipoDescontoSelect = document.getElementById('contratoTipoDescontoSelect');
+
+    let desconto;
+    if (descontoInp && descontoInp.value !== '') {
+      desconto = Number(descontoInp.value) || 0;
+    } else if (item && item.descontoAplicado !== undefined && item.descontoAplicado !== null) {
+      desconto = Number(item.descontoAplicado) || 0;
+      if (descontoInp) descontoInp.value = desconto;
+    } else {
+      desconto = Number(aluno?.desconto || 0);
+      if (descontoInp && aluno) descontoInp.value = desconto;
+    }
+
+    let tipoDesconto;
+    if (tipoDescontoSelect && tipoDescontoSelect.value) {
+      tipoDesconto = tipoDescontoSelect.value;
+    } else if (item && item.tipoDesconto) {
+      tipoDesconto = item.tipoDesconto;
+      if (tipoDescontoSelect) tipoDescontoSelect.value = tipoDesconto;
+    } else {
+      tipoDesconto = aluno?.tipoDesconto || 'valor';
+      if (tipoDescontoSelect && aluno) tipoDescontoSelect.value = tipoDesconto;
+    }
+
     if (!categoria) {
       itensCartaAtual = [];
       valorCartaCalculado = 0;
@@ -6464,7 +6520,7 @@ function openContratoForm(id) {
       planoCartaIdAtual = Number(select.value) || planoCartaIdAtual;
     }
     try {
-      const qs = `?desconto=${desconto}${planoCartaIdAtual ? `&planoCartaId=${planoCartaIdAtual}` : ''}`;
+      const qs = `?desconto=${desconto}&tipoDesconto=${encodeURIComponent(tipoDesconto)}${planoCartaIdAtual ? `&planoCartaId=${planoCartaIdAtual}` : ''}`;
       const res = await api('GET', `/api/precoCarta/${encodeURIComponent(categoria)}${qs}`);
       itensCartaAtual = res.itens || [];
       valorCartaCalculado = Number(res.total || 0);
@@ -6526,7 +6582,7 @@ function openContratoForm(id) {
             ${itensCartaAtual.length ? itensCartaAtual.map(r => `
               <tr>
                 <td class="muted" style="font-size:12px">${esc(r.codigo || '—')}</td>
-                <td>${esc(r.descricao)} ${r.descontavel ? '<span class="muted" style="font-size:12px">(descontável)</span>' : '<span class="muted" style="font-size:12px">(fixo)</span>'}</td>
+                <td>${esc(r.descricao)} ${r.descontavel ? (r.descontoItem > 0 ? `<span class="muted" style="font-size:12px">(desc. -${fmtMoney(r.descontoItem)})</span>` : '<span class="muted" style="font-size:12px">(descontável)</span>') : '<span class="muted" style="font-size:12px">(fixo)</span>'}</td>
                 <td class="cell-primary">${fmtMoney(r.valor)}</td>
               </tr>
             `).join('') : '<tr><td colspan="3" class="muted" style="text-align:center; padding:12px">Sem composição de módulos definida para esta categoria.</td></tr>'}
@@ -6550,7 +6606,7 @@ function openContratoForm(id) {
           `).join('')}
         </div>
         <button type="button" class="btn btn-ghost btn-sm" id="btnAdicionarParcela">+ Adicionar parcela</button>
-        <p class="muted" id="parcelasSomaInfo" style="margin-top:10px"></p>
+        <div id="parcelasSomaInfo" style="margin-top:10px; font-size:13px"></div>
         <p class="muted" style="margin-top:4px">Plano personalizado: o valor total do contrato passa a ser a soma destas parcelas (valor de referência dos módulos: ${fmtMoney(valorCartaCalculado)}).</p>
       `;
       box.querySelectorAll('[data-parcela-row]').forEach(row => {
@@ -6561,9 +6617,14 @@ function openContratoForm(id) {
           parcelas.splice(idx, 1);
           if (!parcelas.length) parcelas.push({ descricao: '', valor: '' });
           renderPlanoBox();
+          atualizarSomaParcelas();
         });
       });
-      document.getElementById('btnAdicionarParcela').addEventListener('click', () => { parcelas.push({ descricao: '', valor: '' }); renderPlanoBox(); });
+      document.getElementById('btnAdicionarParcela')?.addEventListener('click', () => {
+        parcelas.push({ descricao: '', valor: '' });
+        renderPlanoBox();
+        atualizarSomaParcelas();
+      });
       atualizarSomaParcelas();
       return;
     }
@@ -6571,20 +6632,22 @@ function openContratoForm(id) {
     setValorTotalInput(valorCartaCalculado);
     if (planoAtual === 'Mensalidades') {
       const n = numeroPrestacoesAtual();
-      const parcela = +(valorCartaCalculado / n).toFixed(2);
+      const parcelaBase = +(valorCartaCalculado / n).toFixed(2);
       let acumulado = 0;
-      const prestRows = Array.from({ length: n }, (_, i) => {
-        const valor = i < n - 1 ? parcela : +(valorCartaCalculado - acumulado).toFixed(2);
-        acumulado = +(acumulado + valor).toFixed(2);
-        return { descricao: `Mensalidade ${i + 1}/${n}`, valor };
+      const prestacoes = Array.from({ length: n }, (_, i) => {
+        const val = i < n - 1 ? parcelaBase : +((valorCartaCalculado - acumulado)).toFixed(2);
+        acumulado = +(acumulado + val).toFixed(2);
+        return { num: i + 1, val };
       });
       box.innerHTML = `
         ${tabelaModulosHtml}
-        <div style="font-weight:600; font-size:13px; margin: 10px 0 6px">Plano de Prestações a gerar na Conta Corrente (${n} mensalidades)</div>
+        <div style="font-weight:600; font-size:13px; margin: 10px 0 6px">Desdobramento em ${n} Prestações Mensais na Conta Corrente</div>
         <div class="table-wrap" style="box-shadow:none">
           <table>
-            <thead><tr><th>N.º</th><th>Descrição da prestação</th><th>Valor</th></tr></thead>
-            <tbody>${prestRows.map((r, i) => `<tr><td class="muted" style="font-size:12px">#${i + 1}</td><td>${esc(r.descricao)}</td><td class="cell-primary">${fmtMoney(r.valor)}</td></tr>`).join('')}</tbody>
+            <thead><tr><th>Prestação</th><th>Vencimento estimado</th><th>Valor</th></tr></thead>
+            <tbody>
+              ${prestacoes.map(p => `<tr><td>Prestação ${p.num}/${n}</td><td>${p.num === 1 ? 'Na inscrição / adesão' : `Mês ${p.num}`}</td><td class="cell-primary">${fmtMoney(p.val)}</td></tr>`).join('')}
+            </tbody>
             <tfoot><tr><td></td><td style="font-weight:700">Total das prestações</td><td style="font-weight:700">${fmtMoney(valorCartaCalculado)}</td></tr></tfoot>
           </table>
         </div>
@@ -6628,16 +6691,31 @@ function openContratoForm(id) {
     prestInp.addEventListener('input', renderPlanoBox);
   }
 
+  const descontoInp = document.getElementById('contratoDescontoInput');
+  if (descontoInp) {
+    descontoInp.addEventListener('input', () => atualizarValorCarta(false));
+  }
+  const tipoDescontoSelect = document.getElementById('contratoTipoDescontoSelect');
+  if (tipoDescontoSelect) {
+    tipoDescontoSelect.addEventListener('change', () => atualizarValorCarta(false));
+  }
+
   const form = document.getElementById('contratoForm');
   bindAlunoPicker(form);
   // Ao escolher/alterar o aluno: se ainda não houver contrato (novo), sugere
-  // a categoria do próprio aluno e recalcula sempre o valor com o desconto dele.
+  // a categoria do próprio aluno e preenche o desconto do aluno.
   const alunoNomeInput = form.querySelector('[name="alunoNome"]');
   if (alunoNomeInput) {
     alunoNomeInput.addEventListener('change', () => {
+      const aluno = findAluno(alunoIdAtual());
       if (!item) {
-        const aluno = findAluno(alunoIdAtual());
         if (aluno?.categoria) document.getElementById('contratoCategoriaSelect').value = aluno.categoria;
+        if (aluno) {
+          const dInp = document.getElementById('contratoDescontoInput');
+          const tSel = document.getElementById('contratoTipoDescontoSelect');
+          if (dInp) dInp.value = aluno.desconto ?? 0;
+          if (tSel) tSel.value = aluno.tipoDesconto || 'valor';
+        }
       }
       atualizarValorCarta(true);
       renderAlertaContratoExistente();
@@ -6671,6 +6749,8 @@ function openContratoForm(id) {
       planoCartaId: planoAtual === 'Personalizado' ? null : planoCartaIdAtual,
       planoPagamento: fd.get('planoPagamento'),
       numeroPrestacoes: Number(fd.get('numeroPrestacoes') || 1),
+      descontoAplicado: fd.get('descontoAplicado') !== '' && fd.get('descontoAplicado') !== null ? Number(fd.get('descontoAplicado')) : null,
+      tipoDesconto: fd.get('tipoDesconto') || 'valor',
       parcelasPersonalizadas: planoAtual === 'Personalizado'
         ? parcelas.filter(p => p.descricao || Number(p.valor) > 0).map((p, i) => ({ descricao: p.descricao || `Parcela ${i + 1}`, valor: Number(p.valor) || 0 }))
         : null,
@@ -7201,11 +7281,17 @@ function bindForm(collection, id, numberFields, rerender) {
       await withScreenLoader(async () => {
         if (id) await api('PUT', `/api/${collection}/${id}`, payload);
         else await api('POST', `/api/${collection}`, payload);
-        await refreshCollections([collection, 'dashboard']);
+        const collectionsToRefresh = [collection];
+        if (collection !== 'produtos') {
+          collectionsToRefresh.push('dashboard');
+        }
+        await refreshCollections(collectionsToRefresh);
       }, id ? 'A guardar alterações…' : 'A criar registo…');
       closeModal();
       rerender();
-      renderDashboard();
+      if (collection !== 'produtos') {
+        renderDashboard();
+      }
       toast(id ? 'Registo atualizado.' : 'Registo criado com sucesso.');
     } catch (err) { toast(err.message, 'error'); }
   });
