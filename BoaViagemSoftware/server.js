@@ -78,17 +78,47 @@ async function ensureSchemaColumns() {
       BEGIN CATCH
       END CATCH;
 
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'assinatura_imagem')
+        ALTER TABLE contratos ADD assinatura_imagem VARBINARY(MAX) NULL;
+
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'assinatura_tutor_nome_digitado')
         ALTER TABLE contratos ADD assinatura_tutor_nome_digitado NVARCHAR(200) NULL;
 
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'assinatura_tutor_imagem')
         ALTER TABLE contratos ADD assinatura_tutor_imagem VARBINARY(MAX) NULL;
 
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'pdf_assinado_filename')
+        ALTER TABLE contratos ADD pdf_assinado_filename NVARCHAR(300) NULL;
+
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'pdf_assinado_uploaded_at')
+        ALTER TABLE contratos ADD pdf_assinado_uploaded_at DATETIME2 NULL;
+
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'pdf_assinado_tamanho_bytes')
+        ALTER TABLE contratos ADD pdf_assinado_tamanho_bytes INT NULL;
+
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('alunos') AND name = 'tipo_desconto')
         ALTER TABLE alunos ADD tipo_desconto NVARCHAR(20) NULL DEFAULT 'valor';
 
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('alunos') AND name = 'cartas_categorias')
         ALTER TABLE alunos ADD cartas_categorias NVARCHAR(MAX) NULL;
+
+      -- Remover restrição de CHECK (0 a 100) na coluna desconto caso exista,
+      -- já que o desconto pode agora ser em valor monetário (€) e ultrapassar 100.
+      DECLARE @chkDesconto NVARCHAR(200);
+      SELECT @chkDesconto = cc.name
+      FROM sys.check_constraints cc
+      JOIN sys.columns c ON c.object_id = cc.parent_object_id AND c.column_id = cc.parent_column_id
+      WHERE cc.parent_object_id = OBJECT_ID('alunos') AND c.name = 'desconto';
+      IF @chkDesconto IS NOT NULL
+      BEGIN
+        EXEC('ALTER TABLE alunos DROP CONSTRAINT ' + @chkDesconto);
+      END;
+
+      BEGIN TRY
+        ALTER TABLE alunos ALTER COLUMN desconto DECIMAL(10,2) NOT NULL;
+      END TRY
+      BEGIN CATCH
+      END CATCH;
 
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'tipo_desconto')
         ALTER TABLE contratos ADD tipo_desconto NVARCHAR(20) NULL DEFAULT 'valor';
@@ -366,7 +396,7 @@ const COLUMNS_BY_TABLE = {
   turmas_teoricas: ['espaco_id', 'instrutor_id', 'tema', 'data', 'hora_inicio', 'hora_fim', 'sala', 'estado'],
   requisitos: ['categoria', 'horas_teoricas_min', 'horas_praticas_min', 'km_pratica_min'],
   produtos: ['codigo', 'descricao', 'categoria', 'valor', 'descontavel', 'taxa_iva'],
-  contratos: ['aluno_id', 'categoria', 'plano_carta_id', 'plano_pagamento', 'numero_prestacoes', 'estado', 'valor_carta_calculado', 'desconto_aplicado', 'tipo_desconto', 'valor_total', 'texto_contrato', 'assinatura_nome_digitado', 'assinatura_data_hora', 'assinatura_tutor_nome_digitado'],
+  contratos: ['aluno_id', 'categoria', 'plano_carta_id', 'plano_pagamento', 'numero_prestacoes', 'estado', 'valor_carta_calculado', 'desconto_aplicado', 'tipo_desconto', 'valor_total', 'texto_contrato', 'assinatura_nome_digitado', 'assinatura_data_hora', 'assinatura_imagem', 'assinatura_tutor_nome_digitado', 'assinatura_tutor_imagem', 'pdf_assinado_filename', 'pdf_assinado_uploaded_at', 'pdf_assinado_tamanho_bytes'],
   pagamentos: ['aluno_id', 'valor', 'data', 'descricao', 'taxa_iva', 'estado', 'modo_pagamento', 'nao_faturar', 'artigo', 'item_conta_id'],
   itens_conta: ['aluno_id', 'origem_contrato_id', 'codigo', 'descricao', 'categoria', 'valor', 'taxa_iva', 'estado', 'origem_plano', 'ordem'],  pre_inscricoes: ['nome', 'email', 'categoria', 'desconto', 'estado', 'observacoes', 'data_pre_inscricao', 'data_inscricao', 'aluno_id'],
   exames_marcacoes: ['aluno_id', 'tipo', 'data', 'hora', 'hora_fim', 'duracao', 'local', 'estado', 'observacoes', 'resultado'],
@@ -870,7 +900,7 @@ function flattenAlunoExtras(item) {
 
   // --- CARTAS DE CONDUÇÃO DETIDAS (JSON) ---
   if (item.cartasCategorias !== undefined) {
-    item.cartasCategorias = Array.isArray(item.cartasCategorias) ? JSON.stringify(item.cartasCategorias) : null;
+    item.cartasCategorias = Array.isArray(item.cartasCategorias) ? JSON.stringify(item.cartasCategorias) : (item.cartasCategorias || null);
   }
   if (item.tipoDesconto !== undefined) {
     item.tipo_desconto = item.tipoDesconto;
@@ -895,6 +925,27 @@ function flattenAlunoExtras(item) {
     item.imtDataValidade = item.processoIMT.dataValidade ?? item.imtDataValidade;
     delete item.processoIMT;
   }
+
+  // Sanitização de campos de data: strings vazias "" devem ser convertidas para null
+  // para evitar inserção de 1900-01-01 ou falhas de conversão de data no SQL Server
+  const dateFields = [
+    'dataNascimento', 'validadeDocumento', 'dataInscricao',
+    'atestadoDataEmissao', 'atestadoDataValidade',
+    'psicotecnicoDataEmissao', 'psicotecnicoDataValidade',
+    'imtDataEmissao', 'imtDataValidade'
+  ];
+  for (const f of dateFields) {
+    if (item[f] !== undefined && (item[f] === '' || (typeof item[f] === 'string' && !item[f].trim()))) {
+      item[f] = null;
+    }
+  }
+
+  // Desconto numérico seguro
+  if (item.desconto !== undefined) {
+    const dNum = Number(item.desconto);
+    item.desconto = Number.isFinite(dNum) ? dNum : 0;
+  }
+
   return item;
 }
 
@@ -1118,7 +1169,7 @@ app.use('/api/alunos', collectionRoutes('alunos', {
     if (!espaco) return 'O espaço físico da escola é obrigatório.';
     return null;
   },
-  onCreate: (item, tenant) => { /* ...igual... */ },
+  onCreate: (item) => { flattenAlunoExtras(item); },
   onAfterCreate: async (saved, tenant, req) => {
     const pessoaId = await criarPessoaSql(req, { nome: saved.nome, tipoPessoa: 'aluno', origemCollection: 'alunos', origemId: saved.id, email: saved.email, telefone: saved.telefone, estado: saved.estado });
     const updated = await updateItemToSql(req, 'alunos', saved.id, { ...saved, numeroAluno: saved.id, pessoaId });
@@ -2619,7 +2670,7 @@ app.post('/api/pagamentos/:id/recibo', (req, res) => handleEmissao(req, res, 'RE
    14. Assinatura e PDF do contrato
    ------------------------------------------------------------ */
 
-app.put('/api/contratos/:id/assinar', async (req, res) => {
+async function handleAssinaturaContrato(req, res) {
   try {
     const id = Number(req.params.id);
     const { nomeDigitado, textoContrato, assinaturaImagem, nomeTutorDigitado, nomeDigitadoTutor, assinaturaTutorImagem, pdfBase64, filename } = req.body || {};
@@ -2654,7 +2705,7 @@ app.put('/api/contratos/:id/assinar', async (req, res) => {
       }
     }
 
-    // Se não foi fornecido um PDF do cliente, gerar automaticamente o PDF com pdf-lib no backend
+    // Se não foi fornecido um PDF do cliente, tentar gerar automaticamente o PDF com pdf-lib no backend
     if (!pdfBuffer || pdfBuffer.length === 0) {
       try {
         const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
@@ -2708,11 +2759,35 @@ app.put('/api/contratos/:id/assinar', async (req, res) => {
       }
     }
 
-    // Gravar o ficheiro PDF no sistema de ficheiros
+    // Gravar o ficheiro PDF no sistema de ficheiros (com tolerância a falhas)
     if (pdfBuffer) {
-      const dir = path.join(CONTRATOS_PDF_DIR, String(req.escolaId));
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(contratoPdfPath(req.escolaId, id), pdfBuffer);
+      try {
+        const dir = path.join(CONTRATOS_PDF_DIR, String(req.escolaId));
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(contratoPdfPath(req.escolaId, id), pdfBuffer);
+      } catch (fsErr) {
+        console.warn('Aviso ao gravar PDF no disco:', fsErr.message || fsErr);
+      }
+    }
+
+    // Garantir na hora que as colunas de assinatura e PDF existem na tabela contratos
+    try {
+      await query(`
+        IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'assinatura_imagem')
+          ALTER TABLE contratos ADD assinatura_imagem VARBINARY(MAX) NULL;
+        IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'assinatura_tutor_nome_digitado')
+          ALTER TABLE contratos ADD assinatura_tutor_nome_digitado NVARCHAR(200) NULL;
+        IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'assinatura_tutor_imagem')
+          ALTER TABLE contratos ADD assinatura_tutor_imagem VARBINARY(MAX) NULL;
+        IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'pdf_assinado_filename')
+          ALTER TABLE contratos ADD pdf_assinado_filename NVARCHAR(300) NULL;
+        IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'pdf_assinado_uploaded_at')
+          ALTER TABLE contratos ADD pdf_assinado_uploaded_at DATETIME2 NULL;
+        IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'pdf_assinado_tamanho_bytes')
+          ALTER TABLE contratos ADD pdf_assinado_tamanho_bytes INT NULL;
+      `);
+    } catch (colErr) {
+      console.warn('Aviso ao verificar colunas de contrato:', colErr.message || colErr);
     }
 
     const result = await query(
@@ -2808,7 +2883,10 @@ app.put('/api/contratos/:id/assinar', async (req, res) => {
   } catch (ex) {
     res.status(503).json({ success: false, error: `Falha ao assinar contrato: ${ex.message || ex}` });
   }
-});
+}
+
+app.put('/api/contratos/:id/assinar', handleAssinaturaContrato);
+app.post('/api/contratos/:id/assinar', handleAssinaturaContrato);
 
 app.post('/api/contratos/:id/pdf-assinado', async (req, res) => {
   try {
