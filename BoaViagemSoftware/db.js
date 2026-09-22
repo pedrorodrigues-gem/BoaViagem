@@ -57,6 +57,8 @@ async function query(sqlText, params = {}) {
         } else if (Array.isArray(value)) {
             // Defesa extra: arrays JS são serializados como JSON em vez de partirem o driver
             request.input(key, sql.NVarChar(sql.MAX), JSON.stringify(value));
+        } else if (key === 'cartas_categorias' && typeof value !== 'string' && value != null) {
+            request.input(key, sql.NVarChar(sql.MAX), JSON.stringify(value));
         } else {
             request.input(key, value === undefined ? null : value);
         }

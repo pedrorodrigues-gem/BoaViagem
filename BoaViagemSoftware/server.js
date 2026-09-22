@@ -412,6 +412,8 @@ function jsToDbRow(table, row, extra = {}) {
     if (allowed && !allowed.includes(dbKey)) continue;
     if (dbKey === 'foto' || dbKey === 'assinatura_imagem' || dbKey === 'assinatura_tutor_imagem') {
       out[dbKey] = { type: require('mssql').VarBinary(require('mssql').MAX), value: fotoParaBuffer(value) };
+    } else if (dbKey === 'cartas_categorias') {
+      out[dbKey] = Array.isArray(value) ? JSON.stringify(value) : (typeof value === 'string' ? value : null);
     } else {
       out[dbKey] = value;
     }
@@ -900,7 +902,10 @@ function flattenAlunoExtras(item) {
 
   // --- CARTAS DE CONDUÇÃO DETIDAS (JSON) ---
   if (item.cartasCategorias !== undefined) {
-    item.cartasCategorias = Array.isArray(item.cartasCategorias) ? JSON.stringify(item.cartasCategorias) : (item.cartasCategorias || null);
+    item.cartasCategorias = Array.isArray(item.cartasCategorias) ? JSON.stringify(item.cartasCategorias) : (typeof item.cartasCategorias === 'string' ? item.cartasCategorias : null);
+  }
+  if (item.cartas_categorias !== undefined) {
+    item.cartas_categorias = Array.isArray(item.cartas_categorias) ? JSON.stringify(item.cartas_categorias) : (typeof item.cartas_categorias === 'string' ? item.cartas_categorias : null);
   }
   if (item.tipoDesconto !== undefined) {
     item.tipo_desconto = item.tipoDesconto;
