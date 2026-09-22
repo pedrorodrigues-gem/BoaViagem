@@ -54,8 +54,11 @@ async function query(sqlText, params = {}) {
             // Defesa extra: qualquer Buffer é sempre tipado como VarBinary(MAX),
             // mesmo que o chamador se tenha esquecido de o marcar explicitamente.
             request.input(key, sql.VarBinary(sql.MAX), value);
+        } else if (Array.isArray(value)) {
+            // Defesa extra: arrays JS são serializados como JSON em vez de partirem o driver
+            request.input(key, sql.NVarChar(sql.MAX), JSON.stringify(value));
         } else {
-            request.input(key, value);
+            request.input(key, value === undefined ? null : value);
         }
     }
     return request.query(sqlText);
