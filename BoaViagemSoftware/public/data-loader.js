@@ -355,6 +355,33 @@
         return aulasHistoricoPromise;
     }
 
+    let aulasHistoricoCompletoPromise = null;
+    async function ensureAulasHistoricoCompleto() {
+        if (state.aulasHistoricoCompletoCarregado) return state.aulas;
+        if (aulasHistoricoCompletoPromise) return aulasHistoricoCompletoPromise;
+
+        setLoadingBar(true);
+        aulasHistoricoCompletoPromise = api('GET', '/api/aulas?periodo=Historico&allHistory=1')
+            .then((historico) => {
+                const aulasMap = new Map((state.aulas || []).map(a => [a.id, a]));
+                (historico || []).forEach(a => aulasMap.set(a.id, a));
+                state.aulas = Array.from(aulasMap.values());
+                state.aulasHistoricoCompletoCarregado = true;
+                state.aulasHistoricoCarregado = true; // Complete implies partial
+                aulasHistoricoCompletoPromise = null;
+                return state.aulas;
+            })
+            .catch((err) => {
+                aulasHistoricoCompletoPromise = null;
+                throw err;
+            })
+            .finally(() => {
+                setLoadingBar(false);
+            });
+
+        return aulasHistoricoCompletoPromise;
+    }
+
     // 4. Exames: Carregar todos os exames ao clicar em 'Todos'
     let examesTodosPromise = null;
     async function ensureExamesTodos() {
@@ -468,6 +495,7 @@
     window.ensureAlunosTodos = ensureAlunosTodos;
     window.ensureCalendarioAno = ensureCalendarioAno;
     window.ensureAulasHistorico = ensureAulasHistorico;
+    window.ensureAulasHistoricoCompleto = ensureAulasHistoricoCompleto;
     window.ensureExamesTodos = ensureExamesTodos;
     window.ensurePagamentosAno = ensurePagamentosAno;
     window.ensureContratosAno = ensureContratosAno;
