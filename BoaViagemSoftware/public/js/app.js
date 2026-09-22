@@ -3301,9 +3301,25 @@ function openAlunoForm(id) {
     };
     try {
       await withScreenLoader(async () => {
-        if (item) await api('PUT', `/api/alunos/${item.id}`, payload);
-        else await api('POST', '/api/alunos', payload);
-        await Promise.all([refreshCollections(['alunos', 'dashboard']), ensureAlunosAtivos({ force: true })]);
+        let savedAluno;
+        if (item) savedAluno = await api('PUT', `/api/alunos/${item.id}`, payload);
+        else savedAluno = await api('POST', '/api/alunos', payload);
+        
+        if (state.alunos) {
+          const idx = state.alunos.findIndex(a => a.id === savedAluno.id);
+          if (idx >= 0) state.alunos[idx] = savedAluno;
+          else state.alunos.push(savedAluno);
+        }
+        if (state.alunosAtivos) {
+          const idxAtivo = state.alunosAtivos.findIndex(a => a.id === savedAluno.id);
+          if (savedAluno.estado === 'Ativo') {
+            if (idxAtivo >= 0) state.alunosAtivos[idxAtivo] = savedAluno;
+            else state.alunosAtivos.push(savedAluno);
+          } else {
+            if (idxAtivo >= 0) state.alunosAtivos.splice(idxAtivo, 1);
+          }
+        }
+        refreshCollections(['dashboard']).catch(console.error);
       }, item ? 'A guardar dados do aluno…' : 'A criar aluno…');
       closeModal();
       renderAlunos();
@@ -3739,7 +3755,7 @@ function renderAulasPraticasTab() {
   let list = state.aulas.filter(a => (a.tipo || 'Prática') === 'Prática');
   if (periodo === 'Futuras') list = list.filter(a => a.data >= hojeISO);
   list.sort((a, b) => (a.data + a.hora).localeCompare(b.data + b.hora));
-  if (periodo === 'Historico') list.reverse();
+  if (periodo === 'Historico' || periodo === 'HistoricoCompleto') list.reverse();
   if (filtro !== 'Todos') list = list.filter(a => a.estado === filtro);
   if (q) list = list.filter(a => { const aluno = findAluno(a.alunoId); return aluno && aluno.nome.toLowerCase().includes(q); });
 
@@ -3752,7 +3768,8 @@ function renderAulasPraticasTab() {
       <input class="search-input" placeholder="Pesquisar por nome do aluno..." value="${esc(state.search.aulas)}" oninput="updateSearchAndRerender(this, 'aulas', renderAulas)">
       <div class="filter-row">
         <button class="chip ${periodo === 'Futuras' ? 'active' : ''}" onclick="if (state.pagination && state.pagination.aulasPraticas) state.pagination.aulasPraticas.page=1; state.filter.aulasPeriodo='Futuras'; renderAulas();">Hoje e futuras</button>
-        <button class="chip ${periodo === 'Historico' ? 'active' : ''}" onclick="if (state.pagination && state.pagination.aulasPraticas) state.pagination.aulasPraticas.page=1; state.filter.aulasPeriodo='Historico'; if (!state.aulasHistoricoCarregado && typeof ensureAulasHistorico === 'function') { ensureAulasHistorico().then(() => renderAulas()); } renderAulas();">Histórico</button>
+        <button class="chip ${periodo === 'Historico' ? 'active' : ''}" onclick="if (state.pagination && state.pagination.aulasPraticas) state.pagination.aulasPraticas.page=1; state.filter.aulasPeriodo='Historico'; if (!state.aulasHistoricoCarregado && typeof ensureAulasHistorico === 'function') { ensureAulasHistorico().then(() => renderAulas()); } renderAulas();">Histórico (Recente)</button>
+        <button class="chip ${periodo === 'HistoricoCompleto' ? 'active' : ''}" onclick="if (state.pagination && state.pagination.aulasPraticas) state.pagination.aulasPraticas.page=1; state.filter.aulasPeriodo='HistoricoCompleto'; if (!state.aulasHistoricoCompletoCarregado && typeof ensureAulasHistoricoCompleto === 'function') { ensureAulasHistoricoCompleto().then(() => renderAulas()); } renderAulas();">Histórico (Tudo)</button>
       </div>
       <select onchange="if (state.pagination && state.pagination.aulasPraticas) state.pagination.aulasPraticas.page=1; state.filter.aulas=this.value; renderAulas();" style="font-size:13px; padding:4px 8px; border-radius:6px; border:1px solid var(--border)">
         ${estados.map(e => `<option value="${e}" ${filtro === e ? 'selected' : ''}>${e}</option>`).join('')}
@@ -3810,7 +3827,7 @@ function renderTurmasTeoricasTab() {
         <button class="chip ${periodo === 'Agendadas' ? 'active' : ''}" onclick="if (state.pagination && state.pagination.turmasTeoricas) state.pagination.turmasTeoricas.page=1; state.filter.turmasPeriodo='Agendadas'; renderAulas();">Agendadas</button>
         <button class="chip ${periodo === 'Historico' ? 'active' : ''}" onclick="if (state.pagination && state.pagination.turmasTeoricas) state.pagination.turmasTeoricas.page=1; state.filter.turmasPeriodo='Historico'; renderAulas();">Histórico</button>
       </div>
-      <button class="btn btn-accent btn-sm" style="margin-left:auto" onclick="openTurmaTeoricaForm()">+ Nova turma teórica</button>
+      ${state.usuarioAtual?.role === 'aluno' ? '' : '<button class="btn btn-accent btn-sm" style="margin-left:auto" onclick="openTurmaTeoricaForm()">+ Nova turma teórica</button>'}
     </div>
     ${list.length ? `
       ${pageItems.map(t => `
@@ -3821,10 +3838,12 @@ function renderTurmasTeoricasTab() {
             <div class="sub">${(t.inscritos || []).length} inscritos · ${esc((findInstrutor(t.instrutorId) || {}).nome || 'Sem instrutor')} · <span class="${badgeClass(t.estado)}">${esc(t.estado || '—')}</span></div>
           </div>
           <div class="row-actions">
-            <button class="btn btn-ghost btn-sm" onclick="openTurmaTeoricaForm(${t.id})">Editar</button>
-            ${t.estado === 'Agendada'
-      ? `<button class="btn btn-accent btn-sm" onclick="abrirPresencasForm(${t.id})">Marcar presenças</button>`
-      : `<button class="btn btn-ghost btn-sm" onclick="abrirPresencasForm(${t.id})">Presenças (${(t.inscritos || []).length})</button>`}
+            ${state.usuarioAtual?.role === 'aluno' 
+              ? (t.estado === 'Agendada' ? ((t.presencas && t.presencas[state.usuarioAtual.id]) ? '<span class="badge" style="background:#dcfce7; color:#15803d">Presente ✓</span>' : '<button class="btn btn-accent btn-sm" onclick="marcarMinhaPresencaTurma(' + t.id + ')">Estou Presente</button>') : '')
+              : ('<button class="btn btn-ghost btn-sm" onclick="openTurmaTeoricaForm(' + t.id + ')">Editar</button>' +
+                 (t.estado === 'Agendada'
+                   ? '<button class="btn btn-accent btn-sm" onclick="abrirPresencasForm(' + t.id + ')">Marcar presenças</button>'
+                   : '<button class="btn btn-ghost btn-sm" onclick="abrirPresencasForm(' + t.id + ')">Presenças (' + (t.inscritos || []).length + ')</button>'))}
           </div>
         </div>
       `).join('')}
@@ -3832,6 +3851,21 @@ function renderTurmasTeoricasTab() {
     ` : emptyState('Sem turmas teóricas', periodo === 'Agendadas' ? 'Não há turmas agendadas de momento.' : 'Sem histórico de turmas teóricas.')}
   `;
 }
+
+window.marcarMinhaPresencaTurma = async function(turmaId) {
+  try {
+    await withScreenLoader(async () => {
+      await api('PUT', '/api/turmasTeoricas/' + turmaId + '/aluno_presente');
+      if (typeof refreshCollections === 'function') {
+        await refreshCollections(['turmasTeoricas']);
+      }
+    }, 'A registar presença...');
+    renderAulas();
+    toast('Presença registada com sucesso!');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
 
 function openAulaForm(id) {
   const item = id ? state.aulas.find(a => a.id === id) : null;
@@ -3942,9 +3976,16 @@ function openAulaForm(id) {
     };
     try {
       await withScreenLoader(async () => {
-        if (item) await api('PUT', `/api/aulas/${item.id}`, payload);
-        else await api('POST', '/api/aulas', payload);
-        await refreshCollections(['aulas', 'dashboard', 'alunos']);
+        let savedAula;
+        if (item) savedAula = await api('PUT', `/api/aulas/${item.id}`, payload);
+        else savedAula = await api('POST', '/api/aulas', payload);
+        
+        if (state.aulas) {
+          const idx = state.aulas.findIndex(a => a.id === savedAula.id);
+          if (idx >= 0) state.aulas[idx] = savedAula;
+          else state.aulas.push(savedAula);
+        }
+        refreshCollections(['dashboard', 'alunos']).catch(console.error);
       }, item ? 'A guardar alterações da aula…' : 'A agendar aula…');
       closeModal();
       render();
