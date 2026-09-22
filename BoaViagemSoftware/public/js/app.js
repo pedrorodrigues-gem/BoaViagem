@@ -3275,7 +3275,9 @@ function openAlunoForm(id) {
 
   let cartasCategoriasEdit = Array.isArray(item?.cartasCategorias)
     ? item.cartasCategorias.map(c => ({ ...c }))
-    : [];
+    : (typeof item?.cartasCategorias === 'string' && item.cartasCategorias.trim()
+      ? (() => { try { const p = JSON.parse(item.cartasCategorias); return Array.isArray(p) ? p : []; } catch (_) { return []; } })()
+      : []);
   bindCartasCategoriasEditor(form, cartasCategoriasEdit);
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -3290,7 +3292,7 @@ function openAlunoForm(id) {
       tipoDesconto: fd.get('tipoDesconto') || 'valor',
       dispensaModulos: fd.get('dispensaModulos'),
       processoIMT: { numero: fd.get('pi_numero'), dataEmissao: fd.get('pi_dataEmissao'), dataValidade: fd.get('pi_dataValidade') },
-      cartasCategorias: cartasCategoriasEdit.filter(c => c.categoria && (c.dataValidade || c.numeroCarta || c.dataEmissao)),
+      cartasCategorias: JSON.stringify(cartasCategoriasEdit.filter(c => c.categoria && (c.dataValidade || c.numeroCarta || c.dataEmissao))),
       atestadoMedico: { dataEmissao: fd.get('am_dataEmissao'), dataValidade: fd.get('am_dataValidade'), apto: fd.get('am_apto') === 'true' },
       examePsicotecnico: { aplicavel: !!fd.get('ep_aplicavel'), dataEmissao: fd.get('ep_dataEmissao'), dataValidade: fd.get('ep_dataValidade') },
       espacoId: Number(fd.get('espacoId') || 0),
