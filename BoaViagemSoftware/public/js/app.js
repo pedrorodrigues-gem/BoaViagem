@@ -2159,107 +2159,107 @@ function renderComparacaoEspacosHTML(ce) {
           </thead>
           <tbody>
             ${[
-              {
-                label: 'Receita Total Cobrada',
-                val: e => fmtMoney(e.receitaTotal),
-                raw: e => e.receitaTotal,
-                tot: fmtMoney(totalReceita),
-                tipo: 'money',
-                destaque: true
-              },
-              {
-                label: 'Pagamentos / Recibos Emitidos',
-                val: e => `${e.pagamentosCount} recibos`,
-                raw: e => e.pagamentosCount,
-                tot: `${espacos.reduce((s, e) => s + e.pagamentosCount, 0)} recibos`
-              },
-              {
-                label: 'Saldos Devedores em CC (Pendente)',
-                val: e => fmtMoney(e.receitaPendente),
-                raw: e => e.receitaPendente,
-                tot: fmtMoney(totalPendentes),
-                tipo: 'pendente'
-              },
-              {
-                label: 'Ticket Médio por Aluno',
-                val: e => fmtMoney(e.ticketMedioAluno),
-                raw: e => e.ticketMedioAluno,
-                tot: fmtMoney(totalAlunosGeral > 0 ? totalReceita / totalAlunosGeral : 0)
-              },
-              {
-                label: 'Alunos Ativos (Em Formação)',
-                val: e => `${e.alunosAtivos} alunos`,
-                raw: e => e.alunosAtivos,
-                tot: `${totalAtivos} alunos`,
-                destaque: true
-              },
-              {
-                label: 'Novas Matrículas no Período',
-                val: e => `${e.alunosNovosPeriodo} matrículas`,
-                raw: e => e.alunosNovosPeriodo,
-                tot: `${totalNovos} matrículas`
-              },
-              {
-                label: 'Alunos com Carta Concluída',
-                val: e => `${e.alunosConcluidos} alunos`,
-                raw: e => e.alunosConcluidos,
-                tot: `${espacos.reduce((s, e) => s + e.alunosConcluidos, 0)} alunos`
-              },
-              {
-                label: 'Aulas Práticas Realizadas',
-                val: e => `${e.aulasPraticas} aulas`,
-                raw: e => e.aulasPraticas,
-                tot: `${totalPraticas} aulas`
-              },
-              {
-                label: 'Aulas Teóricas Realizadas',
-                val: e => `${e.aulasTeoricas} aulas`,
-                raw: e => e.aulasTeoricas,
-                tot: `${totalTeoricas} aulas`
-              },
-              {
-                label: 'Total de Aulas Ministradas',
-                val: e => `${e.aulasTotal} aulas`,
-                raw: e => e.aulasTotal,
-                tot: `${totalAulas} aulas`,
-                destaque: true
-              },
-              {
-                label: 'Exames de Condução Realizados',
-                val: e => `${e.examesTotal} exames`,
-                raw: e => e.examesTotal,
-                tot: `${totalExames} exames`
-              },
-              {
-                label: 'Exames com Aprovação',
-                val: e => `${e.examesAprovados} aprovados`,
-                raw: e => e.examesAprovados,
-                tot: `${totalAprovados} aprovados`
-              },
-              {
-                label: 'Taxa de Aprovação Global (%)',
-                val: e => e.taxaAprovacao !== null ? `${e.taxaAprovacao}%` : '—',
-                raw: e => e.taxaAprovacao ?? -1,
-                tot: taxaAprovGeral !== null ? `${taxaAprovGeral}%` : '—',
-                destaque: true
-              }
-            ].map(row => {
-              let liderTag = '';
-              if (isDois) {
-                const r1 = row.raw(e1);
-                const r2 = row.raw(e2);
-                if (row.tipo === 'pendente') {
-                  if (r1 < r2) liderTag = `<span class="badge" style="background:#f0fdf4; color:#166534">Menor pendente: ${esc(e1.nome)}</span>`;
-                  else if (r2 < r1) liderTag = `<span class="badge" style="background:#f0fdf4; color:#166534">Menor pendente: ${esc(e2.nome)}</span>`;
-                  else liderTag = '<span class="muted">Igual</span>';
-                } else {
-                  if (r1 > r2) liderTag = `<span class="badge" style="background:#ede9fe; color:#5b21b6">+${typeof r1 === 'number' && typeof r2 === 'number' && row.tipo === 'money' ? fmtMoney(r1 - r2) : (r1 - r2)} em ${esc(e1.nome)}</span>`;
-                  else if (r2 > r1) liderTag = `<span class="badge" style="background:#e0f2fe; color:#0369a1">+${typeof r1 === 'number' && typeof r2 === 'number' && row.tipo === 'money' ? fmtMoney(r2 - r1) : (r2 - r1)} em ${esc(e2.nome)}</span>`;
-                  else liderTag = '<span class="muted">Equilibrado</span>';
-                }
-              }
+      {
+        label: 'Receita Total Cobrada',
+        val: e => fmtMoney(e.receitaTotal),
+        raw: e => e.receitaTotal,
+        tot: fmtMoney(totalReceita),
+        tipo: 'money',
+        destaque: true
+      },
+      {
+        label: 'Pagamentos / Recibos Emitidos',
+        val: e => `${e.pagamentosCount} recibos`,
+        raw: e => e.pagamentosCount,
+        tot: `${espacos.reduce((s, e) => s + e.pagamentosCount, 0)} recibos`
+      },
+      {
+        label: 'Saldos Devedores em CC (Pendente)',
+        val: e => fmtMoney(e.receitaPendente),
+        raw: e => e.receitaPendente,
+        tot: fmtMoney(totalPendentes),
+        tipo: 'pendente'
+      },
+      {
+        label: 'Ticket Médio por Aluno',
+        val: e => fmtMoney(e.ticketMedioAluno),
+        raw: e => e.ticketMedioAluno,
+        tot: fmtMoney(totalAlunosGeral > 0 ? totalReceita / totalAlunosGeral : 0)
+      },
+      {
+        label: 'Alunos Ativos (Em Formação)',
+        val: e => `${e.alunosAtivos} alunos`,
+        raw: e => e.alunosAtivos,
+        tot: `${totalAtivos} alunos`,
+        destaque: true
+      },
+      {
+        label: 'Novas Matrículas no Período',
+        val: e => `${e.alunosNovosPeriodo} matrículas`,
+        raw: e => e.alunosNovosPeriodo,
+        tot: `${totalNovos} matrículas`
+      },
+      {
+        label: 'Alunos com Carta Concluída',
+        val: e => `${e.alunosConcluidos} alunos`,
+        raw: e => e.alunosConcluidos,
+        tot: `${espacos.reduce((s, e) => s + e.alunosConcluidos, 0)} alunos`
+      },
+      {
+        label: 'Aulas Práticas Realizadas',
+        val: e => `${e.aulasPraticas} aulas`,
+        raw: e => e.aulasPraticas,
+        tot: `${totalPraticas} aulas`
+      },
+      {
+        label: 'Aulas Teóricas Realizadas',
+        val: e => `${e.aulasTeoricas} aulas`,
+        raw: e => e.aulasTeoricas,
+        tot: `${totalTeoricas} aulas`
+      },
+      {
+        label: 'Total de Aulas Ministradas',
+        val: e => `${e.aulasTotal} aulas`,
+        raw: e => e.aulasTotal,
+        tot: `${totalAulas} aulas`,
+        destaque: true
+      },
+      {
+        label: 'Exames de Condução Realizados',
+        val: e => `${e.examesTotal} exames`,
+        raw: e => e.examesTotal,
+        tot: `${totalExames} exames`
+      },
+      {
+        label: 'Exames com Aprovação',
+        val: e => `${e.examesAprovados} aprovados`,
+        raw: e => e.examesAprovados,
+        tot: `${totalAprovados} aprovados`
+      },
+      {
+        label: 'Taxa de Aprovação Global (%)',
+        val: e => e.taxaAprovacao !== null ? `${e.taxaAprovacao}%` : '—',
+        raw: e => e.taxaAprovacao ?? -1,
+        tot: taxaAprovGeral !== null ? `${taxaAprovGeral}%` : '—',
+        destaque: true
+      }
+    ].map(row => {
+      let liderTag = '';
+      if (isDois) {
+        const r1 = row.raw(e1);
+        const r2 = row.raw(e2);
+        if (row.tipo === 'pendente') {
+          if (r1 < r2) liderTag = `<span class="badge" style="background:#f0fdf4; color:#166534">Menor pendente: ${esc(e1.nome)}</span>`;
+          else if (r2 < r1) liderTag = `<span class="badge" style="background:#f0fdf4; color:#166534">Menor pendente: ${esc(e2.nome)}</span>`;
+          else liderTag = '<span class="muted">Igual</span>';
+        } else {
+          if (r1 > r2) liderTag = `<span class="badge" style="background:#ede9fe; color:#5b21b6">+${typeof r1 === 'number' && typeof r2 === 'number' && row.tipo === 'money' ? fmtMoney(r1 - r2) : (r1 - r2)} em ${esc(e1.nome)}</span>`;
+          else if (r2 > r1) liderTag = `<span class="badge" style="background:#e0f2fe; color:#0369a1">+${typeof r1 === 'number' && typeof r2 === 'number' && row.tipo === 'money' ? fmtMoney(r2 - r1) : (r2 - r1)} em ${esc(e2.nome)}</span>`;
+          else liderTag = '<span class="muted">Equilibrado</span>';
+        }
+      }
 
-              return `
+      return `
                 <tr style="border-bottom:1px solid var(--border); ${row.destaque ? 'background:rgba(244, 243, 248, 0.5); font-weight:600' : ''}">
                   <td style="padding:8px 14px">${row.label}</td>
                   ${espacos.map(e => `
@@ -2269,7 +2269,7 @@ function renderComparacaoEspacosHTML(ce) {
                   ${isDois ? `<td style="padding:8px 14px; text-align:center">${liderTag}</td>` : ''}
                 </tr>
               `;
-            }).join('')}
+    }).join('')}
           </tbody>
         </table>
       </div>
@@ -2282,17 +2282,17 @@ function renderComparacaoEspacosHTML(ce) {
             <span class="muted" style="font-size:12px">Comparativo de faturação mensal recebida</span>
           </div>
           ${svgBarChartDuplo(
-            mesesLabels.map(m => chartMesLabelCurto(m)),
-            e1.receitaMensal || [],
-            e2.receitaMensal || [],
-            {
-              nomeA: e1.nome,
-              nomeB: e2.nome,
-              corA: CHART_CORES.primaria,
-              corB: CHART_CORES.info,
-              moeda: true
-            }
-          )}
+      mesesLabels.map(m => chartMesLabelCurto(m)),
+      e1.receitaMensal || [],
+      e2.receitaMensal || [],
+      {
+        nomeA: e1.nome,
+        nomeB: e2.nome,
+        corA: CHART_CORES.primaria,
+        corB: CHART_CORES.info,
+        moeda: true
+      }
+    )}
         </div>
       ` : ''}
     </div>
@@ -3478,7 +3478,7 @@ async function abrirModalTransferirAluno(alunoId) {
 
         // Atualizar coleções em segundo plano
         if (typeof refreshCollections === 'function') {
-          refreshCollections(['alunos', 'itensConta', 'dashboard']).catch(() => {});
+          refreshCollections(['alunos', 'itensConta', 'dashboard']).catch(() => { });
         }
 
         closeModal();
@@ -3823,8 +3823,8 @@ function renderTurmasTeoricasTab() {
           <div class="row-actions">
             <button class="btn btn-ghost btn-sm" onclick="openTurmaTeoricaForm(${t.id})">Editar</button>
             ${t.estado === 'Agendada'
-              ? `<button class="btn btn-accent btn-sm" onclick="abrirPresencasForm(${t.id})">Marcar presenças</button>`
-              : `<button class="btn btn-ghost btn-sm" onclick="abrirPresencasForm(${t.id})">Presenças (${(t.inscritos || []).length})</button>`}
+      ? `<button class="btn btn-accent btn-sm" onclick="abrirPresencasForm(${t.id})">Marcar presenças</button>`
+      : `<button class="btn btn-ghost btn-sm" onclick="abrirPresencasForm(${t.id})">Presenças (${(t.inscritos || []).length})</button>`}
           </div>
         </div>
       `).join('')}
@@ -4676,7 +4676,7 @@ function renderPagamentos() {
         sel.innerHTML = anos.map(y => `<option value="${y}" ${state.filtroAnoPagamentos == y ? 'selected' : ''}>${y}</option>`).join('') +
           `<option value="Todos" ${state.filtroAnoPagamentos === 'Todos' ? 'selected' : ''}>Todos os anos</option>`;
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }
 
   let list = [...state.pagamentos];
@@ -6242,7 +6242,7 @@ function renderContratos() {
         sel.innerHTML = anos.map(y => `<option value="${y}" ${state.filtroAnoContratos == y ? 'selected' : ''}>${y}</option>`).join('') +
           `<option value="Todos" ${state.filtroAnoContratos === 'Todos' ? 'selected' : ''}>Todos os anos</option>`;
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }
 
   let list = state.contratos || [];
@@ -6939,7 +6939,7 @@ function renderSignaturePadHTML() {
    já foi desenhado algo e para extrair a imagem final em base64. */
 function bindSignaturePad(canvasId, clearBtnId = 'btnLimparAssinatura') {
   const canvas = document.getElementById(canvasId);
-  if (!canvas) return { temAssinatura: () => false, obterImagemBase64: () => null, limpar: () => {} };
+  if (!canvas) return { temAssinatura: () => false, obterImagemBase64: () => null, limpar: () => { } };
   const ctx = canvas.getContext('2d');
   let desenhando = false;
   let temTraco = false;
@@ -7461,8 +7461,8 @@ function renderRevalidacoes() {
           </thead>
           <tbody>
             ${pageItems.map(r => {
-              const modoLabel = r.modoPagamento === 'PGTR' ? 'Multibanco/Transf.' : (r.modoPagamento === 'MBWAY' ? 'MBWay' : 'Numerário');
-              return `
+    const modoLabel = r.modoPagamento === 'PGTR' ? 'Multibanco/Transf.' : (r.modoPagamento === 'MBWAY' ? 'MBWay' : 'Numerário');
+    return `
                 <tr>
                   <td class="cell-primary">
                     ${esc(r.nome)}
@@ -7498,7 +7498,7 @@ function renderRevalidacoes() {
                   </td>
                 </tr>
               `;
-            }).join('')}
+  }).join('')}
           </tbody>
         </table>
         ${paginationHtml}
@@ -7900,7 +7900,7 @@ function setupSecretRevalidacoesAccess() {
   // 1. Atalhos de teclado: Ctrl+Shift+R ou Alt+R
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey && e.shiftKey && (e.key === 'R' || e.key === 'r')) ||
-        (e.altKey && (e.key === 'R' || e.key === 'r'))) {
+      (e.altKey && (e.key === 'R' || e.key === 'r'))) {
       e.preventDefault();
       toggleModuloRevalidacoes();
     }
@@ -8191,4 +8191,4 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal
   } finally {
     hideScreenLoader(true);
   }
-})();
+})();
