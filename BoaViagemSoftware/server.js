@@ -527,7 +527,11 @@ async function fetchCollectionFromSql(req, name) {
     if (req.query.periodo === 'Futuras') {
       condicoes.push('data >= CAST(GETDATE() AS DATE)');
     } else if (req.query.periodo === 'Historico') {
-      condicoes.push('data < CAST(GETDATE() AS DATE)');
+      if (req.query.allHistory === '1') {
+        condicoes.push('data < CAST(GETDATE() AS DATE)');
+      } else {
+        condicoes.push('data < CAST(GETDATE() AS DATE) AND data >= DATEADD(year, -2, CAST(GETDATE() AS DATE))');
+      }
     }
   }
 
@@ -3152,6 +3156,36 @@ app.put('/api/turmasTeoricas/:id/presencas', async (req, res) => {
     ok(res, turma);
   } catch (ex) {
     res.status(503).json({ success: false, error: `Falha ao atualizar presenças: ${ex.message || ex}` });
+  }
+});
+
+app.put('/api/turmasTeoricas/:id/aluno_presente', async (req, res) => {
+  try {
+    if (req.user.role !== 'aluno') return res.status(403).json({ success: false, error: 'Acesso negado.' });
+    
+    const turmaId = Number(req.params.id);
+    const alunoId = req.user.id;
+    
+    const turmaResult = await query('SELECT * FROM turmas_teoricas WHERE id=@id AND escola_id=@escolaId', { id: turmaId, escolaId: req.escolaId });
+    if (!turmaResult.recordset[0]) return notFound(res);
+
+    const jaExiste = await query('SELECT 1 AS existe FROM turma_inscritos WHERE turma_id=@turmaId AND aluno_id=@alunoId', { turmaId, alunoId });
+
+    if (jaExiste.recordset[0]) {
+      await query(
+        `UPDATE turma_inscritos SET presente=1, data_marcacao=SYSUTCDATETIME(), marcado_por=@alunoId WHERE turma_id=@turmaId AND aluno_id=@alunoId`,
+        { turmaId, alunoId }
+      );
+    } else {
+      await query(
+        `INSERT INTO turma_inscritos (turma_id, aluno_id, presente, data_marcacao, marcado_por) VALUES (@turmaId, @alunoId, 1, SYSUTCDATETIME(), @alunoId)`,
+        { turmaId, alunoId }
+      );
+    }
+
+    ok(res, { success: true });
+  } catch (ex) {
+    res.status(503).json({ success: false, error: `Falha ao marcar presença: ${ex.message || ex}` });
   }
 });
 
