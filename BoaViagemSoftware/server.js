@@ -2458,9 +2458,17 @@ app.get('/api/planosCarta/:categoria', (req, res) => {
    12. Pré-inscrições
    ------------------------------------------------------------ */
 
-app.get('/api/preinscricoes', (req, res) => {
-  const { tenant } = currentTenant(req);
-  ok(res, tenant.preInscricoes || []);
+app.get('/api/preinscricoes', async (req, res) => {
+  try {
+    const result = await query('SELECT * FROM pre_inscricoes WHERE escola_id=@escolaId ORDER BY id DESC', { escolaId: req.escolaId });
+    const list = result.recordset.map(dbRowToJs);
+    const { tenant } = currentTenant(req);
+    tenant.preInscricoes = list;
+    ok(res, list);
+  } catch (ex) {
+    const { tenant } = currentTenant(req);
+    ok(res, tenant.preInscricoes || []);
+  }
 });
 
 app.post('/api/preinscricoes', async (req, res) => {
@@ -2474,8 +2482,7 @@ app.post('/api/preinscricoes', async (req, res) => {
     if (Number.isNaN(desconto) || desconto < 0 || desconto > 100) desconto = 0;
     const result = await query(
       `INSERT INTO pre_inscricoes (escola_id, nome, email, categoria, desconto, estado, observacoes, data_pre_inscricao, data_inscricao)
-       OUTPUT inserted.id, inserted.nome, inserted.email, inserted.categoria, inserted.desconto, inserted.estado,
-              inserted.observacoes, inserted.data_pre_inscricao AS dataPreInscricao, inserted.data_inscricao AS dataInscricao, inserted.aluno_id AS alunoId
+       OUTPUT inserted.*
        VALUES (@escolaId, @nome, @email, @categoria, @desconto, @estado, @observacoes, @dataPreInscricao, @dataInscricao)`,
       {
         escolaId: req.escolaId, nome, email, categoria, desconto,
@@ -2485,9 +2492,75 @@ app.post('/api/preinscricoes', async (req, res) => {
         dataInscricao: payload.dataInscricao || null
       }
     );
-    ok(res, formatRow(result.recordset[0]));
+    invalidateTenantCache(req.escolaId);
+    const saved = dbRowToJs(result.recordset[0]);
+    const { tenant } = currentTenant(req);
+    if (tenant.preInscricoes) tenant.preInscricoes.unshift(saved);
+    ok(res, saved);
   } catch (ex) {
     res.status(503).json({ success: false, error: `Falha ao criar pré-inscrição: ${ex.message || ex}` });
+  }
+});
+
+app.put('/api/preinscricoes/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return badRequest(res, 'ID inválido.');
+    const preChk = await query('SELECT * FROM pre_inscricoes WHERE id=@id AND escola_id=@escolaId', { id, escolaId: req.escolaId });
+    const existing = preChk.recordset[0];
+    if (!existing) return notFound(res, 'Pré-inscrição não encontrada.');
+
+    const payload = req.body || {};
+    const nome = payload.nome !== undefined ? String(payload.nome || '').trim() : existing.nome;
+    const email = payload.email !== undefined ? String(payload.email || '').trim() : existing.email;
+    const categoria = payload.categoria !== undefined ? String(payload.categoria || '').trim() : existing.categoria;
+    if (!nome || !email || !categoria) return badRequest(res, 'Nome, email e categoria são obrigatórios.');
+
+    let desconto = payload.desconto !== undefined ? Number(payload.desconto || 0) : existing.desconto;
+    if (Number.isNaN(desconto) || desconto < 0 || desconto > 100) desconto = 0;
+
+    const estado = payload.estado !== undefined ? String(payload.estado || 'Pendente').trim() : existing.estado;
+    const observacoes = payload.observacoes !== undefined ? String(payload.observacoes || '') : existing.observacoes;
+    const dataPreInscricao = payload.dataPreInscricao || (existing.data_pre_inscricao ? new Date(existing.data_pre_inscricao).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
+    const dataInscricao = payload.dataInscricao !== undefined ? (payload.dataInscricao || null) : (existing.data_inscricao ? new Date(existing.data_inscricao).toISOString().slice(0, 10) : null);
+
+    const result = await query(
+      `UPDATE pre_inscricoes
+       SET nome=@nome, email=@email, categoria=@categoria, desconto=@desconto,
+           estado=@estado, observacoes=@observacoes,
+           data_pre_inscricao=@dataPreInscricao, data_inscricao=@dataInscricao
+       OUTPUT inserted.*
+       WHERE id=@id AND escola_id=@escolaId`,
+      {
+        id, escolaId: req.escolaId, nome, email, categoria, desconto, estado, observacoes, dataPreInscricao, dataInscricao
+      }
+    );
+    invalidateTenantCache(req.escolaId);
+    const updated = dbRowToJs(result.recordset[0]);
+    const { tenant } = currentTenant(req);
+    if (tenant.preInscricoes) {
+      const idx = tenant.preInscricoes.findIndex(p => p.id === id);
+      if (idx >= 0) tenant.preInscricoes[idx] = updated;
+    }
+    ok(res, updated);
+  } catch (ex) {
+    res.status(503).json({ success: false, error: `Falha ao atualizar pré-inscrição: ${ex.message || ex}` });
+  }
+});
+
+app.delete('/api/preinscricoes/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return badRequest(res, 'ID inválido.');
+    await query('DELETE FROM pre_inscricoes WHERE id=@id AND escola_id=@escolaId', { id, escolaId: req.escolaId });
+    invalidateTenantCache(req.escolaId);
+    const { tenant } = currentTenant(req);
+    if (tenant.preInscricoes) {
+      tenant.preInscricoes = tenant.preInscricoes.filter(p => p.id !== id);
+    }
+    ok(res, { success: true });
+  } catch (ex) {
+    res.status(503).json({ success: false, error: `Falha ao eliminar pré-inscrição: ${ex.message || ex}` });
   }
 });
 
