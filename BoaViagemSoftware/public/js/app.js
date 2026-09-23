@@ -734,7 +734,8 @@ function renderExamesMarcacoesTab() {
         duracao: fd.get('duracao') ? Number(fd.get('duracao')) : null,
         horaFim: calcularHoraFimStr(fd.get('hora'), fd.get('duracao')),
         local: fd.get('local') || '',
-        estado: fd.get('estado') || 'Marcado', resultado: fd.get('resultado') || null,
+        estado: (fd.get('resultado') === 'Aprovado' || fd.get('resultado') === 'Reprovado') ? 'Realizado' : (fd.get('estado') || 'Marcado'),
+        resultado: fd.get('resultado') || null,
         observacoes: fd.get('observacoes') || ''
       };
       try {
@@ -755,8 +756,9 @@ function renderExamesMarcacoesTab() {
 
 async function atualizarResultadoExame(id, resultado) {
   try {
+    const estado = (resultado === 'Aprovado' || resultado === 'Reprovado') ? 'Realizado' : 'Marcado';
     await withScreenLoader(async () => {
-      await api('PUT', `/api/examesMarcacoes/${id}`, { resultado: resultado || null });
+      await api('PUT', `/api/examesMarcacoes/${id}`, { resultado: resultado || null, estado });
       await refreshCollections(['examesMarcacoes']);
     }, 'A atualizar resultado do exame…');
     renderExamesMarcacoesTab();
@@ -4327,6 +4329,7 @@ function abrirItemContaForm(alunoId, itemId) {
           <select name="categoria">${CATEGORIAS_CONTA.map(c => `<option ${item?.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
         </div>
         <div class="form-field"><label>Valor unitário (€)</label><input name="valorUnitario" id="itemContaValorUnit" type="number" step="0.01" min="0" required value="${esc(String(valorUnitInicial))}"></div>
+        <div class="form-field"><label>Quantidade</label><input name="quantidade" id="itemContaQt" type="number" step="1" min="1" required value="${qtInicial}"></div>
         <div class="form-field">
           <label>Desconto (%)</label>
           ${item && item.descontavel === false
@@ -4430,7 +4433,7 @@ function bindItemContaProdutoPicker(form, itemExistente) {
 
   codigoInput.addEventListener('input', tentarResolverCodigo);
   codigoInput.addEventListener('change', tentarResolverCodigo);
-  [valorUnitInput, qtInput, descontoInput].forEach(inp => inp.addEventListener('input', recalcularTotal));
+  [valorUnitInput, qtInput, descontoInput].filter(Boolean).forEach(inp => inp.addEventListener('input', recalcularTotal));
   recalcularTotal();
 }
 
@@ -6439,8 +6442,7 @@ function renderContratos() {
                 <div class="row-actions">
                   ${c.estado === 'Pendente' ? `<button class="btn btn-ghost btn-sm" onclick="openContratoForm(${c.id})">Editar</button>` : ''}
                   ${c.estado === 'Pendente' ? `<button class="btn btn-accent btn-sm" onclick="abrirAssinaturaContrato(${c.id})">Assinar</button>` : ''}
-                  ${c.estado === 'Assinado' ? `<button class="btn btn-ghost btn-sm" onclick="abrirDocumentoContrato(${c.id})">${(c.pdfAssinado || c.pdfAssinadoFilename) ? 'Ver PDF / Fatura' : (c.faturacao ? 'PDF / Fatura' : 'Submeter PDF')}</button>` : ''}
-                  <button class="btn btn-ghost btn-sm" onclick="imprimirContrato(${c.id})">${c.estado === 'Assinado' ? 'Baixar PDF' : 'Pré-visualizar PDF'}</button>
+                  <button class="btn btn-ghost btn-sm" onclick="verPdfContrato(${c.id})">Ver PDF</button>
                   <button class="btn btn-danger-ghost btn-sm" onclick="deleteItem('contratos', ${c.id}, 'este contrato')">Remover</button>
                 </div>
               </td>
@@ -7299,6 +7301,12 @@ function abrirAssinaturaContrato(id) {
       toast(err.message, 'error');
     }
   });
+}
+
+function verPdfContrato(id) {
+  const contrato = state.contratos.find(c => c.id === id);
+  if (!contrato) return;
+  window.open(`/api/contratos/${id}/visualizar`, '_blank');
 }
 
 function imprimirContrato(id) {
