@@ -963,6 +963,8 @@ function abrirTurmaTeoricaDetalhe(id) {
 
 function openTurmaTeoricaForm(id) {
   const item = id ? state.turmasTeoricas.find(t => t.id === id) : null;
+  const horaInicioVal = item?.horaInicio || '';
+  const horaFimVal = item?.horaFim || (horaInicioVal ? calcularHoraFimStr(horaInicioVal, 60) : '');
   openModal(item ? 'Editar Turma Teórica' : 'Nova Turma Teórica', `
     <form id="entityForm">
       <div class="form-grid">
@@ -974,8 +976,8 @@ function openTurmaTeoricaForm(id) {
             ${state.espacos.map(e => `<option value="${e.id}" ${item?.espacoId === e.id ? 'selected' : ''}>${esc(e.nome)}</option>`).join('')}
           </select>
         </div>
-        <div class="form-field"><label>Hora início</label><input name="horaInicio" type="time" required value="${item?.horaInicio || ''}"></div>
-        <div class="form-field"><label>Hora fim</label><input name="horaFim" type="time" required value="${item?.horaFim || ''}"></div>
+        <div class="form-field"><label>Hora início</label><input id="turmaHoraInicio" name="horaInicio" type="time" required value="${horaInicioVal}"></div>
+        <div class="form-field"><label>Hora fim (calculada +1h)</label><input id="turmaHoraFim" name="horaFim" type="time" required value="${horaFimVal}"></div>
         <div class="form-field full">
           <label>Estado</label>
           <select name="estado">${['Agendada', 'Concluída', 'Cancelada'].map(c => `<option ${item?.estado === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
@@ -990,6 +992,17 @@ function openTurmaTeoricaForm(id) {
   `);
 
   const form = document.getElementById('entityForm');
+  const horaInicioInput = document.getElementById('turmaHoraInicio');
+  const horaFimInput = document.getElementById('turmaHoraFim');
+  if (horaInicioInput && horaFimInput) {
+    const atualizarHoraFim = () => {
+      if (horaInicioInput.value) {
+        horaFimInput.value = calcularHoraFimStr(horaInicioInput.value, 60);
+      }
+    };
+    horaInicioInput.addEventListener('input', atualizarHoraFim);
+    horaInicioInput.addEventListener('change', atualizarHoraFim);
+  }
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
