@@ -315,13 +315,19 @@ CREATE TABLE itens_conta (
     escola_id               INT NOT NULL REFERENCES escolas(id) ON DELETE CASCADE,
     aluno_id                INT NOT NULL REFERENCES alunos(id),
     origem_contrato_id       INT NULL REFERENCES contratos(id),
+    codigo                  NVARCHAR(50) NULL,
     descricao               NVARCHAR(300) NOT NULL,
     categoria               NVARCHAR(50) NOT NULL DEFAULT 'Diversos',
     valor                   DECIMAL(10,2) NOT NULL,
+    valor_unitario          DECIMAL(10,2) NULL,
+    quantidade              DECIMAL(10,2) NOT NULL DEFAULT 1,
+    desconto                DECIMAL(10,2) NULL DEFAULT 0,
+    descontavel             BIT NOT NULL DEFAULT 1,
     taxa_iva                 DECIMAL(5,2) NULL,      -- NULL = usa a taxa por omissão da escola
     estado                  NVARCHAR(20) NOT NULL DEFAULT 'Pendente',  -- Pendente | Parcial | Pago
     origem_plano             NVARCHAR(30) NULL,
-    ordem                   INT NOT NULL DEFAULT 1
+    ordem                   INT NOT NULL DEFAULT 1,
+    observacoes             NVARCHAR(500) NULL
 );
 GO
 
@@ -341,6 +347,8 @@ CREATE TABLE pagamentos (
     faturacao_serie              NVARCHAR(20) NULL,
     faturacao_numero             NVARCHAR(30) NULL,
     faturacao_entidade           NVARCHAR(100) NULL,
+    faturacao_nome               NVARCHAR(200) NULL,
+    faturacao_nif                NVARCHAR(50) NULL,
     faturacao_data_emissao        DATETIME2 NULL
 );
 GO

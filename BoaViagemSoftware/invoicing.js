@@ -7,7 +7,11 @@ const { enviarDocumento } = require('./primavera');
  * aluno seja sempre reconhecido como a mesma entidade no ERP, mesmo que lhe
  * sejam emitidos vários documentos ao longo do tempo.
  */
-function obterEntidadeAluno(tenant, aluno) {
+function obterEntidadeAluno(tenant, aluno, options = {}) {
+  const nifEmpresa = (options.nifFaturar || options.nif_faturar || '').trim();
+  if (nifEmpresa) {
+    return `C${nifEmpresa.replace(/[^0-9A-Za-z]/g, '').slice(0, 10)}`;
+  }
   if (aluno.codigoClientePrimavera) return aluno.codigoClientePrimavera;
   const codigo = `A${String(aluno.id).padStart(9, '0')}`;
   aluno.codigoClientePrimavera = codigo;
@@ -68,6 +72,11 @@ function cabecalhoComum(escola, aluno, pagamento, tipoDocumento, entidade, refer
   const tipoLabel = { FA: 'a fatura', FR: 'a fatura-recibo', NC: 'a nota de crédito' }[tipoDocumento] || 'o documento';
   const serie = options.serie || pagamento.serie || aluno.serie || p.serie;
   const modoPag = options.modoPag || pagamento.modoPagamento || pagamento.modo_pagamento || p.modoPag || 'PGNUM';
+  const nomeEfetivo = (options.nomeFaturar || options.nome_faturar || '').trim() || aluno.nome || '';
+  const nifEfetivo = (options.nifFaturar || options.nif_faturar || '').trim() || aluno.nif || '999999990';
+  const emailDestino = (options.emailFaturar || options.email_faturar || '').trim() || aluno.email || '';
+  const isEmpresa = !!(options.nifFaturar || options.nomeFaturar);
+
   return {
     EmpresaContexto: p.empresa,
     TipoDocumento: tipoDocumento,
@@ -79,14 +88,14 @@ function cabecalhoComum(escola, aluno, pagamento, tipoDocumento, entidade, refer
     NumeroDocumentoForcado: 0,
     DescontoTotal: 0.0,
     ModoPag: modoPag,
-    NomeNovaEntidade: aluno.nome || '',
-    NifNovaEntidade: aluno.nif || '999999990',
+    NomeNovaEntidade: nomeEfetivo,
+    NifNovaEntidade: nifEfetivo,
     Moeda: 'EUR',
-    TipoPessoa: 'S',
+    TipoPessoa: isEmpresa ? 'C' : 'S',
     DadosTransmissao: {
-      EnviarEmail: !!aluno.email,
+      EnviarEmail: !!emailDestino,
       GuardarPDF: true,
-      EmailDestino: aluno.email || '',
+      EmailDestino: emailDestino,
       Assunto: `${tipoDocumento} · ${escola.nome} — ${referenciaExterna}`,
       CorpoEmail: corpoEmail(escola, tipoLabel)
     },
@@ -98,7 +107,7 @@ function cabecalhoComum(escola, aluno, pagamento, tipoDocumento, entidade, refer
  * Fatura-Recibo (FR)
  * ========================================================================= */
 async function emitirFaturaRecibo(escola, tenant, aluno, pagamento, options = {}) {
-  const entidade = obterEntidadeAluno(tenant, aluno);
+  const entidade = obterEntidadeAluno(tenant, aluno, options);
   const ref = `PAG-${pagamento.id}`;
   const payload = cabecalhoComum(escola, aluno, pagamento, 'FR', entidade, ref, options);
   const resultado = await enviarDocumento(escola.primavera, payload, `FR/${ref}`);
@@ -109,7 +118,7 @@ async function emitirFaturaRecibo(escola, tenant, aluno, pagamento, options = {}
  * Fatura (FA) avulsa ligada a um pagamento
  * ========================================================================= */
 async function emitirFatura(escola, tenant, aluno, pagamento, options = {}) {
-  const entidade = obterEntidadeAluno(tenant, aluno);
+  const entidade = obterEntidadeAluno(tenant, aluno, options);
   const ref = `PAG-${pagamento.id}`;
   const payload = cabecalhoComum(escola, aluno, pagamento, 'FA', entidade, ref, options);
   const resultado = await enviarDocumento(escola.primavera, payload, `FA/${ref}`);

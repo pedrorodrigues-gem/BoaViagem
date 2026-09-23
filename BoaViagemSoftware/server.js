@@ -397,8 +397,9 @@ const COLUMNS_BY_TABLE = {
   requisitos: ['categoria', 'horas_teoricas_min', 'horas_praticas_min', 'km_pratica_min'],
   produtos: ['codigo', 'descricao', 'categoria', 'valor', 'descontavel', 'taxa_iva'],
   contratos: ['aluno_id', 'categoria', 'plano_carta_id', 'plano_pagamento', 'numero_prestacoes', 'estado', 'valor_carta_calculado', 'desconto_aplicado', 'tipo_desconto', 'valor_total', 'texto_contrato', 'assinatura_nome_digitado', 'assinatura_data_hora', 'assinatura_imagem', 'assinatura_tutor_nome_digitado', 'assinatura_tutor_imagem', 'pdf_assinado_filename', 'pdf_assinado_uploaded_at', 'pdf_assinado_tamanho_bytes'],
-  pagamentos: ['aluno_id', 'valor', 'data', 'descricao', 'taxa_iva', 'estado', 'modo_pagamento', 'nao_faturar', 'artigo', 'item_conta_id'],
-  itens_conta: ['aluno_id', 'origem_contrato_id', 'codigo', 'descricao', 'categoria', 'valor', 'taxa_iva', 'estado', 'origem_plano', 'ordem'],  pre_inscricoes: ['nome', 'email', 'categoria', 'desconto', 'estado', 'observacoes', 'data_pre_inscricao', 'data_inscricao', 'aluno_id'],
+  pagamentos: ['aluno_id', 'valor', 'data', 'descricao', 'taxa_iva', 'estado', 'modo_pagamento', 'nao_faturar', 'artigo', 'item_conta_id', 'faturacao_tipo', 'faturacao_serie', 'faturacao_numero', 'faturacao_entidade', 'faturacao_nome', 'faturacao_nif', 'faturacao_data_emissao'],
+  itens_conta: ['aluno_id', 'origem_contrato_id', 'codigo', 'descricao', 'categoria', 'valor', 'valor_unitario', 'quantidade', 'desconto', 'descontavel', 'taxa_iva', 'estado', 'origem_plano', 'ordem', 'observacoes'],
+  pre_inscricoes: ['nome', 'email', 'categoria', 'desconto', 'estado', 'observacoes', 'data_pre_inscricao', 'data_inscricao', 'aluno_id'],
   exames_marcacoes: ['aluno_id', 'tipo', 'data', 'hora', 'hora_fim', 'duracao', 'local', 'estado', 'observacoes', 'resultado'],
   revalidacoes: ['aluno_id', 'nome', 'nif', 'telefone', 'email', 'numero_carta', 'categoria', 'tipo_revalidacao', 'data_pedido', 'data_validade_anterior', 'valor', 'modo_pagamento', 'estado_processo', 'estado_pagamento', 'pagamento_id', 'notas']
 };
@@ -1202,11 +1203,20 @@ app.use('/api/alunos', collectionRoutes('alunos', {
   transformOut: (row) => nestAlunoExtras(row)
 }));
 
+function detectImageMime(buffer) {
+  if (!buffer || buffer.length < 4) return 'image/jpeg';
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return 'image/png';
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return 'image/gif';
+  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return 'image/jpeg';
+  return 'image/jpeg';
+}
+
 app.get('/api/alunos/:id/foto', async (req, res) => {
   const result = await query('SELECT foto FROM alunos WHERE id=@id AND escola_id=@escolaId', { id: Number(req.params.id), escolaId: req.escolaId });
   const foto = result.recordset[0]?.foto;
   if (!foto) return res.status(404).end();
-  res.setHeader('Content-Type', 'image/jpeg');
+  const mime = detectImageMime(foto);
+  res.setHeader('Content-Type', mime);
   res.setHeader('Cache-Control', 'private, max-age=3600');
   res.send(foto);
 });
@@ -1412,6 +1422,18 @@ app.use('/api/veiculos', collectionRoutes('veiculos', {
 
 const LIMITE_DIARIO_PRATICA_MIN = 240; // 4 horas — confirmar valor em vigor junto do IMT
 
+function calcularHoraFimStr(hora, duracaoMin = 60) {
+  if (!hora) return null;
+  const parts = String(hora).split(':');
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10) || 0;
+  if (Number.isNaN(h)) return null;
+  const total = h * 60 + m + (Number(duracaoMin) || 60);
+  const fh = Math.floor(total / 60) % 24;
+  const fm = total % 60;
+  return `${String(fh).padStart(2, '0')}:${String(fm).padStart(2, '0')}`;
+}
+
 app.get('/api/aulas/verificar-limite-diario', (req, res) => {
   const { tenant } = currentTenant(req);
   const alunoId = Number(req.query.alunoId);
@@ -1422,7 +1444,7 @@ app.get('/api/aulas/verificar-limite-diario', (req, res) => {
 
   const minutosExistentes = tenant.aulas
     .filter(a => a.alunoId === alunoId && a.data === dataAula && isTipo(a, 'Prática') && !isEstadoCancelada(a.estado) && a.id !== excluirId)
-    .reduce((s, a) => s + (a.duracao || 50), 0);
+    .reduce((s, a) => s + (a.duracao || 60), 0);
 
   const minutosTotais = minutosExistentes + duracaoNova;
   ok(res, {
@@ -1441,6 +1463,16 @@ app.use('/api/aulas', collectionRoutes('aulas', {
   },
   onCreate: (item, tenant) => {
     item.espacoId = Number(item.espacoId || tenant.espacos[0]?.id || null);
+    item.duracao = Number(item.duracao) || 60;
+    if (!item.horaFim && item.hora) {
+      item.horaFim = calcularHoraFimStr(item.hora, item.duracao);
+    }
+  },
+  onUpdate: (item) => {
+    if (!item.duracao) item.duracao = 60;
+    if (!item.horaFim && item.hora) {
+      item.horaFim = calcularHoraFimStr(item.hora, item.duracao);
+    }
   }
 }));
 app.use('/api/turmasTeoricas', collectionRoutes('turmasTeoricas', {
@@ -1640,8 +1672,11 @@ app.use('/api/pagamentos', collectionRoutes('pagamentos', {
   }
 }));
 app.use('/api/itensConta', collectionRoutes('itensConta', {
-  validate: (p) => {
+  validate: (p, tenant, req, anterior) => {
     if (!p.alunoId || !p.descricao || p.valor === undefined || p.valor === null || p.valor === '') return 'Aluno, descrição e valor são obrigatórios';
+    if (anterior && anterior.descontavel === false && Number(p.desconto || 0) > 0) {
+      return 'Este item de conta corrente tem valor fixo tabelado e não permite descontos.';
+    }
     if (p.taxaIva !== undefined && p.taxaIva !== null && p.taxaIva !== '') {
       const iva = Number(p.taxaIva);
       if (Number.isNaN(iva) || iva < 0 || iva > 100) return 'A taxa de IVA deve ser um valor entre 0 e 100.';
@@ -1651,10 +1686,28 @@ app.use('/api/itensConta', collectionRoutes('itensConta', {
     }
     return null;
   },
-  onAfterCreate: async (saved, tenant, req) => { await atualizarEstadosContaCorrente(req, saved.alunoId); return saved; },
-  onAfterUpdate: async (saved, tenant, req) => { await atualizarEstadosContaCorrente(req, saved.alunoId); return saved; },
+  onUpdate: (item, anterior, tenant, req) => {
+    if (item.desconto !== undefined && item.desconto !== null && Number(item.desconto) !== Number(anterior.desconto || 0)) {
+      const dataStr = new Date().toLocaleDateString('pt-PT');
+      const notaDesc = `Desconto de ${item.desconto}% registado em ${dataStr}`;
+      item.observacoes = item.observacoes ? `${item.observacoes} | ${notaDesc}` : notaDesc;
+    }
+  },
+  onAfterCreate: async (saved, tenant, req) => {
+    invalidateTenantCache(req.escolaId);
+    await atualizarEstadosContaCorrente(req, saved.alunoId);
+    return saved;
+  },
+  onAfterUpdate: async (saved, tenant, req) => {
+    invalidateTenantCache(req.escolaId);
+    await atualizarEstadosContaCorrente(req, saved.alunoId);
+    return saved;
+  },
   onDelete: (item) => item.estado === 'Pago' ? 'Este item já está pago — para o anular usa uma nota de crédito em vez de o remover.' : null,
-  onAfterDelete: async (removed, tenant, req) => { await atualizarEstadosContaCorrente(req, removed.alunoId); }
+  onAfterDelete: async (removed, tenant, req) => {
+    invalidateTenantCache(req.escolaId);
+    await atualizarEstadosContaCorrente(req, removed.alunoId);
+  }
 }));
 app.use('/api/produtos', collectionRoutes('produtos', {
   validate: (p) => {
@@ -1764,7 +1817,8 @@ async function sincronizarItensContaContrato(req, contratoId, sync) {
     novosItens = parcelasPersonalizadas.map((p, i) => ({
       descricao: p.descricao ? `Contrato ${categoria} — ${p.descricao}` : `Contrato ${categoria} — Parcela ${i + 1}`,
       codigo: null,
-      categoria: 'Diversos', valor: +(Number(p.valor) || 0).toFixed(2), taxaIva: null, ordem: i + 1, origemPlano: planoPagamento
+      categoria: 'Diversos', valor: +(Number(p.valor) || 0).toFixed(2), valorUnitario: +(Number(p.valor) || 0).toFixed(2),
+      quantidade: 1, desconto: 0, descontavel: 1, taxaIva: null, ordem: i + 1, origemPlano: planoPagamento
     }));
   } else if (planoPagamento === 'Mensalidades') {
     const valorCalculado = (Array.isArray(itensCarta) && itensCarta.length)
@@ -1776,13 +1830,33 @@ async function sincronizarItensContaContrato(req, contratoId, sync) {
     novosItens = Array.from({ length: n }, (_, i) => {
       const valor = i < n - 1 ? parcela : +((valorCalculado - acumulado)).toFixed(2);
       acumulado = +(acumulado + valor).toFixed(2);
-      return { descricao: `Contrato ${categoria} — Mensalidade ${i + 1}/${n}`, codigo: null, categoria: 'Diversos', valor, taxaIva: null, ordem: i + 1, origemPlano: planoPagamento };
+      return {
+        descricao: `Contrato ${categoria} — Mensalidade ${i + 1}/${n}`,
+        codigo: null,
+        categoria: 'Diversos',
+        valor,
+        valorUnitario: valor,
+        quantidade: 1,
+        desconto: 0,
+        descontavel: 1,
+        taxaIva: null,
+        ordem: i + 1,
+        origemPlano: planoPagamento
+      };
     });
   } else if (Array.isArray(itensCarta) && itensCarta.length > 0) {
     novosItens = itensCarta.map((it, i) => ({
       descricao: `Contrato ${categoria} — ${it.descricao}`,
       codigo: it.codigo || null,
-      categoria: it.categoria || 'Diversos', valor: Number(it.valor) || 0, taxaIva: it.taxaIva ?? null, ordem: i + 1, origemPlano: planoPagamento || 'Pagamento único'
+      categoria: it.categoria || 'Diversos',
+      valor: Number(it.valor) || 0,
+      valorUnitario: it.valorBase ?? it.valor,
+      quantidade: it.quantidade ?? 1,
+      desconto: it.descontoItem ?? it.desconto ?? 0,
+      descontavel: it.descontavel !== false ? 1 : 0,
+      taxaIva: it.taxaIva ?? null,
+      ordem: i + 1,
+      origemPlano: planoPagamento || 'Pagamento único'
     }));
   } else {
     // Fallback: se não houver itens específicos configurados, cria o item global de formação do contrato
@@ -1791,6 +1865,10 @@ async function sincronizarItensContaContrato(req, contratoId, sync) {
       codigo: null,
       categoria: 'Diversos',
       valor: valorTotalContrato > 0 ? valorTotalContrato : 0,
+      valorUnitario: valorTotalContrato > 0 ? valorTotalContrato : 0,
+      quantidade: 1,
+      desconto: 0,
+      descontavel: 1,
       taxaIva: null,
       ordem: 1,
       origemPlano: planoPagamento || 'Pagamento único'
@@ -1799,9 +1877,24 @@ async function sincronizarItensContaContrato(req, contratoId, sync) {
 
   for (const it of novosItens) {
     await query(
-      `INSERT INTO itens_conta (escola_id, aluno_id, origem_contrato_id, codigo, descricao, categoria, valor, taxa_iva, estado, origem_plano, ordem)
-      VALUES (@escolaId, @alunoId, @contratoId, @codigo, @descricao, @categoria, @valor, @taxaIva, 'Pendente', @origemPlano, @ordem)`,
-      { escolaId: req.escolaId, alunoId, contratoId, codigo: it.codigo || null, descricao: it.descricao, categoria: it.categoria, valor: it.valor, taxaIva: it.taxaIva, origemPlano: it.origemPlano, ordem: it.ordem }
+      `INSERT INTO itens_conta (escola_id, aluno_id, origem_contrato_id, codigo, descricao, categoria, valor, valor_unitario, quantidade, desconto, descontavel, taxa_iva, estado, origem_plano, ordem)
+      VALUES (@escolaId, @alunoId, @contratoId, @codigo, @descricao, @categoria, @valor, @valorUnitario, @quantidade, @desconto, @descontavel, @taxaIva, 'Pendente', @origemPlano, @ordem)`,
+      {
+        escolaId: req.escolaId,
+        alunoId: alunoId || sync.alunoId,
+        contratoId,
+        codigo: it.codigo || null,
+        descricao: it.descricao,
+        categoria: it.categoria,
+        valor: it.valor,
+        valorUnitario: it.valorUnitario ?? it.valor,
+        quantidade: it.quantidade ?? 1,
+        desconto: it.desconto ?? 0,
+        descontavel: it.descontavel ? 1 : 0,
+        taxaIva: it.taxaIva,
+        origemPlano: it.origemPlano,
+        ordem: it.ordem
+      }
     );
   }
 }
@@ -2574,7 +2667,10 @@ async function handleEmissao(req, res, tipo) {
     if (!req.escola.primavera || !req.escola.primavera.ativo) {
       return badRequest(res, 'A integração com a Cegid Primavera não está ativa para esta escola. Configura-a em Pagamentos > Faturação.');
     }
-    if (!alunoRow.nif) return badRequest(res, 'O aluno não tem NIF preenchido — obrigatório para emitir documentos fiscais.');
+    const nifFaturar = String(req.body?.nifFaturar || req.body?.nif_faturar || '').trim();
+    const nomeFaturar = String(req.body?.nomeFaturar || req.body?.nome_faturar || '').trim();
+    const nifEfetivo = nifFaturar || alunoRow.nif;
+    if (!nifEfetivo) return badRequest(res, 'NIF obrigatório para emitir documentos fiscais (pode indicar o NIF da empresa ou preencher o NIF do aluno).');
 
     const aluno = nestAlunoExtras(dbRowToJs(alunoRow));
     const pagamento = dbRowToJs(pagamentoRow);
@@ -2630,7 +2726,7 @@ async function handleEmissao(req, res, tipo) {
     }
 
     const serieDoc = await obterSerieParaAluno(req, aluno);
-    const options = { serie: serieDoc, ...(req.body || {}) };
+    const options = { serie: serieDoc, ...(req.body || {}), nomeFaturar, nifFaturar: nifEfetivo };
     let out;
     try {
       if (tipo === 'FA') out = await invoicing.emitirFatura(req.escola, tenant, aluno, pagamento, options);
@@ -2651,10 +2747,21 @@ async function handleEmissao(req, res, tipo) {
       'faturacao_tipo=@tipo', 'faturacao_serie=@serie', 'faturacao_numero=@numero',
       'faturacao_entidade=@entidade', 'faturacao_data_emissao=SYSUTCDATETIME()'
     ];
+    if (nomeFaturar) sets.push('faturacao_nome=@nomeFaturar');
+    if (nifEfetivo) sets.push('faturacao_nif=@nifFaturar');
     if (tipo === 'FA' || tipo === 'FR') sets.push(`estado='Pago'`);
     await query(
       `UPDATE pagamentos SET ${sets.join(', ')} WHERE id=@id AND escola_id=@escolaId`,
-      { tipo: resultado.doc_tipo || tipo, serie: resultado.doc_serie || null, numero: resultado.doc_numero || null, entidade: entidade || null, id: pagamentoRow.id, escolaId: req.escolaId }
+      {
+        tipo: resultado.doc_tipo || tipo,
+        serie: resultado.doc_serie || null,
+        numero: resultado.doc_numero || null,
+        entidade: entidade || null,
+        nomeFaturar: nomeFaturar || null,
+        nifFaturar: nifEfetivo || null,
+        id: pagamentoRow.id,
+        escolaId: req.escolaId
+      }
     );
     await query(
       `INSERT INTO documentos_fiscais (escola_id, aluno_id, pagamento_id, tipo, serie, numero, valor)
@@ -2663,6 +2770,7 @@ async function handleEmissao(req, res, tipo) {
     );
     await historicoFaturacaoInsert(pagamentoRow.id, { tipo, sucesso: true, doc_numero: resultado.doc_numero, doc_serie: resultado.doc_serie });
 
+    invalidateTenantCache(req.escolaId);
     const pagamentoAtualizado = await query('SELECT * FROM pagamentos WHERE id=@id', { id: pagamentoRow.id });
     ok(res, { pagamento: dbRowToJs(pagamentoAtualizado.recordset[0]), resultado });
   } catch (ex) {
@@ -2841,6 +2949,10 @@ async function handleAssinaturaContrato(req, res) {
     };
 
     // Sincronizar automaticamente os itens à CC do aluno de acordo com o contrato assinado
+    if (contrato.planoPagamento === 'Personalizado') {
+      const parcelasResult = await query('SELECT descricao, valor FROM contrato_parcelas_personalizadas WHERE contrato_id=@id ORDER BY ordem', { id });
+      contrato.parcelasPersonalizadas = parcelasResult.recordset;
+    }
     const { tenant } = currentTenant(req);
     const sync = calcularValoresContrato(contrato, tenant);
     await sincronizarItensContaContrato(req, id, sync);
@@ -2849,6 +2961,7 @@ async function handleAssinaturaContrato(req, res) {
       await gravarParcelasPersonalizadas(id, parcelasResult.recordset);
     }
     await atualizarEstadosContaCorrente(req, contrato.alunoId);
+    invalidateTenantCache(req.escolaId);
 
     // Se Primavera estiver ativa e aluno tiver NIF, emitir fatura de contrato automaticamente
     nestEscolaPrimavera(req.escola);
@@ -2932,6 +3045,10 @@ app.post('/api/contratos/:id/pdf-assinado', async (req, res) => {
     contrato.pdfAssinado = { filename: contrato.pdfAssinadoFilename, uploadedAt: contrato.pdfAssinadoUploadedAt, size: contrato.pdfAssinadoTamanhoBytes };
 
     // Sincronizar automaticamente os itens à CC do aluno após a submissão
+    if (contrato.planoPagamento === 'Personalizado') {
+      const parcelasResult = await query('SELECT descricao, valor FROM contrato_parcelas_personalizadas WHERE contrato_id=@id ORDER BY ordem', { id });
+      contrato.parcelasPersonalizadas = parcelasResult.recordset;
+    }
     const { tenant } = currentTenant(req);
     const sync = calcularValoresContrato(contrato, tenant);
     await sincronizarItensContaContrato(req, id, sync);
@@ -2940,6 +3057,7 @@ app.post('/api/contratos/:id/pdf-assinado', async (req, res) => {
       await gravarParcelasPersonalizadas(id, parcelasResult.recordset);
     }
     await atualizarEstadosContaCorrente(req, contrato.alunoId);
+    invalidateTenantCache(req.escolaId);
 
     // Se Primavera estiver ativa e aluno tiver NIF, emitir fatura de contrato automaticamente
     nestEscolaPrimavera(req.escola);
@@ -3641,7 +3759,7 @@ app.get('/api/relatorios/geral', async (req, res) => {
     const result = await query(`
       WITH AulasPraticas AS (
         SELECT aluno_id,
-               SUM(ISNULL(duracao, 50)) AS minutosPratica,
+               SUM(ISNULL(duracao, 60)) AS minutosPratica,
                SUM(ISNULL(km, 0)) AS kmTotal
         FROM aulas
         WHERE escola_id = @e
@@ -3651,7 +3769,7 @@ app.get('/api/relatorios/geral', async (req, res) => {
       ),
       AulasTeoricasIndividuais AS (
         SELECT aluno_id,
-               SUM(ISNULL(duracao, 50)) AS minutosTeoricaInd
+               SUM(ISNULL(duracao, 60)) AS minutosTeoricaInd
         FROM aulas
         WHERE escola_id = @e
           AND (tipo = 'Teórica' OR tipo LIKE '%te_r%')
