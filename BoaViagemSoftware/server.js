@@ -2016,6 +2016,9 @@ app.use('/api/contratos', collectionRoutes('contratos', {
   transformOut: async (row, tenant, req) => {
     const parcelasResult = await query('SELECT descricao, valor FROM contrato_parcelas_personalizadas WHERE contrato_id=@id ORDER BY ordem', { id: row.id });
     row.parcelasPersonalizadas = parcelasResult.recordset;
+    const aluno = (tenant.alunos || []).find(a => a.id === row.alunoId);
+    row.numero = aluno?.numeroAluno ?? aluno?.numero_aluno ?? aluno?.id ?? row.alunoId;
+    row.numeroAluno = row.numero;
     row.assinatura = row.assinaturaNomeDigitado ? {
       nomeDigitado: row.assinaturaNomeDigitado,
       dataHora: row.assinaturaDataHora,
@@ -2028,7 +2031,6 @@ app.use('/api/contratos', collectionRoutes('contratos', {
     } : null;
     delete row.assinaturaTutorImagem;
     row.pdfAssinado = row.pdfAssinadoFilename ? { filename: row.pdfAssinadoFilename, uploadedAt: row.pdfAssinadoUploadedAt, size: row.pdfAssinadoTamanhoBytes } : null;
-    const aluno = (tenant.alunos || []).find(a => a.id === row.alunoId);
     row.tipoDesconto = row.tipoDesconto || row.tipo_desconto || aluno?.tipoDesconto || 'valor';
     const descContrato = row.descontoAplicado !== undefined && row.descontoAplicado !== null ? row.descontoAplicado : (aluno?.desconto ?? 0);
     row.itensCarta = itensCartaPorCategoria(tenant, row.categoria, Number(descContrato || 0), row.planoCartaId, row.tipoDesconto);
@@ -2826,6 +2828,20 @@ async function handleAssinaturaContrato(req, res) {
 
     const finalNomeTutor = nomeTutorDigitado || nomeDigitadoTutor || null;
 
+    let finalTextoContrato = textoContrato || contratoRow.texto_contrato;
+    const caminhoAssinaturaPrimeiro = path.join(__dirname, 'public', 'images', 'assinatura.png');
+    if (fs.existsSync(caminhoAssinaturaPrimeiro) && finalTextoContrato) {
+      try {
+        const sigEscolaBase64 = `data:image/png;base64,${fs.readFileSync(caminhoAssinaturaPrimeiro).toString('base64')}`;
+        finalTextoContrato = finalTextoContrato.replace(
+          /<div class="assinatura-slot" data-slot="primeiro"[^>]*>[\s\S]*?<\/div>/,
+          `<div class="assinatura-slot" data-slot="primeiro" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
+             <img src="${sigEscolaBase64}" style="max-width:170px; max-height:60px; display:block; margin:0 auto">
+           </div>`
+        );
+      } catch (_) {}
+    }
+
     const base64Data = String(assinaturaImagem).includes(',') ? String(assinaturaImagem).split(',').pop() : assinaturaImagem;
     const imagemBuffer = Buffer.from(base64Data, 'base64');
 
@@ -2884,6 +2900,16 @@ async function handleAssinaturaContrato(req, res) {
           page.drawImage(sigImg, { x: 50, y: 240, width: 140, height: 60 });
         } catch (_) {}
         page.drawText(`Aceite por: ${nomeDigitado}`, { x: 50, y: 220, size: 9, font: fontReg, color: rgb(0.3, 0.3, 0.3) });
+
+        // Assinatura do primeiro outorgante (escola) se existir
+        if (fs.existsSync(caminhoAssinaturaPrimeiro)) {
+          try {
+            const sigEscolaBuffer = fs.readFileSync(caminhoAssinaturaPrimeiro);
+            const sigEscolaImg = await pdfDoc.embedPng(sigEscolaBuffer);
+            page.drawText('Primeiro Outorgante (Escola):', { x: 50, y: 440, size: 10, font: fontBold, color: rgb(0.1, 0.1, 0.2) });
+            page.drawImage(sigEscolaImg, { x: 50, y: 360, width: 140, height: 60 });
+          } catch (_) {}
+        }
 
         // Assinatura do tutor se aplicável
         if (tutorBuffer && finalNomeTutor) {
@@ -2948,7 +2974,7 @@ async function handleAssinaturaContrato(req, res) {
        OUTPUT inserted.*
        WHERE id=@id AND escola_id=@escolaId`,
       {
-        id, escolaId: req.escolaId, textoContrato: textoContrato || contratoRow.texto_contrato, nomeDigitado,
+        id, escolaId: req.escolaId, textoContrato: finalTextoContrato || contratoRow.texto_contrato, nomeDigitado,
         assinaturaImagem: { type: sql.VarBinary(sql.MAX), value: imagemBuffer },
         nomeTutorDigitado: finalNomeTutor,
         assinaturaTutorImagem: { type: sql.VarBinary(sql.MAX), value: tutorBuffer },
@@ -3133,7 +3159,7 @@ app.get('/api/contratos/:id/visualizar', async (req, res) => {
   try {
     const id = Number(req.params.id);
     const result = await query(
-      `SELECT c.*, a.nome AS aluno_nome, a.nif AS aluno_nif,
+      `SELECT c.*, a.nome AS aluno_nome, a.nif AS aluno_nif, a.numero_aluno AS aluno_numero,
               e.nome AS escola_nome, e.nipc AS escola_nipc, e.morada AS escola_morada
        FROM contratos c
        JOIN alunos a ON a.id = c.aluno_id
@@ -3144,9 +3170,14 @@ app.get('/api/contratos/:id/visualizar', async (req, res) => {
     const c = result.recordset[0];
     if (!c) return notFound(res, 'Contrato não encontrado.');
 
+    const numContrato = c.aluno_numero ?? c.aluno_id;
+
     let texto = c.texto_contrato || '';
     if (!texto) {
-      texto = `<p>Contrato de Formação n.º ${c.id} · ${c.aluno_nome} (Categoria ${c.categoria || 'B'})</p>`;
+      texto = `<p>Contrato de Formação n.º ${numContrato} · ${c.aluno_nome} (Categoria ${c.categoria || 'B'})</p>`;
+    } else {
+      texto = texto.replace(/Contrato<br>\s*n\.º\s*[^<]*/i, `Contrato<br>n.º ${numContrato}`);
+      texto = texto.replace(/Contrato\s+N\.º\s*(\d+|—)/gi, `Contrato N.º ${numContrato}`);
     }
 
     if (c.assinatura_imagem) {
@@ -3168,13 +3199,26 @@ app.get('/api/contratos/:id/visualizar', async (req, res) => {
       );
     }
 
+    const caminhoAssinaturaPrimeiro = path.join(__dirname, 'public', 'images', 'assinatura.png');
+    if (fs.existsSync(caminhoAssinaturaPrimeiro)) {
+      try {
+        const sigEscolaBase64 = `data:image/png;base64,${fs.readFileSync(caminhoAssinaturaPrimeiro).toString('base64')}`;
+        texto = texto.replace(
+          /<div class="assinatura-slot" data-slot="primeiro"[^>]*>[\s\S]*?<\/div>/,
+          `<div class="assinatura-slot" data-slot="primeiro" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
+             <img src="${sigEscolaBase64}" style="max-width:170px; max-height:60px; display:block; margin:0 auto">
+           </div>`
+        );
+      } catch (_) {}
+    }
+
     const dataHoraStr = c.assinatura_data_hora ? new Date(c.assinatura_data_hora).toLocaleString('pt-PT') : '';
 
     const html = `<!DOCTYPE html>
 <html lang="pt">
 <head>
   <meta charset="utf-8">
-  <title>Contrato ${c.id} - ${c.aluno_nome || 'Aluno'}</title>
+  <title>Contrato ${numContrato} - ${c.aluno_nome || 'Aluno'}</title>
   <style>
     @page { size: A4; margin: 12mm 10mm; }
     * { box-sizing: border-box; }
@@ -3243,7 +3287,7 @@ app.get('/api/contratos/:id/visualizar', async (req, res) => {
 </head>
 <body>
   <div class="toolbar">
-    <div style="font-weight:600; font-size:14px">Contrato N.º ${c.id} · ${c.aluno_nome}</div>
+    <div style="font-weight:600; font-size:14px">Contrato N.º ${numContrato} · ${c.aluno_nome}</div>
     <div style="display:flex; gap:12px; align-items:center">
       <button onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
       <a href="javascript:window.close()">✕ Fechar</a>
