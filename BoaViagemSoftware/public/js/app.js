@@ -1485,11 +1485,17 @@ function renderAlunos() {
 
   el.innerHTML = `
     ${avisoCarregamento}
-    <div class="toolbar">
-      <input id="alunosSearchInput" class="search-input" placeholder="Pesquisar aluno por nome, email, NIF ou nº..."
-        value="${esc(state.search.alunos)}" oninput="updateSearchAndRerender(this, 'alunos', renderAlunos)">
-      <div class="filter-row">
-        ${estados.map(e => `<button class="chip ${filtro === e ? 'active' : ''}" onclick="mudarFiltroAlunos('${e}')">${e}</button>`).join('')}
+    <div class="toolbar" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px">
+      <div style="display:flex; gap:10px; align-items:center; flex:1; min-width:280px">
+        <input id="alunosSearchInput" class="search-input" placeholder="Pesquisar aluno por nome, email, NIF ou nº..."
+          value="${esc(state.search.alunos)}" oninput="updateSearchAndRerender(this, 'alunos', renderAlunos)">
+        <div class="filter-row">
+          ${estados.map(e => `<button class="chip ${filtro === e ? 'active' : ''}" onclick="mudarFiltroAlunos('${e}')">${e}</button>`).join('')}
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(null, 'modC3')" title="Preencher pauta oficial SCTT Mod. C3 para requerimento de licença de aprendizagem">📄 Mod. C3 (Licença Aprendizagem)</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(null, 'mod1IMT')" title="Preencher impresso oficial Modelo 1 - IMT">📄 Modelo 1 - IMT</button>
       </div>
     </div>
     <div id="alunosTableWrap" class="table-wrap">

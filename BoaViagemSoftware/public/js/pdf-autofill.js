@@ -94,7 +94,7 @@
 
   // Apenas o Modelo 1 é um requerimento estritamente individual (1 pessoa com foto e assinatura).
   // C3, C2 Teórico e C2 Prático são pautas e aceitam múltiplos candidatos.
-  const SINGLE_SELECTION_TEMPLATES = ['mod1IMT'];
+  const SINGLE_SELECTION_TEMPLATES = ['mod1IMT', 'mod1Imt'];
 
   function isSingleSelectionTemplate(templateKey) {
     return SINGLE_SELECTION_TEMPLATES.indexOf(templateKey) !== -1;
@@ -526,6 +526,7 @@
       }
     }
   };
+  OFFICIAL_PDF_TEMPLATES.mod1Imt = OFFICIAL_PDF_TEMPLATES.mod1IMT;
 
   function esc(str) {
     return String(str == null ? '' : str).replace(/[&<>"']/g, function (m) {
@@ -809,10 +810,10 @@
     var isAlunoFixo = !!alunoId;
     var alunoFixo = isAlunoFixo ? ((alunos || []).find(function (a) { return a.id === alunoId; }) || (typeof findAluno === 'function' ? findAluno(alunoId) : null)) : null;
     var selected = alunoId ? [alunoId] : [];
-    var templateKeys = Object.keys(OFFICIAL_PDF_TEMPLATES);
-    var initialTemplateKey = isAlunoFixo
-      ? 'mod1Imt'
-      : ((preferredTemplateKey && OFFICIAL_PDF_TEMPLATES[preferredTemplateKey]) ? preferredTemplateKey : templateKeys[0]);
+    var templateKeys = Object.keys(OFFICIAL_PDF_TEMPLATES).filter(function (k) { return k !== 'mod1Imt'; });
+    var initialTemplateKey = preferredTemplateKey && OFFICIAL_PDF_TEMPLATES[preferredTemplateKey]
+      ? preferredTemplateKey
+      : (isAlunoFixo ? 'mod1IMT' : templateKeys[0]);
 
     function renderAlunoItem(aluno, inputType, checked) {
       var codigo = aluno.codigo != null ? aluno.codigo : aluno.id;
@@ -873,82 +874,70 @@
 
     var modalHtml = `
       <form id="pdfAutofillForm">
-        ${isAlunoFixo ? `
-          <div style="margin-bottom: 14px;">
-            <label style="display:block; font-weight:bold; margin-bottom:6px; font-size:13px">Modelo de Documento Oficial</label>
-            <div style="padding:10px 12px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:6px; font-weight:600; font-size:13.5px; color:#1e293b;">
-              📄 Modelo 1 - IMT (Requerimento / Certificado de Formação)
-              <input type="hidden" id="pdfAutofillTemplateSelect" name="templateKey" value="mod1Imt">
-            </div>
-          </div>
+        <div style="margin-bottom: 14px;">
+          <label style="display:block; font-weight:bold; margin-bottom:6px; font-size:13px">Modelo de Documento Oficial</label>
+          <select id="pdfAutofillTemplateSelect" name="templateKey" style="width:100%; padding:9px 12px; border-radius:6px; border:1px solid #cbd5e1; font-size:14px; background:#fff">
+            ${templateKeys.map(function (key) {
+              var isSel = (key === initialTemplateKey || (key === 'mod1IMT' && initialTemplateKey === 'mod1Imt')) ? 'selected' : '';
+              return '<option value="' + key + '" ' + isSel + '>' + esc(OFFICIAL_PDF_TEMPLATES[key].label) + '</option>';
+            }).join('')}
+          </select>
+        </div>
 
-          <div style="margin-bottom: 14px;">
-            <label style="display:block; font-weight:bold; margin-bottom:6px; font-size:13px">Candidato</label>
-            <div style="padding:12px 14px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:6px;">
-              <div style="display:flex; align-items:center; justify-content:space-between">
-                <span style="font-weight:700; font-size:14px; color:#1e293b;">${esc(alunoFixo?.nome || 'Aluno')}</span>
-                <span style="font-size:12px; color:#64748b;">#${alunoFixo?.numeroAluno ?? alunoFixo?.id}</span>
-              </div>
-              <div style="font-size:12.5px; color:#475569; margin-top:8px; display:flex; flex-wrap:wrap; gap:12px">
-                <span>Categoria: <strong>${esc(alunoFixo?.categoria || '—')}</strong></span>
-                <span>NIF: <strong>${esc(alunoFixo?.nif || 'Não preenchido')}</strong></span>
-                <span>LA: <strong>${esc(getAlunoNumeroLA(alunoFixo) || 'Não preenchida')}</strong></span>
-                <span>Data Nasc.: <strong>${esc(alunoFixo?.dataNascimento ? (typeof fmtDate === 'function' ? fmtDate(alunoFixo.dataNascimento) : alunoFixo.dataNascimento) : 'Não preenchida')}</strong></span>
-              </div>
-              <input type="checkbox" name="alunoId" value="${alunoFixo?.id}" checked style="display:none">
+        ${alunoFixo ? `
+          <div id="pdfAutofillAlunoFixoBanner" style="margin-bottom: 12px; padding:10px 12px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:6px;">
+            <div style="display:flex; align-items:center; justify-content:space-between">
+              <span style="font-weight:700; font-size:13.5px; color:#1e293b;">👤 Candidato selecionado: ${esc(alunoFixo.nome || 'Aluno')}</span>
+              <span style="font-size:12px; color:#64748b;">#${alunoFixo.numeroAluno ?? alunoFixo.id}</span>
+            </div>
+            <div style="font-size:12px; color:#475569; margin-top:6px; display:flex; flex-wrap:wrap; gap:10px">
+              <span>Cat: <strong>${esc(alunoFixo.categoria || '—')}</strong></span>
+              <span>NIF: <strong>${esc(alunoFixo.nif || 'Não preenchido')}</strong></span>
+              <span>LA: <strong>${esc(getAlunoNumeroLA(alunoFixo) || 'Não preenchida')}</strong></span>
+              <span>Data Nasc.: <strong>${esc(alunoFixo.dataNascimento ? (typeof fmtDate === 'function' ? fmtDate(alunoFixo.dataNascimento) : alunoFixo.dataNascimento) : 'Não preenchida')}</strong></span>
             </div>
           </div>
-        ` : `
-          <div style="margin-bottom: 14px;">
-            <label style="display:block; font-weight:bold; margin-bottom:6px; font-size:13px">Modelo de Documento Oficial</label>
-            <select id="pdfAutofillTemplateSelect" name="templateKey" style="width:100%; padding:9px 12px; border-radius:6px; border:1px solid #cbd5e1; font-size:14px; background:#fff">
-              ${templateKeys.map(function (key) {
-                var isSel = key === initialTemplateKey ? 'selected' : '';
-                return '<option value="' + key + '" ' + isSel + '>' + esc(OFFICIAL_PDF_TEMPLATES[key].label) + '</option>';
-              }).join('')}
-            </select>
-          </div>
+        ` : ''}
 
-          <div id="pdfAutofillExtraOptions" style="display:none; margin-bottom:14px; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px;">
-            <div style="display:flex; gap:10px; flex-wrap:wrap;">
-              <div style="flex:1; min-width:140px;">
-                <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Data de Exame</label>
-                <input type="date" name="dataExame" id="pdfAutofillDataExame" value="${presetData}" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
-              </div>
-              <div id="pdfAutofillHoraWrap" style="flex:1; min-width:110px;">
-                <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Hora de Exame</label>
-                <input type="time" name="horaExame" id="pdfAutofillHoraExame" value="${presetHora}" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
-              </div>
-              <div id="pdfAutofillMatriculaWrap" style="flex:1; min-width:130px; display:none;">
-                <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Matrícula (opcional)</label>
-                <input type="text" name="matricula" id="pdfAutofillMatricula" value="${esc(presetMatricula)}" placeholder="Ex: AA-00-BB" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
-              </div>
-              <div id="pdfAutofillLocalWrap" style="flex:1; min-width:110px;">
-                <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Local do Exame</label>
-                <input type="text" name="localExame" id="pdfAutofillLocalExame" value="${esc(presetLocal)}" placeholder="Ex: SCTT" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
-              </div>
+        <div id="pdfAutofillExtraOptions" style="display:none; margin-bottom:14px; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px;">
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:140px;">
+              <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Data de Exame</label>
+              <input type="date" name="dataExame" id="pdfAutofillDataExame" value="${presetData}" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
             </div>
-            <div id="pdfAutofillTaxaHint" style="font-size:12px; color:#0369a1; margin-top:8px; font-weight:500;"></div>
-            <div id="pdfAutofillCriarMarcacaoWrap" style="margin-top:10px; padding-top:8px; border-top:1px solid #e2e8f0; display:flex; align-items:center; gap:8px;">
-              <input type="checkbox" id="pdfAutofillCriarMarcacao" checked style="cursor:pointer; width:16px; height:16px;">
-              <label for="pdfAutofillCriarMarcacao" style="font-size:12.5px; font-weight:600; color:#1e293b; cursor:pointer;">
-                📅 Criar marcação de exame automaticamente no sistema para os candidatos selecionados
-              </label>
+            <div id="pdfAutofillHoraWrap" style="flex:1; min-width:110px;">
+              <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Hora de Exame</label>
+              <input type="time" name="horaExame" id="pdfAutofillHoraExame" value="${presetHora}" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
+            </div>
+            <div id="pdfAutofillMatriculaWrap" style="flex:1; min-width:130px; display:none;">
+              <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Matrícula (opcional)</label>
+              <input type="text" name="matricula" id="pdfAutofillMatricula" value="${esc(presetMatricula)}" placeholder="Ex: AA-00-BB" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
+            </div>
+            <div id="pdfAutofillLocalWrap" style="flex:1; min-width:110px;">
+              <label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Local do Exame</label>
+              <input type="text" name="localExame" id="pdfAutofillLocalExame" value="${esc(presetLocal)}" placeholder="Ex: SCTT" style="width:100%; padding:6px 8px; border-radius:4px; border:1px solid #cbd5e1; font-size:13px; box-sizing:border-box;">
             </div>
           </div>
+          <div id="pdfAutofillTaxaHint" style="font-size:12px; color:#0369a1; margin-top:8px; font-weight:500;"></div>
+          <div id="pdfAutofillCriarMarcacaoWrap" style="margin-top:10px; padding-top:8px; border-top:1px solid #e2e8f0; display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="pdfAutofillCriarMarcacao" checked style="cursor:pointer; width:16px; height:16px;">
+            <label for="pdfAutofillCriarMarcacao" style="font-size:12.5px; font-weight:600; color:#1e293b; cursor:pointer;">
+              📅 Criar marcação de exame automaticamente no sistema para os candidatos selecionados
+            </label>
+          </div>
+        </div>
 
-          <div>
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-              <label style="font-weight:bold; font-size:13px">Selecionar Candidato(s)</label>
-              <span id="pdfAutofillAlunoHint" style="font-size:12px; color:#64748b;"></span>
-            </div>
-            <input type="text" id="pdfAutofillSearch" placeholder="Pesquisar por nome, código ou CC..."
-              style="width:100%; padding:8px 10px; margin-bottom:8px; border-radius:6px; border:1px solid #cbd5e1; box-sizing:border-box; font-size:13px">
-            <div id="pdfAutofillAlunoList" style="max-height: 200px; overflow-y: auto; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px; background: #fff;">
-              ${renderAlunosList(initialTemplateKey)}
-            </div>
+        <div id="pdfAutofillCandidateSection">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <label style="font-weight:bold; font-size:13px">Candidato(s) a incluir no documento</label>
+            <span id="pdfAutofillAlunoHint" style="font-size:12px; color:#64748b;"></span>
           </div>
-        `}
+          <input type="text" id="pdfAutofillSearch" placeholder="Pesquisar por nome, código ou CC..."
+            style="width:100%; padding:8px 10px; margin-bottom:8px; border-radius:6px; border:1px solid #cbd5e1; box-sizing:border-box; font-size:13px">
+          <div id="pdfAutofillAlunoList" style="max-height: 200px; overflow-y: auto; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px; background: #fff;">
+            ${renderAlunosList(initialTemplateKey)}
+          </div>
+        </div>
 
         <!-- Painel para CC do Candidato quando 1 aluno está selecionado -->
         <div id="pdfAutofillSingleDocWrap" style="margin-top: 12px; padding: 10px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
@@ -974,7 +963,10 @@
       </form>
     `;
 
-    if (typeof openModal === 'function') openModal(isAlunoFixo ? ('Preencher Modelo 1 IMT · ' + esc(alunoFixo?.nome || 'Aluno')) : 'Imprimir Impresso Oficial', modalHtml);
+    var modalTitle = alunoFixo
+      ? ('Preencher Documento Oficial · ' + esc(alunoFixo.nome || 'Aluno'))
+      : 'Imprimir Impresso Oficial';
+    if (typeof openModal === 'function') openModal(modalTitle, modalHtml);
 
     var form = document.getElementById('pdfAutofillForm');
     var listContainer = document.getElementById('pdfAutofillAlunoList');
@@ -989,9 +981,13 @@
 
     function updateTemplateOptions(templateKey) {
       if (hintEl) {
-        hintEl.textContent = isSingleSelectionTemplate(templateKey)
-          ? 'Modelo individual (1 candidato)'
-          : 'Pauta (seleção múltipla permitida)';
+        if (isSingleSelectionTemplate(templateKey)) {
+          hintEl.textContent = 'Modelo individual (1 candidato selecionado)';
+        } else if (templateKey === 'modC3') {
+          hintEl.textContent = 'Requerimento de Licença de Aprendizagem (até 18 candidatos)';
+        } else {
+          hintEl.textContent = 'Pauta de Exame (até 16 candidatos)';
+        }
       }
 
       if (extraOptionsEl) {
@@ -1083,6 +1079,10 @@
 
     if (templateSelect && listContainer) {
       templateSelect.addEventListener('change', function () {
+        var currentChecked = form.querySelectorAll('input[name="alunoId"]:checked');
+        var currIds = [];
+        currentChecked.forEach(function (b) { currIds.push(Number(b.value)); });
+        if (currIds.length) selected = currIds;
         listContainer.innerHTML = renderAlunosList(templateSelect.value);
         updateTemplateOptions(templateSelect.value);
         applySearchFilter();
@@ -1145,7 +1145,7 @@
           });
         }
 
-        // Validação estrita de campos obrigatórios: CC, NIF, Licença de Aprendizagem (LA) e Data de Nascimento
+        // Validação de campos obrigatórios conforme o modelo selecionado
         var errosValidacao = [];
         selectedIds.forEach(function (aid) {
           var a = typeof findAluno === 'function' ? findAluno(aid) : (alunos || []).find(function (x) { return x.id === aid; });
@@ -1153,9 +1153,14 @@
           var faltas = [];
           var docCC = (options.documentos && options.documentos[aid]) || getAlunoNumeroDocumento(a, options);
           if (!docCC || !String(docCC).trim()) faltas.push('Documento / CC');
-          if (!a.nif || !String(a.nif).trim()) faltas.push('NIF');
-          if (!getAlunoNumeroLA(a)) faltas.push('Licença de Aprendizagem (LA)');
-          if (!a.dataNascimento || !String(a.dataNascimento).trim()) faltas.push('Data de Nascimento');
+
+          if (templateKey !== 'modC3') {
+            if (!a.nif || !String(a.nif).trim()) faltas.push('NIF');
+            if (!a.dataNascimento || !String(a.dataNascimento).trim()) faltas.push('Data de Nascimento');
+          }
+          if (templateKey === 'modC2Teorico' || templateKey === 'modC2Pratico') {
+            if (!getAlunoNumeroLA(a)) faltas.push('Licença de Aprendizagem (LA)');
+          }
 
           if (faltas.length > 0) {
             errosValidacao.push('• ' + (a.nome || 'Aluno #' + a.id) + ': faltam ' + faltas.join(', '));
@@ -1163,11 +1168,11 @@
         });
 
         if (errosValidacao.length > 0) {
-          var msgAlerta = 'Não é possível emitir o documento oficial.\nOs seguintes dados obrigatórios (CC, NIF, Licença de Aprendizagem, Data de Nascimento) estão em falta:\n\n' +
+          var msgAlerta = 'Não é possível emitir o documento oficial.\nOs seguintes dados obrigatórios estão em falta:\n\n' +
             errosValidacao.join('\n') +
-            '\n\nPor favor preencha os dados em falta na ficha do aluno antes de emitir.';
+            '\n\nPor favor preencha os dados em falta antes de emitir.';
           if (typeof alert === 'function') alert(msgAlerta);
-          if (typeof toast === 'function') toast('Dados obrigatórios em falta (CC, NIF, LA, Data de Nascimento).', 'error');
+          if (typeof toast === 'function') toast('Dados obrigatórios em falta.', 'error');
           return;
         }
 
