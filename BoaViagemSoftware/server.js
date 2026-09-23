@@ -1485,6 +1485,9 @@ app.use('/api/aulas', collectionRoutes('aulas', {
 }));
 app.use('/api/turmasTeoricas', collectionRoutes('turmasTeoricas', {
   validate: (p, tenant) => {
+    if (!p.horaFim && p.horaInicio) {
+      p.horaFim = calcularHoraFimStr(p.horaInicio, 60);
+    }
     if (!p.tema || !p.data || !p.horaInicio || !p.horaFim) return 'Tema, data e horário são obrigatórios';
     const espacoId = Number(p.espacoId || 0);
     if (!espacoId) return 'O espaço físico da turma teórica é obrigatório';
@@ -1493,6 +1496,14 @@ app.use('/api/turmasTeoricas', collectionRoutes('turmasTeoricas', {
   },
   onCreate: (item, tenant) => {
     item.espacoId = Number(item.espacoId || tenant.espacos[0]?.id || null);
+    if (!item.horaFim && item.horaInicio) {
+      item.horaFim = calcularHoraFimStr(item.horaInicio, 60);
+    }
+  },
+  onUpdate: (item) => {
+    if (!item.horaFim && item.horaInicio) {
+      item.horaFim = calcularHoraFimStr(item.horaInicio, 60);
+    }
   },
   transformOut: async (row) => {
     const presencasResult = await query(
