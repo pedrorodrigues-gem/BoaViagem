@@ -486,11 +486,12 @@ function mudarDiaCalendario(delta) {
   }
 }
 
-function calcularHoraFimStr(hora, duracaoMin) {
+function calcularHoraFimStr(hora, duracaoMin = 60) {
   if (!hora) return '';
   const [h, m] = String(hora).split(':').map(Number);
   if (Number.isNaN(h) || Number.isNaN(m)) return '';
-  const total = h * 60 + m + (Number(duracaoMin) || 0);
+  const dur = (duracaoMin !== undefined && duracaoMin !== null && duracaoMin !== '') ? Number(duracaoMin) : 60;
+  const total = h * 60 + m + dur;
   const totalMod = ((total % 1440) + 1440) % 1440;
   const hh = Math.floor(totalMod / 60);
   const mm = totalMod % 60;
@@ -1435,7 +1436,7 @@ function renderAlunos() {
               ${avatarHtml(a.nome, a.id, 36, !!a.foto)}
               <div>
                 <div class="cell-primary">${esc(a.nome)}</div>
-                <div class="cell-sub">${esc(a.email || '')} ${a.telefone ? '· ' + esc(a.telefone) : ''} ${a.nif ? '· NIF ' + esc(a.nif) : ''}</div>
+                <div class="cell-sub">${esc(a.telefone || 'Sem telemóvel')}${a.notas ? ' · ' + esc(a.notas) : ''}</div>
               </div>
             </div>
           </td>
@@ -3000,10 +3001,16 @@ function renderConclusoesHTML(conclusoes) {
 }
 
 /* ==================== AVATARES (fotos de perfil) ==================== */
-function avatarHtml(nome, id, size, temFoto) {
+function avatarHtml(nome, idOrUrl, size, temFoto) {
   size = size || 36;
-  if (temFoto && id) {
-    return `<img src="/api/alunos/${id}/foto" loading="lazy" alt="${esc(nome || '')}"
+  const isDirectUrl = typeof idOrUrl === 'string' && (idOrUrl.startsWith('data:') || idOrUrl.startsWith('http') || idOrUrl.startsWith('/'));
+  if (isDirectUrl) {
+    return `<img src="${idOrUrl}" loading="lazy" alt="${esc(nome || '')}"
+      style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;vertical-align:middle;border:1px solid var(--border)"
+      onerror="this.replaceWith(Object.assign(document.createElement('span'), {outerHTML: avatarIniciaisHtml('${esc(nome || '').replace(/'/g, "\\'")}', ${size})}))">`;
+  }
+  if (temFoto && idOrUrl) {
+    return `<img src="/api/alunos/${idOrUrl}/foto" loading="lazy" alt="${esc(nome || '')}"
       style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;vertical-align:middle;border:1px solid var(--border)"
       onerror="this.replaceWith(Object.assign(document.createElement('span'), {outerHTML: avatarIniciaisHtml('${esc(nome || '').replace(/'/g, "\\'")}', ${size})}))">`;
   }
@@ -3107,10 +3114,10 @@ function openAlunoForm(id) {
       <h4 class="form-section-title">Dados pessoais</h4>
       ${item ? `<p class="muted" style="margin:-6px 0 12px">Número de aluno <strong>#${item.numeroAluno ?? item.id}</strong> — atribuído automaticamente na criação e não pode ser alterado.</p>` : `<p class="muted" style="margin:-6px 0 12px">Ao criar o aluno é atribuído automaticamente um número de aluno único e sequencial.</p>`}
       <div style="display:flex; align-items:center; gap:16px; margin-bottom:14px">
-        <div id="alunoFotoPreview">${avatarHtml(item?.nome || 'Novo aluno', item?.foto, 64)}</div>
+        <div id="alunoFotoPreview">${avatarHtml(item?.nome || 'Novo aluno', item?.id, 64, !!item?.foto)}</div>
         <div>
-          <label style="display:block; text-transform:uppercase; font-size:11px; font-weight:700; color:var(--muted); margin-bottom:6px">Foto de perfil</label>
-          <input type="file" id="alunoFotoFile" accept="image/*">
+          <label style="display:block; text-transform:uppercase; font-size:11px; font-weight:700; color:var(--muted); margin-bottom:6px">Foto de perfil (PNG, JPEG, GIF)</label>
+          <input type="file" id="alunoFotoFile" accept="image/png, image/jpeg, image/jpg, image/gif, image/*">
           <input type="hidden" name="foto" id="alunoFotoHidden" value="${esc(item?.foto || '')}">
           ${item?.foto ? `<label style="display:flex; align-items:center; gap:6px; margin-top:6px; text-transform:none; font-weight:500; color:var(--ink)"><input type="checkbox" id="alunoFotoRemover"> Remover foto atual</label>` : ''}
         </div>
@@ -3896,8 +3903,8 @@ function openAulaForm(id) {
         </div>
         <div class="form-field"><label>Data</label><input name="data" type="date" required value="${item?.data || ''}"></div>
         <div class="form-field"><label>Hora início</label><input name="hora" type="time" required value="${item?.hora || ''}"></div>
-        <div class="form-field"><label>Duração (min)</label><input name="duracao" id="aulaDuracaoInput" type="number" min="10" value="${item?.duracao ?? 50}"></div>
-        <div class="form-field"><label>Hora fim (calculada)</label><input type="time" id="aulaHoraFimCalc" readonly value="${calcularHoraFimStr(item?.hora, item?.duracao ?? 50)}" style="background:var(--bg-subtle,#f3f4f6); font-weight:600" tabindex="-1"></div>
+        <div class="form-field"><label>Duração (min)</label><input name="duracao" id="aulaDuracaoInput" type="number" min="10" value="${item?.duracao ?? 60}"></div>
+        <div class="form-field"><label>Hora fim (calculada)</label><input type="time" id="aulaHoraFimCalc" readonly value="${calcularHoraFimStr(item?.hora, item?.duracao ?? 60)}" style="background:var(--bg-subtle,#f3f4f6); font-weight:600" tabindex="-1"></div>
         <div class="form-field">
           <label>Estado</label>
           <select name="estado">${['Agendada', 'Concluída', 'Cancelada'].map(c => `<option ${item?.estado === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
@@ -4222,10 +4229,13 @@ function renderContaCorrenteModal(cc) {
                 ${g.itens.map(it => `
                   <tr>
                     <td data-label="Código">${esc(it.codigo || '—')}</td>
-                    <td data-label="Descrição" class="cell-primary">${esc(it.descricao)}</td>
+                    <td data-label="Descrição" class="cell-primary">
+                      ${esc(it.descricao)}
+                      ${it.observacoes ? `<div style="font-size:11.5px; color:var(--muted); font-weight:normal; margin-top:2px">Obs: ${esc(it.observacoes)}</div>` : ''}
+                    </td>
                     <td data-label="Categoria">${esc(it.categoria || '—')}</td>
                     <td data-label="Qt.">${it.quantidade ?? 1}</td>
-                    <td data-label="Desconto">${it.desconto ? it.desconto + '%' : '—'}</td>
+                    <td data-label="Desconto">${it.desconto ? it.desconto + '%' : (it.descontavel === false ? '<span class="muted" style="font-size:11px">(não desc.)</span>' : '—')}</td>
                     <td data-label="Valor">${fmtMoney(it.valor)}</td>
                     <td data-label="Pago">${fmtMoney(it.valorPago)}</td>
                     <td data-label="Saldo">${fmtMoney(it.saldo)}</td>
@@ -4317,10 +4327,17 @@ function abrirItemContaForm(alunoId, itemId) {
           <select name="categoria">${CATEGORIAS_CONTA.map(c => `<option ${item?.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
         </div>
         <div class="form-field"><label>Valor unitário (€)</label><input name="valorUnitario" id="itemContaValorUnit" type="number" step="0.01" min="0" required value="${esc(String(valorUnitInicial))}"></div>
-        <div class="form-field"><label>Quantidade</label><input name="quantidade" id="itemContaQt" type="number" step="1" min="1" required value="${qtInicial}"></div>
-        <div class="form-field"><label>Desconto (%)</label><input name="desconto" id="itemContaDesconto" type="number" step="0.01" min="0" max="100" value="${descontoInicial}"></div>
+        <div class="form-field">
+          <label>Desconto (%)</label>
+          ${item && item.descontavel === false
+            ? `<input name="desconto" id="itemContaDesconto" type="number" step="0.01" min="0" max="100" value="0" readonly style="background:var(--bg-subtle,#f3f4f6); color:var(--muted)">
+               <small style="color:var(--danger,#dc2626); font-size:11px">Este item não permite descontos.</small>`
+            : `<input name="desconto" id="itemContaDesconto" type="number" step="0.01" min="0" max="100" value="${descontoInicial}">
+               ${item ? '<small class="muted" style="font-size:11px">Item com permissão para descontos.</small>' : ''}`}
+        </div>
         <div class="form-field"><label>Valor total (€)</label><input name="valor" id="itemContaValorTotal" type="number" step="0.01" min="0" required value="${item?.valor ?? ''}" readonly style="background:var(--bg-subtle,#f3f4f6); font-weight:600"></div>
         <div class="form-field"><label>Ordem de pagamento (opcional)</label><input name="ordem" type="number" value="${item?.ordem ?? ''}" placeholder="Menor número = pago primeiro"></div>
+        <div class="form-field full"><label>Observações / Justificação</label><input name="observacoes" value="${esc(item?.observacoes || '')}" placeholder="Ex: Desconto autorizado, ajuste de valor..."></div>
       </div>
       <p class="muted" style="margin-top:6px">Os pagamentos são aplicados aos itens por esta ordem (ou pela ordem de criação, se não definires um número). O primeiro item por saldar é pago primeiro, na totalidade, antes de passar ao seguinte.</p>
       <div class="form-actions">
@@ -4343,7 +4360,8 @@ function abrirItemContaForm(alunoId, itemId) {
       quantidade: Number(fd.get('quantidade')) || 1,
       desconto: Number(fd.get('desconto')) || 0,
       valor: Number(fd.get('valor')),
-      ordem: fd.get('ordem') === '' ? null : Number(fd.get('ordem'))
+      ordem: fd.get('ordem') === '' ? null : Number(fd.get('ordem')),
+      observacoes: fd.get('observacoes') ? String(fd.get('observacoes')).trim() : ''
     };
     try {
       await withScreenLoader(async () => {
@@ -5113,6 +5131,12 @@ function openPrimaveraConfigForm() {
 }
 
 /* ------- Emissão de documentos (Fatura / Fatura-Recibo / Recibo / Nota de Crédito) ------- */
+function toggleFaturacaoDestinatario() {
+  const isEmpresa = document.querySelector('input[name="faturacaoDestinatario"]:checked')?.value === 'empresa';
+  const wrap = document.getElementById('faturacaoEmpresaWrap');
+  if (wrap) wrap.style.display = isEmpresa ? 'block' : 'none';
+}
+
 function abrirFaturacaoModal(pagamentoId) {
   const p = state.pagamentos.find(x => x.id === pagamentoId);
   if (!p) return;
@@ -5120,18 +5144,48 @@ function abrirFaturacaoModal(pagamentoId) {
   const fat = p.faturacao;
   const historico = p.historicoFaturacao || [];
   const primaveraAtivo = !!state.escola?.primavera?.ativo;
+  const hasEmpresa = !!(p.faturacaoNome || p.faturacao_nome);
 
   const avisos = [];
   if (!primaveraAtivo) avisos.push('A integração com a Cegid Primavera não está ativa nesta escola.');
-  if (aluno && !aluno.nif) avisos.push('Este aluno não tem NIF preenchido — é obrigatório para emitir documentos fiscais.');
   if (!aluno) avisos.push('Este pagamento não está associado a um aluno válido.');
+  if (aluno && !aluno.nif && !hasEmpresa) {
+    avisos.push('O aluno não tem NIF guardado. Para emitir fatura ao aluno preencha o NIF na ficha, ou selecione a opção de faturar a Empresa/Outra entidade abaixo.');
+  }
 
   openModal(`Faturação · ${esc(aluno?.nome || 'Pagamento')}`, `
     <div class="print-info-grid" style="margin-bottom:16px">
       <div><strong>Descrição</strong><br>${esc(p.descricao || '—')}</div>
       <div><strong>Valor</strong><br>${fmtMoney(p.valor)}</div>
-      <div><strong>NIF do aluno</strong><br>${esc(aluno?.nif || '—')}</div>
+      <div><strong>NIF do aluno</strong><br>${esc(aluno?.nif || 'Não preenchido')}</div>
       <div><strong>Email do aluno</strong><br>${esc(aluno?.email || '—')}</div>
+    </div>
+
+    <div style="margin-bottom:16px; padding:12px; background:var(--bg-subtle,#f8fafc); border:1px solid var(--border); border-radius:var(--radius-sm)">
+      <label style="font-weight:700; font-size:12px; text-transform:uppercase; color:var(--muted); display:block; margin-bottom:8px">Dados de Faturação / Titular da Fatura</label>
+      <div style="display:flex; gap:16px; margin-bottom:10px; font-size:13px">
+        <label style="cursor:pointer; display:flex; align-items:center; gap:6px">
+          <input type="radio" name="faturacaoDestinatario" value="aluno" ${hasEmpresa ? '' : 'checked'} onchange="toggleFaturacaoDestinatario()">
+          Aluno (${esc(aluno?.nome || '—')})
+        </label>
+        <label style="cursor:pointer; display:flex; align-items:center; gap:6px">
+          <input type="radio" name="faturacaoDestinatario" value="empresa" ${hasEmpresa ? 'checked' : ''} onchange="toggleFaturacaoDestinatario()">
+          Empresa / Outra entidade
+        </label>
+      </div>
+      <div id="faturacaoEmpresaWrap" style="${hasEmpresa ? 'display:block' : 'display:none'}">
+        <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:10px; margin-bottom:4px">
+          <div class="form-field" style="margin-bottom:0">
+            <label style="font-size:11px">Nome / Razão Social da Empresa *</label>
+            <input id="faturacaoEmpresaNome" value="${esc(p.faturacaoNome || p.faturacao_nome || '')}" placeholder="Ex: Empresa de Transportes, Lda">
+          </div>
+          <div class="form-field" style="margin-bottom:0">
+            <label style="font-size:11px">NIF da Empresa *</label>
+            <input id="faturacaoEmpresaNif" value="${esc(p.faturacaoNif || p.faturacao_nif || '')}" placeholder="Ex: 500123456" maxlength="20">
+          </div>
+        </div>
+        <p class="muted" style="font-size:11px; margin:4px 0 0 0">A fatura será emitida em nome da empresa, associada ao pagamento deste aluno.</p>
+      </div>
     </div>
 
     ${avisos.length ? `<div class="inline-alert inline-alert-warning" style="margin-bottom:16px">${avisos.map(a => `⚠ ${esc(a)}`).join('<br>')}</div>` : ''}
@@ -5139,10 +5193,10 @@ function abrirFaturacaoModal(pagamentoId) {
     ${fat ? `<div class="inline-alert inline-alert-info" style="margin-bottom:16px">Último documento emitido: <strong>${esc(fat.tipo)} ${esc(fat.serie || '')}/${esc(fat.numero || '')}</strong>, em ${new Date(fat.dataEmissao).toLocaleString('pt-PT')}.</div>` : ''}
 
     <div id="faturacaoAcoes" style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px">
-      <button class="btn btn-accent" ${avisos.length ? 'disabled' : ''} onclick="emitirDocumentoPagamento(${p.id}, 'fatura')">Emitir Fatura (FA)</button>
-      <button class="btn btn-accent" ${avisos.length ? 'disabled' : ''} onclick="emitirDocumentoPagamento(${p.id}, 'fatura-recibo')">Emitir Fatura-Recibo (FR)</button>
-      <button class="btn btn-ghost" ${avisos.length || !fat ? 'disabled' : ''} onclick="abrirReciboForm(${p.id})">Emitir Recibo a liquidar documento (RE)</button>
-      <button class="btn btn-danger-ghost" ${avisos.length || !fat ? 'disabled' : ''} onclick="abrirNotaCreditoForm(${p.id})">Emitir Nota de Crédito (NC)</button>
+      <button class="btn btn-accent" ${!primaveraAtivo || !aluno ? 'disabled' : ''} onclick="emitirDocumentoPagamento(${p.id}, 'fatura')">Emitir Fatura (FA)</button>
+      <button class="btn btn-accent" ${!primaveraAtivo || !aluno ? 'disabled' : ''} onclick="emitirDocumentoPagamento(${p.id}, 'fatura-recibo')">Emitir Fatura-Recibo (FR)</button>
+      <button class="btn btn-ghost" ${!primaveraAtivo || !aluno || !fat ? 'disabled' : ''} onclick="abrirReciboForm(${p.id})">Emitir Recibo a liquidar documento (RE)</button>
+      <button class="btn btn-danger-ghost" ${!primaveraAtivo || !aluno || !fat ? 'disabled' : ''} onclick="abrirNotaCreditoForm(${p.id})">Emitir Nota de Crédito (NC)</button>
     </div>
 
     ${historico.length ? `
@@ -5164,9 +5218,28 @@ function abrirFaturacaoModal(pagamentoId) {
 }
 
 async function emitirDocumentoPagamento(pagamentoId, tipo) {
+  const p = state.pagamentos.find(x => x.id === pagamentoId);
+  const aluno = p ? findAluno(p.alunoId) : null;
+  const isEmpresa = document.querySelector('input[name="faturacaoDestinatario"]:checked')?.value === 'empresa';
+  const body = {};
+
+  if (isEmpresa) {
+    const nome = (document.getElementById('faturacaoEmpresaNome')?.value || '').trim();
+    const nif = (document.getElementById('faturacaoEmpresaNif')?.value || '').trim();
+    if (!nome) { toast('Indica o nome / razão social da empresa.', 'error'); return; }
+    if (!nif) { toast('Indica o NIF da empresa.', 'error'); return; }
+    body.nomeFaturar = nome;
+    body.nifFaturar = nif;
+  } else {
+    if (aluno && !aluno.nif) {
+      toast('Este aluno não tem NIF preenchido. Preencha o NIF ou selecione a opção Empresa.', 'error');
+      return;
+    }
+  }
+
   try {
     await withScreenLoader(async () => {
-      await api('POST', `/api/pagamentos/${pagamentoId}/${tipo}`, {});
+      await api('POST', `/api/pagamentos/${pagamentoId}/${tipo}`, body);
       await refreshCollections(['pagamentos']);
     }, 'A comunicar com a Cegid Primavera…');
     abrirFaturacaoModal(pagamentoId);
@@ -5504,6 +5577,21 @@ function renderRelatorioAlunoHTML(rel) {
       <div class="inline-alert inline-alert-warning" style="margin-bottom:16px">
         ${alertasDocumentais.map(t => `⚠ ${esc(t)}`).join('<br>')}
       </div>` : ''}
+
+    <div style="display:flex; align-items:center; gap:20px; margin-bottom:18px; padding:14px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--bg-subtle,#f8fafc)">
+      <div style="flex-shrink:0">
+        ${avatarHtml(aluno.nome, aluno.id, 84, !!aluno.foto)}
+      </div>
+      <div style="flex:1; min-width:0">
+        <h3 style="margin:0 0 6px 0; font-size:19px; color:var(--ink)">${esc(aluno.nome)}</h3>
+        <div class="cell-sub" style="font-size:13px; margin-bottom:4px">
+          N.º Aluno: <strong>#${aluno.numeroAluno ?? aluno.id}</strong> · Categoria: <strong>${esc(aluno.categoria || '—')}</strong> · Estado: <span class="${badgeClass(aluno.estado)}">${esc(aluno.estado || '—')}</span>
+        </div>
+        <div class="cell-sub" style="font-size:12.5px; color:var(--muted)">
+          ${aluno.telefone ? '📞 ' + esc(aluno.telefone) : 'Sem telemóvel'} ${aluno.email ? ' · ✉ ' + esc(aluno.email) : ''}
+        </div>
+      </div>
+    </div>
 
     <div class="print-info-grid">
       <div><strong>NIF</strong><br>${esc(aluno.nif || '—')}</div>
@@ -7199,7 +7287,7 @@ function abrirAssinaturaContrato(id) {
           filename: `contrato-${id}-assinado.pdf`
         });
 
-        await refreshCollections(['contratos', 'pagamentos', 'dashboard']);
+        await refreshCollections(['contratos', 'itensConta', 'pagamentos', 'dashboard']);
       }, 'A gerar documento assinado e submeter contrato…');
 
       closeModal();
@@ -8208,9 +8296,7 @@ function closeModal() {
   }
 }
 document.getElementById('modalClose').addEventListener('click', closeModal);
-document.getElementById('modalBackdrop').addEventListener('click', (e) => {
-  if (e.target.id === 'modalBackdrop') closeModal();
-});
+// Fecho do modal por clique no backdrop desativado para prevenir perda de dados; saída apenas pelo botão "X".
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 
 /* ---------------- Init ---------------- */
