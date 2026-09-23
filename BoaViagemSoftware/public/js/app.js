@@ -53,7 +53,7 @@ function construirIndiceGlobal() {
 
   (state.preInscricoes || []).forEach(p => idx.push({
     tipo: 'Pré-inscrição', label: p.nome, sub: `${p.email || ''} · ${p.categoria || ''}`,
-    acao: () => switchView('preinscricoes')
+    acao: () => { switchView('preinscricoes'); setTimeout(() => abrirEditarPreInscricaoForm(p.id), 60); }
   }));
 
   (state.turmasTeoricas || []).forEach(t => idx.push({
@@ -458,7 +458,7 @@ function renderCalendarioDiaTabela(dataISO) {
         </thead>
         <tbody>
           ${eventos.map(e => `
-            <tr style="cursor:pointer" onclick="${e.origem === 'turmaTeorica' ? `abrirTurmaTeoricaDetalhe(${e.id})` : `openAulaForm(${e.id})`}">
+            <tr style="cursor:pointer" onclick="${e.origem === 'turmaTeorica' ? `abrirTurmaTeoricaDetalhe(${e.id})` : (e.origem === 'preInscricao' ? `abrirEditarPreInscricaoForm(${e.id})` : `openAulaForm(${e.id})`)}">
               <td class="cell-primary">${esc(e.hora || '—')}</td>
               <td>${e.numeroLicao !== '—' ? `Lição ${e.numeroLicao}` : '—'}</td>
               <td>${esc(e.alunoNome)}</td>
@@ -867,7 +867,7 @@ function renderPreInscricoes() {
       <p class="muted" style="margin-bottom:10px">A categoria e o desconto acordados aqui transitam automaticamente para o aluno ao converter a pré-inscrição.</p>
       <div class="table-wrap">
         ${state.preInscricoes.length ? `<table>
-          <thead><tr><th>Nome</th><th>Email</th><th>Categoria</th><th>Desconto</th><th>Estado</th><th>Pré-inscrição</th><th>Inscrição</th><th>Observações</th><th></th></tr></thead>
+          <thead><tr><th>Nome</th><th>Email</th><th>Categoria</th><th>Desconto</th><th>Estado</th><th>Pré-inscrição</th><th>Inscrição</th><th>Observações</th><th style="min-width:180px">Ações</th></tr></thead>
           <tbody>
             ${pageItems.map(p => `
               <tr>
@@ -879,7 +879,12 @@ function renderPreInscricoes() {
                 <td>${fmtDate(p.dataPreInscricao)}</td>
                 <td>${p.dataInscricao ? fmtDate(p.dataInscricao) : '—'}</td>
                 <td>${esc(p.observacoes || '—')}</td>
-                <td>${p.alunoId ? '<span class="muted" style="font-size:12px">Já convertida</span>' : `<button class="btn btn-accent btn-sm" onclick="openConverterPreInscricaoForm(${p.id})">Converter em aluno</button>`}</td>
+                <td>
+                  <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="abrirEditarPreInscricaoForm(${p.id})">Editar</button>
+                    ${p.alunoId ? '<span class="muted" style="font-size:12px">Já convertida</span>' : `<button type="button" class="btn btn-accent btn-sm" onclick="openConverterPreInscricaoForm(${p.id})">Converter em aluno</button>`}
+                  </div>
+                </td>
               </tr>
             `).join('')}
           </tbody>
@@ -913,6 +918,94 @@ function renderPreInscricoes() {
         toast(err.message, 'error');
       }
     });
+  }
+}
+
+function abrirEditarPreInscricaoForm(id) {
+  const pre = (state.preInscricoes || []).find(p => p.id === id);
+  if (!pre) return;
+
+  const dataPre = pre.dataPreInscricao ? String(pre.dataPreInscricao).slice(0, 10) : '';
+  const dataIns = pre.dataInscricao ? String(pre.dataInscricao).slice(0, 10) : '';
+
+  const alunoAssociadoHtml = pre.alunoId
+    ? `<div class="form-field full" style="margin-bottom:8px">
+         <div style="padding:10px 12px;background:rgba(28,120,255,0.08);border:1px solid rgba(28,120,255,0.2);border-radius:6px;font-size:13px">
+           Esta pré-inscrição já foi convertida no Aluno: <strong>${esc((typeof findAluno === 'function' && findAluno(pre.alunoId)) ? findAluno(pre.alunoId).nome : `#${pre.alunoId}`)}</strong>
+         </div>
+       </div>`
+    : '';
+
+  openModal(`Editar Pré-inscrição · ${esc(pre.nome)}`, `
+    <form id="editarPreInscricaoModalForm">
+      ${alunoAssociadoHtml}
+      <div class="form-grid">
+        <div class="form-field"><label>Nome</label><input name="nome" value="${esc(pre.nome || '')}" required></div>
+        <div class="form-field"><label>Email</label><input name="email" type="email" value="${esc(pre.email || '')}" required></div>
+        <div class="form-field"><label>Categoria</label><input name="categoria" value="${esc(pre.categoria || '')}" required placeholder="Ex: B"></div>
+        <div class="form-field"><label>Desconto acordado (%)</label><input name="desconto" type="number" min="0" max="100" step="1" value="${pre.desconto ?? 0}"></div>
+        <div class="form-field">
+          <label>Estado</label>
+          <select name="estado">
+            <option value="Pendente" ${pre.estado === 'Pendente' ? 'selected' : ''}>Pendente</option>
+            <option value="Aprovada" ${pre.estado === 'Aprovada' ? 'selected' : ''}>Aprovada</option>
+            <option value="Inscrita" ${pre.estado === 'Inscrita' ? 'selected' : ''}>Inscrita</option>
+            <option value="Cancelada" ${pre.estado === 'Cancelada' ? 'selected' : ''}>Cancelada</option>
+          </select>
+        </div>
+        <div class="form-field"><label>Data pré-inscrição</label><input name="dataPreInscricao" type="date" value="${dataPre}"></div>
+        <div class="form-field"><label>Data de inscrição</label><input name="dataInscricao" type="date" value="${dataIns}"></div>
+        <div class="form-field full"><label>Observações</label><textarea name="observacoes" placeholder="Informações adicionais...">${esc(pre.observacoes || '')}</textarea></div>
+      </div>
+      <div class="form-actions" style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;flex-wrap:wrap;gap:8px">
+        <button type="button" class="btn btn-ghost" style="color:var(--danger, #e53e3e)" onclick="eliminarPreInscricao(${pre.id})">Eliminar</button>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+          <button type="submit" class="btn btn-accent">Guardar alterações</button>
+        </div>
+      </div>
+    </form>
+  `);
+
+  const form = document.getElementById('editarPreInscricaoModalForm');
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const payload = {
+        nome: String(fd.get('nome') || '').trim(),
+        email: String(fd.get('email') || '').trim(),
+        categoria: String(fd.get('categoria') || '').trim(),
+        desconto: Number(fd.get('desconto') || 0),
+        estado: fd.get('estado') || 'Pendente',
+        dataPreInscricao: fd.get('dataPreInscricao') || null,
+        dataInscricao: fd.get('dataInscricao') || null,
+        observacoes: fd.get('observacoes') || ''
+      };
+      try {
+        await api('PUT', `/api/preinscricoes/${id}`, payload);
+        await refreshCollections(['preInscricoes']);
+        closeModal();
+        renderPreInscricoes();
+        toast('Pré-inscrição atualizada com sucesso.');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    });
+  }
+}
+
+async function eliminarPreInscricao(id) {
+  const pre = (state.preInscricoes || []).find(p => p.id === id);
+  if (!confirm(`Tens a certeza que desejas eliminar a pré-inscrição de ${pre ? pre.nome : 'este aluno'}?`)) return;
+  try {
+    await api('DELETE', `/api/preinscricoes/${id}`);
+    await refreshCollections(['preInscricoes']);
+    closeModal();
+    renderPreInscricoes();
+    toast('Pré-inscrição eliminada com sucesso.');
+  } catch (err) {
+    toast(err.message, 'error');
   }
 }
 
@@ -8322,6 +8415,8 @@ window.openRevalidacaoForm = openRevalidacaoForm;
 window.alterarEstadoRevalidacao = alterarEstadoRevalidacao;
 window.imprimirComprovativoRevalidacao = imprimirComprovativoRevalidacao;
 window.imprimirResumoRevalidacoes = imprimirResumoRevalidacoes;
+window.abrirEditarPreInscricaoForm = abrirEditarPreInscricaoForm;
+window.eliminarPreInscricao = eliminarPreInscricao;
 
 /* ---------------- Modal ---------------- */
 function openModal(title, bodyHtml, options = {}) {
