@@ -3123,7 +3123,7 @@ app.get('/api/contratos/:id/visualizar', async (req, res) => {
     const id = Number(req.params.id);
     const result = await query(
       `SELECT c.*, a.nome AS aluno_nome, a.nif AS aluno_nif,
-              e.nome AS escola_nome, e.nif AS escola_nif, e.morada AS escola_morada, e.localidade AS escola_localidade
+              e.nome AS escola_nome, e.nipc AS escola_nipc, e.morada AS escola_morada
        FROM contratos c
        JOIN alunos a ON a.id = c.aluno_id
        JOIN escolas e ON e.id = c.escola_id
