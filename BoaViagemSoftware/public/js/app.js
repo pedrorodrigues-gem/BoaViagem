@@ -6440,12 +6440,16 @@ function renderContratos() {
     </div>
     <div class="table-wrap">
       ${list.length ? `<table>
-        <thead><tr><th>Aluno</th><th>Categoria</th><th>Valor</th><th>Plano</th><th>Estado</th><th></th></tr></thead>
+        <thead><tr><th>N.º Contrato</th><th>Aluno</th><th>Categoria</th><th>Valor</th><th>Plano</th><th>Estado</th><th></th></tr></thead>
         <tbody>
           ${pageItems.map(c => {
     const aluno = findAluno(c.alunoId);
+    const numContrato = aluno?.numeroAluno ?? aluno?.id ?? c.numero ?? c.id;
     return `
             <tr>
+              <td>
+                <span class="badge" style="font-size:12px; font-weight:700; background:#f0fdf4; color:#166534; border:1px solid #bbf7d0; padding:2px 7px; border-radius:5px">N.º ${esc(numContrato)}</span>
+              </td>
               <td>
                 <div class="cell-primary">${esc(aluno?.nome || 'Aluno removido')}</div>
                 <div class="cell-sub">Criado em ${fmtDate(c.dataCriacao)}</div>
@@ -6942,6 +6946,7 @@ function openContratoForm(id) {
 function gerarTextoContrato(contrato) {
   const aluno = findAluno(contrato.alunoId) || {};
   const escola = state.escola || {};
+  const numContrato = aluno.numeroAluno ?? aluno.id ?? contrato.numero ?? contrato.id ?? '—';
 
   // Data de assinatura por extenso
   const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -6951,7 +6956,7 @@ function gerarTextoContrato(contrato) {
   return `
     <div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.5; color: #000; text-align: justify;">
       
-      <p style="text-align: right; margin-bottom: 12px;">Contrato<br>n.º ${esc(contrato.numero || '—')}</p>
+      <p style="text-align: right; margin-bottom: 12px; font-weight: bold; font-size: 13px;">Contrato<br>n.º ${esc(numContrato)}</p>
       
       <h2 style="text-align: center; margin-bottom: 24px; font-size: 16px; text-transform: uppercase;">CONTRATO DE PRESTAÇÃO DE SERVIÇOS DE FORMAÇÃO PARA CONDUTORES</h2>
 
@@ -7048,7 +7053,9 @@ function gerarTextoContrato(contrato) {
         <tr>
           <td style="width: 33%; vertical-align: top;">
             PRIMEIRO OUTORGANTE<br>
-            <div class="assinatura-slot" data-slot="primeiro" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;"></div>
+            <div class="assinatura-slot" data-slot="primeiro" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
+              <img src="/images/assinatura.png" style="max-width:170px; max-height:60px; display:block; margin:0 auto" onerror="this.style.display='none'">
+            </div>
             ____________________________
           </td>
           <td style="width: 33%; vertical-align: top;">
@@ -7172,11 +7179,12 @@ function abrirAssinaturaContrato(id) {
   const contrato = state.contratos.find(c => c.id === id);
   if (!contrato) return;
   const aluno = findAluno(contrato.alunoId);
+  const numContrato = aluno ? (aluno.numeroAluno ?? aluno.id) : (contrato.numero ?? contrato.id);
   const texto = gerarTextoContrato(contrato);
   const idade = calcularIdadeAluno(aluno);
   const eMenor = idade !== null && idade < 18;
 
-  openModal('Aceitação do Contrato', `
+  openModal(`Aceitação do Contrato N.º ${numContrato} · ${esc(aluno?.nome || 'Aluno')}`, `
     <div style="max-height:240px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius-sm); padding:16px; font-size:13.5px; line-height:1.6; margin-bottom:16px">
       ${texto}
     </div>
@@ -7246,6 +7254,23 @@ function abrirAssinaturaContrato(id) {
     try {
       await withScreenLoader(async () => {
         let docTexto = texto;
+        try {
+          const resImg = await fetch('/images/assinatura.png');
+          if (resImg.ok) {
+            const blob = await resImg.blob();
+            const sigPrimeiroBase64 = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.readAsDataURL(blob);
+            });
+            docTexto = docTexto.replace(
+              /<div class="assinatura-slot" data-slot="primeiro"[^>]*>[\s\S]*?<\/div>/,
+              `<div class="assinatura-slot" data-slot="primeiro" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
+                 <img src="${sigPrimeiroBase64}" style="max-width:170px; max-height:60px; display:block; margin:0 auto">
+               </div>`
+            );
+          }
+        } catch (_) {}
         if (sigFormando) {
           docTexto = docTexto.replace(
             '<div class="assinatura-slot" data-slot="segundo" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;"></div>',
