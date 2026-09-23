@@ -46,9 +46,17 @@ app.use(express.json({ limit: '20mb' }));
 app.use(cookieParser(process.env.COOKIE_SECRET || 'chave_secreta_super_segura_boa_viagem'));
 app.use(express.static(path.join(__dirname, 'public')));
 
-const CONTRATOS_PDF_DIR = path.join(__dirname, '..', 'data', 'contratos-pdf');
+const CONTRATOS_PDF_DIR = path.join(__dirname, 'data', 'contratos-pdf');
+const CONTRATOS_PDF_DIR_LEGACY = path.join(__dirname, '..', 'data', 'contratos-pdf');
+if (!fs.existsSync(CONTRATOS_PDF_DIR)) {
+  try { fs.mkdirSync(CONTRATOS_PDF_DIR, { recursive: true }); } catch (_) {}
+}
 function contratoPdfPath(escolaId, contratoId) {
-  return path.join(CONTRATOS_PDF_DIR, String(escolaId), `contrato-${contratoId}.pdf`);
+  const p1 = path.join(CONTRATOS_PDF_DIR, String(escolaId), `contrato-${contratoId}.pdf`);
+  if (fs.existsSync(p1)) return p1;
+  const p2 = path.join(CONTRATOS_PDF_DIR_LEGACY, String(escolaId), `contrato-${contratoId}.pdf`);
+  if (fs.existsSync(p2)) return p2;
+  return p1;
 }
 
 async function ensureSchemaColumns() {
@@ -2085,6 +2093,7 @@ app.post('/api/examesMarcacoes', async (req, res) => {
       if (saldo > 0.0001) return badRequest(res, 'Não é possível marcar um exame prático enquanto a conta corrente do aluno tiver saldo pendente.');
     }
     const resultado = ['Aprovado', 'Reprovado'].includes(payload.resultado) ? payload.resultado : null;
+    const estado = resultado ? 'Realizado' : (payload.estado || 'Marcado');
     const result = await query(
       `INSERT INTO exames_marcacoes (escola_id, aluno_id, tipo, data, hora, hora_fim, duracao, local, estado, observacoes, resultado)
        OUTPUT inserted.id, inserted.aluno_id AS alunoId, inserted.tipo, inserted.data, inserted.hora, inserted.hora_fim AS horaFim,
@@ -2094,7 +2103,7 @@ app.post('/api/examesMarcacoes', async (req, res) => {
         escolaId: req.escolaId, alunoId, tipo, data: dataExame, hora: payload.hora || '',
         duracao: payload.duracao ? Number(payload.duracao) : null,
         horaFim: payload.horaFim || '', local: payload.local || '',
-        estado: payload.estado || 'Marcado', observacoes: payload.observacoes || '', resultado
+        estado, observacoes: payload.observacoes || '', resultado
       }
     );
     invalidateTenantCache(req.escolaId);
@@ -2194,6 +2203,11 @@ app.put('/api/examesMarcacoes/:id', async (req, res) => {
       observacoes: body.observacoes !== undefined ? body.observacoes : atual.observacoes,
       resultado: body.resultado !== undefined ? body.resultado : atual.resultado
     };
+    if (merged.resultado === 'Aprovado' || merged.resultado === 'Reprovado') {
+      merged.estado = 'Realizado';
+    } else if (body.resultado === null && merged.estado === 'Realizado') {
+      merged.estado = 'Marcado';
+    }
     const result = await query(
       `UPDATE exames_marcacoes SET aluno_id=@alunoId, tipo=@tipo, data=@data, hora=@hora, hora_fim=@horaFim, duracao=@duracao, local=@local, estado=@estado, observacoes=@observacoes, resultado=@resultado
        OUTPUT inserted.id, inserted.aluno_id AS alunoId, inserted.tipo, inserted.data, inserted.hora, inserted.hora_fim AS horaFim,
@@ -2201,6 +2215,7 @@ app.put('/api/examesMarcacoes/:id', async (req, res) => {
        WHERE id=@id AND escola_id=@escolaId`,
       { ...merged, id, escolaId: req.escolaId }
     );
+    invalidateTenantCache(req.escolaId);
     ok(res, formatRow(result.recordset[0]));
   } catch (ex) {
     res.status(503).json({ success: false, error: `Falha ao atualizar marcação: ${ex.message || ex}` });
@@ -3103,20 +3118,158 @@ app.post('/api/contratos/:id/pdf-assinado', async (req, res) => {
   }
 });
 
-app.get('/api/contratos/:id/pdf-assinado', async (req, res) => {
+app.get('/api/contratos/:id/visualizar', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const result = await query('SELECT pdf_assinado_filename AS filename FROM contratos WHERE id=@id AND escola_id=@escolaId', { id, escolaId: req.escolaId });
-    const row = result.recordset[0];
-    if (!row || !row.filename) return notFound(res, 'Este contrato ainda não tem um PDF submetido.');
-    const ficheiro = contratoPdfPath(req.escolaId, id);
-    if (!fs.existsSync(ficheiro)) return notFound(res, 'Ficheiro não encontrado no servidor.');
-    res.setHeader('Content-Type', 'application/pdf');
-    const nomeSeguro = String(row.filename || 'contrato.pdf').replace(/"/g, '');
-    res.setHeader('Content-Disposition', `inline; filename="${nomeSeguro}"`);
-    fs.createReadStream(ficheiro).pipe(res);
+    const result = await query(
+      `SELECT c.*, a.nome AS aluno_nome, a.nif AS aluno_nif,
+              e.nome AS escola_nome, e.nif AS escola_nif, e.morada AS escola_morada, e.localidade AS escola_localidade
+       FROM contratos c
+       JOIN alunos a ON a.id = c.aluno_id
+       JOIN escolas e ON e.id = c.escola_id
+       WHERE c.id = @id AND c.escola_id = @escolaId`,
+      { id, escolaId: req.escolaId }
+    );
+    const c = result.recordset[0];
+    if (!c) return notFound(res, 'Contrato não encontrado.');
+
+    let texto = c.texto_contrato || '';
+    if (!texto) {
+      texto = `<p>Contrato de Formação n.º ${c.id} · ${c.aluno_nome} (Categoria ${c.categoria || 'B'})</p>`;
+    }
+
+    if (c.assinatura_imagem) {
+      const sigBase64 = `data:image/png;base64,${Buffer.from(c.assinatura_imagem).toString('base64')}`;
+      texto = texto.replace(
+        /<div class="assinatura-slot" data-slot="segundo"[^>]*>[\s\S]*?<\/div>/,
+        `<div class="assinatura-slot" data-slot="segundo" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
+           <img src="${sigBase64}" style="max-width:170px; max-height:60px; display:block; margin:0 auto">
+         </div>`
+      );
+    }
+    if (c.assinatura_tutor_imagem) {
+      const tutorSigBase64 = `data:image/png;base64,${Buffer.from(c.assinatura_tutor_imagem).toString('base64')}`;
+      texto = texto.replace(
+        /<div class="assinatura-slot" data-slot="tutor"[^>]*>[\s\S]*?<\/div>/,
+        `<div class="assinatura-slot" data-slot="tutor" style="height:65px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:4px;">
+           <img src="${tutorSigBase64}" style="max-width:170px; max-height:60px; display:block; margin:0 auto">
+         </div>`
+      );
+    }
+
+    const dataHoraStr = c.assinatura_data_hora ? new Date(c.assinatura_data_hora).toLocaleString('pt-PT') : '';
+
+    const html = `<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8">
+  <title>Contrato ${c.id} - ${c.aluno_nome || 'Aluno'}</title>
+  <style>
+    @page { size: A4; margin: 12mm 10mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      background: #f1f5f9;
+      color: #0f172a;
+    }
+    .toolbar {
+      position: sticky;
+      top: 0;
+      max-width: 820px;
+      margin: 0 auto 16px auto;
+      background: #1e293b;
+      color: #fff;
+      padding: 10px 18px;
+      border-radius: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+      z-index: 100;
+    }
+    .toolbar button {
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .toolbar button:hover { background: #1d4ed8; }
+    .toolbar a {
+      color: #94a3b8;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .toolbar a:hover { color: #fff; }
+    .page-container {
+      max-width: 820px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 36px 44px;
+      border-radius: 4px;
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1);
+      line-height: 1.5;
+    }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .toolbar { display: none !important; }
+      .page-container {
+        box-shadow: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        max-width: 100% !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div style="font-weight:600; font-size:14px">Contrato N.º ${c.id} · ${c.aluno_nome}</div>
+    <div style="display:flex; gap:12px; align-items:center">
+      <button onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
+      <a href="javascript:window.close()">✕ Fechar</a>
+    </div>
+  </div>
+  <div class="page-container">
+    ${texto}
+    ${c.assinatura_nome_digitado ? `
+      <div style="margin-top:24px; padding-top:12px; border-top:1px solid #cbd5e1; font-size:12px; color:#475569">
+        <p style="margin:2px 0"><strong>Aceite eletronicamente por:</strong> ${c.assinatura_nome_digitado}</p>
+        ${c.assinatura_tutor_nome_digitado ? `<p style="margin:2px 0"><strong>Tutor / Encarregado de Educação:</strong> ${c.assinatura_tutor_nome_digitado}</p>` : ''}
+        ${dataHoraStr ? `<p style="margin:2px 0"><strong>Data/Hora de Aceitação:</strong> ${dataHoraStr}</p>` : ''}
+      </div>
+    ` : ''}
+  </div>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
   } catch (ex) {
-    res.status(503).json({ success: false, error: `Falha ao obter PDF: ${ex.message || ex}` });
+    res.status(500).send(`Erro ao visualizar contrato: ${ex.message || ex}`);
+  }
+});
+
+app.get(['/api/contratos/:id/pdf-assinado', '/api/contratos/:id/pdf'], async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const ficheiro = contratoPdfPath(req.escolaId, id);
+    if (fs.existsSync(ficheiro) && fs.statSync(ficheiro).size > 100) {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="contrato-${id}.pdf"`);
+      return fs.createReadStream(ficheiro).pipe(res);
+    }
+    return res.redirect(`/api/contratos/${id}/visualizar`);
+  } catch (ex) {
+    res.redirect(`/api/contratos/${req.params.id}/visualizar`);
   }
 });
 
