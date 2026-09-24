@@ -796,7 +796,10 @@ function collectionRoutes(name, { validate, onCreate, onUpdate, onDelete, onAfte
    (pré-visualização) como na criação do contrato (geração real
    da conta corrente). */
 function obterPlanoCarta(tenant, categoria, planoCartaId) {
-  const planos = (tenant.config?.composicaoCarta?.[String(categoria || '').trim()]) || [];
+  const catKey = String(categoria || '').trim().toUpperCase();
+  const cfg = tenant.config?.composicaoCarta || {};
+  const matchingKey = Object.keys(cfg).find(k => k.trim().toUpperCase() === catKey);
+  const planos = (matchingKey ? cfg[matchingKey] : null) || [];
   if (!planos.length) return null;
   if (planoCartaId) {
     const encontrado = planos.find(p => p.id === Number(planoCartaId));
@@ -2630,10 +2633,22 @@ app.get('/api/precoCarta/:categoria', (req, res) => {
   ok(res, { categoria, desconto, tipoDesconto, planoCartaId: plano?.id || null, planoNome: plano?.nome || null, itens, total });
 });
 
-app.get('/api/planosCarta/:categoria', (req, res) => {
-  const { tenant } = currentTenant(req);
+app.get('/api/planosCarta/:categoria', async (req, res) => {
   const categoria = String(req.params.categoria || '').trim();
-  const planos = (tenant.config?.composicaoCarta?.[categoria] || []).map(p => ({ id: p.id, nome: p.nome }));
+  const catUpper = categoria.toUpperCase();
+  try {
+    const result = await query(
+      'SELECT id, nome FROM planos_carta WHERE escola_id = @escolaId AND UPPER(categoria) = @catUpper ORDER BY id',
+      { escolaId: req.escolaId, catUpper }
+    );
+    if (result.recordset && result.recordset.length) {
+      return ok(res, result.recordset);
+    }
+  } catch (err) { /* fallback */ }
+  const { tenant } = currentTenant(req);
+  const cfg = tenant.config?.composicaoCarta || {};
+  const matchingKey = Object.keys(cfg).find(k => k.trim().toUpperCase() === catUpper);
+  const planos = ((matchingKey ? cfg[matchingKey] : null) || []).map(p => ({ id: p.id, nome: p.nome }));
   ok(res, planos);
 });
 
