@@ -5273,9 +5273,9 @@ function abrirFaturacaoModal(pagamentoId) {
   openModal(`Faturação · ${esc(aluno?.nome || 'Pagamento')}`, `
     <div class="print-info-grid" style="margin-bottom:16px">
       <div><strong>Descrição</strong><br>${esc(p.descricao || '—')}</div>
+      <div><strong>Código de Artigo</strong><br><span class="badge" style="font-family:monospace">${esc(p.artigo || p.codigo || (state.escola?.primavera?.artigoFormacao || 'FORMACAO'))}</span></div>
       <div><strong>Valor</strong><br>${fmtMoney(p.valor)}</div>
       <div><strong>NIF do aluno</strong><br>${esc(aluno?.nif || 'Não preenchido')}</div>
-      <div><strong>Email do aluno</strong><br>${esc(aluno?.email || '—')}</div>
     </div>
 
     <div style="margin-bottom:16px; padding:12px; background:var(--bg-subtle,#f8fafc); border:1px solid var(--border); border-radius:var(--radius-sm)">
