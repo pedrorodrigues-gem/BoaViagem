@@ -251,7 +251,8 @@
     if (id == null) return undefined;
     var numId = Number(id);
     if (_alunosMap.has(numId)) return _alunosMap.get(numId);
-    var found = state.alunos.find(function (a) { return a.id === id || a.id === numId; });
+    var found = (state.alunos || []).find(function (a) { return a.id === id || a.id === numId; }) ||
+                (state.alunosAtivos || []).find(function (a) { return a.id === id || a.id === numId; });
     if (found) return found;
     if (_alunosExtraCache.has(numId)) return _alunosExtraCache.get(numId);
     return undefined;

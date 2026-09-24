@@ -6710,20 +6710,25 @@ function openContratoForm(id, initialAlunoId) {
     if (campo) campo.value = v;
   }
 
-  async function carregarPlanosCarta(resetToFirst) {
+  async function carregarPlanosCarta(forcarPlanoId = null) {
     const categoria = document.getElementById('contratoCategoriaSelect')?.value;
     const select = document.getElementById('planoCartaSelect');
     if (!categoria || !select) return [];
     try {
       const planos = await api('GET', `/api/planosCarta/${encodeURIComponent(categoria)}`);
-      const temPlanoAtual = planoCartaIdAtual && planos.some(p => p.id === Number(planoCartaIdAtual));
-      if (resetToFirst || !temPlanoAtual) {
-        planoCartaIdAtual = planos[0]?.id || null;
+      let targetId = (forcarPlanoId != null && forcarPlanoId !== '') ? Number(forcarPlanoId) : (planoCartaIdAtual != null ? Number(planoCartaIdAtual) : null);
+      if (targetId && !planos.some(p => p.id === targetId)) {
+        targetId = null;
       }
+      if (!targetId && planos.length) {
+        targetId = planos[0].id;
+      }
+      planoCartaIdAtual = targetId;
+
       select.innerHTML = planos.length
-        ? planos.map(p => `<option value="${p.id}" ${Number(planoCartaIdAtual) === p.id ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')
+        ? planos.map(p => `<option value="${p.id}" ${p.id === planoCartaIdAtual ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')
         : '<option value="">Sem planos definidos para esta categoria</option>';
-      select.value = planoCartaIdAtual || '';
+      select.value = planoCartaIdAtual ? String(planoCartaIdAtual) : '';
       return planos;
     } catch (err) {
       select.innerHTML = '<option value="">Sem planos definidos</option>';
@@ -6772,7 +6777,7 @@ function openContratoForm(id, initialAlunoId) {
     if (campoPrat) campoPrat.value = praticas;
   }
 
-  async function atualizarValorCarta(recarregarPlanos = true) {
+  async function atualizarValorCarta(recarregarPlanos = true, forcarPlanoId = null) {
     const categoria = document.getElementById('contratoCategoriaSelect')?.value;
     const aluno = findAluno(alunoIdAtual());
     const descontoInp = document.getElementById('contratoDescontoInput');
@@ -6808,11 +6813,12 @@ function openContratoForm(id, initialAlunoId) {
       return;
     }
     if (recarregarPlanos) {
-      await carregarPlanosCarta(true);
-    }
-    const select = document.getElementById('planoCartaSelect');
-    if (select && select.value) {
-      planoCartaIdAtual = Number(select.value) || planoCartaIdAtual;
+      await carregarPlanosCarta(forcarPlanoId);
+    } else {
+      const select = document.getElementById('planoCartaSelect');
+      if (select && select.value) {
+        planoCartaIdAtual = Number(select.value);
+      }
     }
     try {
       const qs = `?desconto=${desconto}&tipoDesconto=${encodeURIComponent(tipoDesconto)}${planoCartaIdAtual ? `&planoCartaId=${planoCartaIdAtual}` : ''}`;
@@ -6820,7 +6826,8 @@ function openContratoForm(id, initialAlunoId) {
       itensCartaAtual = res.itens || [];
       valorCartaCalculado = Number(res.total || 0);
       if (res.planoCartaId) planoCartaIdAtual = res.planoCartaId;
-      if (select && planoCartaIdAtual) select.value = planoCartaIdAtual;
+      const select = document.getElementById('planoCartaSelect');
+      if (select && planoCartaIdAtual) select.value = String(planoCartaIdAtual);
     } catch (err) {
       itensCartaAtual = [];
       valorCartaCalculado = 0;
@@ -6967,7 +6974,7 @@ function openContratoForm(id, initialAlunoId) {
   if (selectCategoria) {
     selectCategoria.addEventListener('change', () => {
       planoCartaIdAtual = null;
-      atualizarValorCarta(true);
+      atualizarValorCarta(true, null);
       renderAlertaContratoExistente();
     });
   }
@@ -7002,16 +7009,20 @@ function openContratoForm(id, initialAlunoId) {
     if (!item && aluno) {
       if (aluno.categoria) {
         const catSelect = document.getElementById('contratoCategoriaSelect');
-        if (catSelect) catSelect.value = aluno.categoria;
+        const catUpper = String(aluno.categoria).trim().toUpperCase();
+        if (catSelect) {
+          const matchOpt = Array.from(catSelect.options).find(o => o.value.trim().toUpperCase() === catUpper);
+          if (matchOpt) catSelect.value = matchOpt.value;
+        }
       }
-      if (aluno.planoCartaId) {
-        planoCartaIdAtual = Number(aluno.planoCartaId);
-      }
+      const alunoPlanoId = Number(aluno.planoCartaId || aluno.plano_carta_id) || null;
+
       const dInp = document.getElementById('contratoDescontoInput');
       const tSel = document.getElementById('contratoTipoDescontoSelect');
       if (dInp) dInp.value = aluno.desconto ?? 0;
       if (tSel) tSel.value = aluno.tipoDesconto || 'valor';
-      await atualizarValorCarta(false);
+
+      await atualizarValorCarta(true, alunoPlanoId);
       renderAlertaContratoExistente();
     }
   }
@@ -7020,11 +7031,12 @@ function openContratoForm(id, initialAlunoId) {
   const alunoHiddenInput = form.querySelector('[name="alunoId"]');
 
   const onAlunoChanged = () => {
-    const aluno = findAluno(alunoIdAtual());
+    const id = alunoIdAtual();
+    const aluno = id ? findAluno(id) : null;
     if (aluno) {
       sincronizarAlunoComContrato(aluno);
     } else {
-      atualizarValorCarta(true);
+      atualizarValorCarta(true, null);
       renderAlertaContratoExistente();
     }
   };
@@ -7035,7 +7047,7 @@ function openContratoForm(id, initialAlunoId) {
   if (!item && alunoPreSelecionado) {
     sincronizarAlunoComContrato(alunoPreSelecionado);
   } else {
-    atualizarValorCarta(true);
+    atualizarValorCarta(true, planoCartaIdAtual);
   }
 
   form.addEventListener('submit', async (e) => {
