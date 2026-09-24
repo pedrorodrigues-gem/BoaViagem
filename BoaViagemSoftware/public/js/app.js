@@ -7503,23 +7503,16 @@ function abrirDocumentoContrato(id) {
 
     ${fat ? `
       <div class="inline-alert inline-alert-info" style="margin-bottom:16px">
-        Fatura emitida: <strong>${esc(fat.tipo)} ${esc(fat.serie || '')}/${esc(fat.numero || '')}</strong>, em ${new Date(fat.dataEmissao).toLocaleString('pt-PT')}.
-        Os recibos dos pagamentos deste aluno passam a ser emitidos automaticamente contra esta fatura.
+        Fatura associada: <strong>${esc(fat.tipo)} ${esc(fat.serie || '')}/${esc(fat.numero || '')}</strong>, em ${new Date(fat.dataEmissao).toLocaleString('pt-PT')}.
       </div>
-    ` : `<div class="inline-alert inline-alert-warning" style="margin-bottom:16px">
-        Ainda não foi emitida fatura para este contrato${!state.escola?.primavera?.ativo ? ' — a integração com a Cegid Primavera não está ativa (Pagamentos → Faturação).' : (aluno && !aluno.nif ? ' — falta o NIF do aluno.' : '.')}
-      </div>`}
+    ` : ''}
 
     <form id="pdfContratoForm">
       <div class="form-field full">
         <label>${pdf ? 'Substituir ficheiro PDF' : 'Carregar PDF do contrato assinado'}</label>
         <input type="file" name="pdf" accept="application/pdf" required>
       </div>
-      <p class="muted" style="margin-top:6px">
-        Máximo 15MB. ${fat
-      ? 'Este contrato já tem fatura emitida — submeter um novo PDF substitui apenas o ficheiro, não gera uma nova fatura.'
-      : 'Ao submeter, se a integração estiver ativa e o aluno tiver NIF, a fatura é emitida automaticamente na Cegid Primavera.'}
-      </p>
+      <p class="muted" style="margin-top:6px">Máximo 15MB.</p>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" onclick="closeModal()">Fechar</button>
         <button type="submit" class="btn btn-accent">Submeter PDF</button>
