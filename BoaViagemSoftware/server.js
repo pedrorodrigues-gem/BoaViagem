@@ -3088,44 +3088,6 @@ async function handleAssinaturaContrato(req, res) {
     await atualizarEstadosContaCorrente(req, contrato.alunoId);
     invalidateTenantCache(req.escolaId);
 
-    // Se Primavera estiver ativa e aluno tiver NIF, emitir fatura de contrato automaticamente
-    nestEscolaPrimavera(req.escola);
-    if (req.escola.primavera && req.escola.primavera.ativo) {
-      const alunoResult = await query('SELECT * FROM alunos WHERE id=@id AND escola_id=@escolaId', { id: contrato.alunoId, escolaId: req.escolaId });
-      const alunoRow = alunoResult.recordset[0];
-      if (alunoRow && alunoRow.nif) {
-        const jaTemFatura = await query(`SELECT id FROM documentos_fiscais WHERE contrato_id=@id AND tipo IN ('FA','FR')`, { id });
-        if (!jaTemFatura.recordset.length) {
-          try {
-            const aluno = nestAlunoExtras(dbRowToJs(alunoRow));
-            const descContrato = contrato.descontoAplicado !== undefined && contrato.descontoAplicado !== null
-              ? contrato.descontoAplicado
-              : (contrato.desconto_aplicado !== undefined && contrato.desconto_aplicado !== null ? contrato.desconto_aplicado : aluno.desconto);
-            const tipoDescContrato = contrato.tipoDesconto || contrato.tipo_desconto || aluno.tipoDesconto || 'valor';
-            contrato.itensCarta = itensCartaPorCategoria(tenant, contrato.categoria, Number(descContrato || 0), contrato.planoCartaId, tipoDescContrato);
-            const serieDoc = await obterSerieParaAluno(req, aluno);
-            const out = await invoicing.emitirFaturaContrato(req.escola, tenant, aluno, contrato, { serie: serieDoc });
-            if (out && out.resultado && out.resultado.sucesso) {
-              await query(
-                `INSERT INTO documentos_fiscais (escola_id, aluno_id, contrato_id, tipo, serie, numero, valor)
-                 VALUES (@escolaId, @alunoId, @contratoId, 'FA', @serie, @numero, @valor)`,
-                {
-                  escolaId: req.escolaId,
-                  alunoId: aluno.id,
-                  contratoId: id,
-                  serie: out.resultado.doc_serie || serieDoc,
-                  numero: out.resultado.doc_numero || null,
-                  valor: contrato.valorTotal || contrato.valorCartaCalculado || 0
-                }
-              );
-            }
-          } catch (ex) {
-            console.error('Aviso ao emitir fatura automática de contrato:', ex.message || ex);
-          }
-        }
-      }
-    }
-
     ok(res, contrato);
   } catch (ex) {
     res.status(503).json({ success: false, error: `Falha ao assinar contrato: ${ex.message || ex}` });
@@ -3183,44 +3145,6 @@ app.post('/api/contratos/:id/pdf-assinado', async (req, res) => {
     }
     await atualizarEstadosContaCorrente(req, contrato.alunoId);
     invalidateTenantCache(req.escolaId);
-
-    // Se Primavera estiver ativa e aluno tiver NIF, emitir fatura de contrato automaticamente
-    nestEscolaPrimavera(req.escola);
-    if (req.escola.primavera && req.escola.primavera.ativo) {
-      const alunoResult = await query('SELECT * FROM alunos WHERE id=@id AND escola_id=@escolaId', { id: contrato.alunoId, escolaId: req.escolaId });
-      const alunoRow = alunoResult.recordset[0];
-      if (alunoRow && alunoRow.nif) {
-        const jaTemFatura = await query(`SELECT id FROM documentos_fiscais WHERE contrato_id=@id AND tipo IN ('FA','FR')`, { id });
-        if (!jaTemFatura.recordset.length) {
-          try {
-            const aluno = nestAlunoExtras(dbRowToJs(alunoRow));
-            const descContrato = contrato.descontoAplicado !== undefined && contrato.descontoAplicado !== null
-              ? contrato.descontoAplicado
-              : (contrato.desconto_aplicado !== undefined && contrato.desconto_aplicado !== null ? contrato.desconto_aplicado : aluno.desconto);
-            const tipoDescContrato = contrato.tipoDesconto || contrato.tipo_desconto || aluno.tipoDesconto || 'valor';
-            contrato.itensCarta = itensCartaPorCategoria(tenant, contrato.categoria, Number(descContrato || 0), contrato.planoCartaId, tipoDescContrato);
-            const serieDoc = await obterSerieParaAluno(req, aluno);
-            const out = await invoicing.emitirFaturaContrato(req.escola, tenant, aluno, contrato, { serie: serieDoc });
-            if (out && out.resultado && out.resultado.sucesso) {
-              await query(
-                `INSERT INTO documentos_fiscais (escola_id, aluno_id, contrato_id, tipo, serie, numero, valor)
-                 VALUES (@escolaId, @alunoId, @contratoId, 'FA', @serie, @numero, @valor)`,
-                {
-                  escolaId: req.escolaId,
-                  alunoId: aluno.id,
-                  contratoId: id,
-                  serie: out.resultado.doc_serie || serieDoc,
-                  numero: out.resultado.doc_numero || null,
-                  valor: contrato.valorTotal || contrato.valorCartaCalculado || 0
-                }
-              );
-            }
-          } catch (ex) {
-            console.error('Aviso ao emitir fatura automática de contrato:', ex.message || ex);
-          }
-        }
-      }
-    }
 
     ok(res, { contrato });
   } catch (ex) {
