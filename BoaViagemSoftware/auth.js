@@ -96,7 +96,7 @@ async function loadTenantForEscola(escolaId) {
 }
 
 async function _fetchTenantFromDb(escolaId) {
-  const FULL = process.env.LOAD_FULL_TENANT !== 'false';
+  const FULL = process.env.LOAD_FULL_TENANT === 'true';
 
   const tenant = {
     config: { composicaoCarta: {} },
@@ -176,22 +176,26 @@ async function _fetchTenantFromDb(escolaId) {
       tenant.turmasTeoricas.forEach(t => { t.inscritos = []; t.presencas = {}; });
     }
   } else {
-    // Partial load: only small tables and configuration needed for UI
-    const [instrutores, pessoas, espacos, requisitos, produtos, users] = await Promise.all([
+    // Carregamento rápido e leve: tabelas pequenas essenciais (~150ms)
+    const [instrutores, veiculos, pessoas, espacos, requisitos, produtos, users, preInscricoes] = await Promise.all([
       query(`SELECT ${COLUNAS_LEVES_INSTRUTORES} FROM instrutores WHERE escola_id = @escolaId ORDER BY id`, { escolaId }),
+      query('SELECT * FROM veiculos WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
       query('SELECT * FROM pessoas WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
       query('SELECT * FROM espacos WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
       query('SELECT * FROM requisitos WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
       query('SELECT * FROM produtos WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
-      query('SELECT * FROM users WHERE escola_id = @escolaId ORDER BY id', { escolaId })
+      query('SELECT * FROM users WHERE escola_id = @escolaId ORDER BY id', { escolaId }),
+      query('SELECT * FROM pre_inscricoes WHERE escola_id = @escolaId ORDER BY id DESC', { escolaId })
     ]);
 
     tenant.instrutores = normalizeRows(instrutores.recordset);
+    tenant.veiculos = normalizeRows(veiculos.recordset);
     tenant.pessoas = normalizeRows(pessoas.recordset);
     tenant.espacos = normalizeRows(espacos.recordset);
     tenant.requisitos = normalizeRows(requisitos.recordset);
     tenant.produtos = normalizeRows(produtos.recordset);
     tenant.users = normalizeRows(users.recordset);
+    tenant.preInscricoes = normalizeRows(preInscricoes.recordset);
   }
 
   // ---------- Composição da carta (planos de preço) por categoria ----------

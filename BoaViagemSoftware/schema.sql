@@ -433,4 +433,11 @@ CREATE INDEX ix_contratos_aluno        ON contratos(aluno_id);
 CREATE INDEX ix_exames_aluno           ON exames_marcacoes(aluno_id);
 CREATE INDEX ix_produtos_escola        ON produtos(escola_id);
 CREATE INDEX ix_planos_carta_escola_cat ON planos_carta(escola_id, categoria);
+CREATE INDEX ix_contratos_escola_data   ON contratos(escola_id, data_criacao DESC);
+CREATE INDEX ix_pre_inscricoes_escola   ON pre_inscricoes(escola_id, id DESC);
+CREATE INDEX ix_exames_escola_data      ON exames_marcacoes(escola_id, data);
+CREATE INDEX ix_pagamentos_escola_data  ON pagamentos(escola_id, data DESC, id DESC);
+CREATE INDEX ix_documentos_fiscais_contrato  ON documentos_fiscais(contrato_id);
+CREATE INDEX ix_documentos_fiscais_pagamento ON documentos_fiscais(pagamento_id);
+CREATE INDEX ix_pagamento_hist_faturacao     ON pagamento_historico_faturacao(pagamento_id);
 GO

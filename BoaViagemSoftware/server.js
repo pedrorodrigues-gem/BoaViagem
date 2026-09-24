@@ -649,15 +649,30 @@ async function deleteItemFromSql(req, name, id) {
    dependentes (ex: pessoa associada, itens de conta corrente).
    `transformOut(row, tenant, req)` deixa moldar a resposta enviada
    ao cliente (ex: aninhar subcampos, juntar dados de outra tabela). */
-function collectionRoutes(name, { validate, onCreate, onUpdate, onDelete, onAfterCreate, onAfterUpdate, onAfterDelete, transformOut } = {}) {
+function collectionRoutes(name, { validate, onCreate, onUpdate, onDelete, onAfterCreate, onAfterUpdate, onAfterDelete, transformOut, transformAll } = {}) {
   const router = express.Router();
-  const applyOut = async (row, tenant, req) => (row && transformOut ? (await transformOut(row, tenant, req)) || row : row);
+  const applyOut = async (row, tenant, req) => {
+    if (!row) return row;
+    if (transformOut) return (await transformOut(row, tenant, req)) || row;
+    if (transformAll) {
+      const outList = await transformAll([row], tenant, req);
+      return outList?.[0] || row;
+    }
+    return row;
+  };
 
   router.get('/', async (req, res) => {
     try {
       const rows = await fetchCollectionFromSql(req, name);
       const { tenant } = currentTenant(req);
-      const out = transformOut ? await Promise.all(rows.map(r => applyOut(r, tenant, req))) : rows;
+      let out;
+      if (transformAll) {
+        out = (await transformAll(rows, tenant, req)) || rows;
+      } else if (transformOut) {
+        out = await Promise.all(rows.map(r => applyOut(r, tenant, req)));
+      } else {
+        out = rows;
+      }
       ok(res, out);
     } catch (ex) {
       res.status(503).json({ success: false, error: `Falha ao ler ${name}: ${ex.message || ex}` });
@@ -1505,6 +1520,32 @@ app.use('/api/turmasTeoricas', collectionRoutes('turmasTeoricas', {
       item.horaFim = calcularHoraFimStr(item.horaInicio, 60);
     }
   },
+  transformAll: async (rows) => {
+    if (!rows || !rows.length) return rows;
+    const ids = rows.map(r => r.id).filter(Boolean);
+    const porTurma = new Map();
+
+    for (let i = 0; i < ids.length; i += 1000) {
+      const chunk = ids.slice(i, i + 1000).join(',');
+      const presencasResult = await query(
+        `SELECT turma_id AS turmaId, aluno_id AS alunoId, presente FROM turma_inscritos WHERE turma_id IN (${chunk})`
+      );
+      (presencasResult.recordset || []).forEach(p => {
+        if (!porTurma.has(p.turmaId)) porTurma.set(p.turmaId, { inscritos: [], presencas: {} });
+        const bucket = porTurma.get(p.turmaId);
+        const aId = Number(p.alunoId);
+        if (!bucket.inscritos.includes(aId)) bucket.inscritos.push(aId);
+        if (p.presente !== null && p.presente !== undefined) bucket.presencas[aId] = !!p.presente;
+      });
+    }
+
+    rows.forEach(r => {
+      const bucket = porTurma.get(r.id) || { inscritos: [], presencas: {} };
+      r.inscritos = bucket.inscritos;
+      r.presencas = bucket.presencas;
+    });
+    return rows;
+  },
   transformOut: async (row) => {
     const presencasResult = await query(
       'SELECT aluno_id AS alunoId, presente FROM turma_inscritos WHERE turma_id=@id',
@@ -1664,6 +1705,49 @@ app.use('/api/pagamentos', collectionRoutes('pagamentos', {
     return null;
   },
   onAfterDelete: async (removed, tenant, req) => { if (removed?.alunoId) await atualizarEstadosContaCorrente(req, removed.alunoId); },
+  transformAll: async (rows) => {
+    if (!rows || !rows.length) return rows;
+    const ids = rows.map(r => r.id).filter(Boolean);
+    const docsMap = new Map();
+    const histMap = new Map();
+
+    for (let i = 0; i < ids.length; i += 1000) {
+      const chunk = ids.slice(i, i + 1000).join(',');
+      const [docsRes, histRes] = await Promise.all([
+        query(`SELECT pagamento_id, tipo, serie, numero, data_emissao FROM documentos_fiscais WHERE pagamento_id IN (${chunk})`),
+        query(`SELECT pagamento_id, tipo, sucesso, doc_numero, doc_serie, erro, data_hora FROM pagamento_historico_faturacao WHERE pagamento_id IN (${chunk}) ORDER BY data_hora DESC`)
+      ]);
+
+      (docsRes.recordset || []).forEach(d => {
+        if (!docsMap.has(d.pagamento_id)) docsMap.set(d.pagamento_id, dbRowToJs(d));
+      });
+
+      (histRes.recordset || []).forEach(h => {
+        if (!histMap.has(h.pagamento_id)) histMap.set(h.pagamento_id, []);
+        histMap.get(h.pagamento_id).push(dbRowToJs(h));
+      });
+    }
+
+    rows.forEach(row => {
+      row.naoFaturar = !!(row.naoFaturar || row.nao_faturar);
+      if (row.faturacaoNumero || row.faturacaoTipo) {
+        row.faturacao = {
+          tipo: row.faturacaoTipo,
+          serie: row.faturacaoSerie,
+          numero: row.faturacaoNumero,
+          entidade: row.faturacaoEntidade,
+          dataEmissao: row.faturacaoDataEmissao
+        };
+      } else {
+        row.faturacao = docsMap.get(row.id) || null;
+      }
+      row.historicoFaturacao = histMap.get(row.id) || [];
+      if (!row.modoPagamento) {
+        row.modoPagamento = row.modo_pagamento || 'PGNUM';
+      }
+    });
+    return rows;
+  },
   transformOut: async (row, tenant, req) => {
     row.naoFaturar = !!(row.naoFaturar || row.nao_faturar);
     if (row.faturacaoNumero || row.faturacaoTipo) {
@@ -2013,10 +2097,71 @@ app.use('/api/contratos', collectionRoutes('contratos', {
     await sincronizarItensContaContrato(req, item.id, sync);
     await gravarParcelasPersonalizadas(item.id, sync.usaParcelasPersonalizadas ? sync.parcelasPersonalizadas : []);
   },
+  transformAll: async (rows, tenant, req) => {
+    if (!rows || !rows.length) return rows || [];
+    const ids = rows.map(r => r.id).filter(Boolean);
+    const parcelasMap = {};
+    const docsFiscaisMap = {};
+
+    for (let i = 0; i < ids.length; i += 1000) {
+      const chunk = ids.slice(i, i + 1000).join(',');
+      const [pRes, dRes] = await Promise.all([
+        query(`SELECT contrato_id, descricao, valor FROM contrato_parcelas_personalizadas WHERE contrato_id IN (${chunk}) ORDER BY ordem`),
+        query(`SELECT * FROM documentos_fiscais WHERE contrato_id IN (${chunk}) ORDER BY data_emissao DESC`)
+      ]);
+      (pRes.recordset || []).forEach(p => {
+        if (!parcelasMap[p.contrato_id]) parcelasMap[p.contrato_id] = [];
+        parcelasMap[p.contrato_id].push({ descricao: p.descricao, valor: p.valor });
+      });
+      (dRes.recordset || []).forEach(d => {
+        if (!docsFiscaisMap[d.contrato_id]) docsFiscaisMap[d.contrato_id] = [];
+        docsFiscaisMap[d.contrato_id].push(dbRowToJs(d));
+      });
+    }
+
+    const alunosMap = new Map();
+    (tenant.alunos || []).forEach(a => alunosMap.set(a.id, a));
+    const missingIds = Array.from(new Set(rows.map(r => r.alunoId).filter(id => id && !alunosMap.has(id))));
+    for (let i = 0; i < missingIds.length; i += 1000) {
+      const chunk = missingIds.slice(i, i + 1000).join(',');
+      const aRes = await query(`SELECT id, nome, numero_aluno, categoria, tipo_desconto, desconto, espaco_id FROM alunos WHERE id IN (${chunk})`);
+      (aRes.recordset || []).forEach(a => alunosMap.set(a.id, dbRowToJs(a)));
+    }
+
+    return rows.map(row => {
+      row.parcelasPersonalizadas = parcelasMap[row.id] || [];
+      const aluno = alunosMap.get(row.alunoId);
+      row.numero = aluno?.numeroAluno ?? aluno?.numero_aluno ?? aluno?.id ?? row.alunoId;
+      row.numeroAluno = row.numero;
+      row.assinatura = row.assinaturaNomeDigitado ? {
+        nomeDigitado: row.assinaturaNomeDigitado,
+        dataHora: row.assinaturaDataHora,
+        imagemBase64: row.assinaturaImagem ? `data:image/png;base64,${row.assinaturaImagem}` : null
+      } : null;
+      delete row.assinaturaImagem;
+      row.assinaturaTutor = row.assinaturaTutorNomeDigitado ? {
+        nomeDigitado: row.assinaturaTutorNomeDigitado,
+        imagemBase64: row.assinaturaTutorImagem ? `data:image/png;base64,${row.assinaturaTutorImagem}` : null
+      } : null;
+      delete row.assinaturaTutorImagem;
+      row.pdfAssinado = row.pdfAssinadoFilename ? { filename: row.pdfAssinadoFilename, uploadedAt: row.pdfAssinadoUploadedAt, size: row.pdfAssinadoTamanhoBytes } : null;
+      row.tipoDesconto = row.tipoDesconto || row.tipo_desconto || aluno?.tipoDesconto || 'valor';
+      const descContrato = row.descontoAplicado !== undefined && row.descontoAplicado !== null ? row.descontoAplicado : (aluno?.desconto ?? 0);
+      row.itensCarta = itensCartaPorCategoria(tenant, row.categoria, Number(descContrato || 0), row.planoCartaId, row.tipoDesconto);
+      const docs = docsFiscaisMap[row.id] || [];
+      row.faturacao = docs.find(d => d.tipo === 'FA' || d.tipo === 'FR') || null;
+      row.recibosEmitidos = docs.filter(d => d.tipo === 'RE').sort((a, b) => (a.dataEmissao || '').localeCompare(b.dataEmissao || ''));
+      return row;
+    });
+  },
   transformOut: async (row, tenant, req) => {
     const parcelasResult = await query('SELECT descricao, valor FROM contrato_parcelas_personalizadas WHERE contrato_id=@id ORDER BY ordem', { id: row.id });
     row.parcelasPersonalizadas = parcelasResult.recordset;
-    const aluno = (tenant.alunos || []).find(a => a.id === row.alunoId);
+    let aluno = (tenant.alunos || []).find(a => a.id === row.alunoId);
+    if (!aluno && row.alunoId) {
+      const aRes = await query('SELECT id, nome, numero_aluno, categoria, tipo_desconto, desconto, espaco_id FROM alunos WHERE id=@id', { id: row.alunoId });
+      if (aRes.recordset[0]) aluno = dbRowToJs(aRes.recordset[0]);
+    }
     row.numero = aluno?.numeroAluno ?? aluno?.numero_aluno ?? aluno?.id ?? row.alunoId;
     row.numeroAluno = row.numero;
     row.assinatura = row.assinaturaNomeDigitado ? {
@@ -5342,43 +5487,124 @@ app.get('/api/dashboard', async (req, res) => {
     });
   }
 
-  tenant.preInscricoes.forEach(p => {
-    if (p.estado !== 'Pendente') return;
-    const dias = diasPassados(p.dataPreInscricao);
-    if (dias !== null && dias >= 7) {
+  try {
+    const preAtrasoRes = await query(`
+      SELECT TOP (20) id, nome, data_pre_inscricao AS dataPreInscricao
+      FROM pre_inscricoes
+      WHERE escola_id = @e AND estado = 'Pendente' AND data_pre_inscricao <= DATEADD(day, -7, GETDATE())
+      ORDER BY data_pre_inscricao ASC
+    `, { e: req.escolaId });
+    (preAtrasoRes.recordset || []).forEach(p => {
       alertas.push({
         tipo: 'Pré-inscrição antiga',
         gravidade: 'media',
         texto: `${p.nome || 'Pré-inscrição'} está pendente há mais de 7 dias.`
       });
-    }
-  });
-
-  calcularEsperaTeoricaPratica(tenant).filter(r => r.diasEspera > 60).forEach(r => {
-    alertas.push({
-      tipo: 'Espera exame teórico → prática',
-      gravidade: 'alta',
-      texto: `${r.nome} (${r.espacoNome}) tem ${r.diasEspera} dias entre a aprovação no exame teórico (${formatarDataPt(r.dataExameAprovado)}) e a 1.ª aula prática.`
     });
-  });
+  } catch (err) {
+    (tenant.preInscricoes || []).forEach(p => {
+      if (p.estado !== 'Pendente') return;
+      const dias = diasPassados(p.dataPreInscricao);
+      if (dias !== null && dias >= 7) {
+        alertas.push({
+          tipo: 'Pré-inscrição antiga',
+          gravidade: 'media',
+          texto: `${p.nome || 'Pré-inscrição'} está pendente há mais de 7 dias.`
+        });
+      }
+    });
+  }
 
-  // CORRIGIDO: isTipo / isEstadoCancelada em vez de comparação estrita.
-  const totaisPorAlunoDia = {};
-  tenant.aulas.filter(a => isTipo(a, 'Prática') && !isEstadoCancelada(a.estado)).forEach(a => {
-    const chave = `${a.alunoId}|${a.data}`;
-    totaisPorAlunoDia[chave] = (totaisPorAlunoDia[chave] || 0) + (a.duracao || 50);
-  });
-  Object.entries(totaisPorAlunoDia).forEach(([chave, minutos]) => {
-    if (minutos > LIMITE_DIARIO_PRATICA_MIN) {
-      const [alunoId, dataAula] = chave.split('|');
-      const aluno = tenant.alunos.find(al => al.id === Number(alunoId));
+  try {
+    const esperaRes = await query(`
+      SELECT TOP (20)
+        a.id AS alunoId,
+        a.nome,
+        e.nome AS espacoNome,
+        CONVERT(VARCHAR(10), min_exame.data, 23) AS dataExameAprovado,
+        DATEDIFF(day, min_exame.data, min_aula.data) AS diasEspera
+      FROM (
+        SELECT aluno_id, MIN(data) AS data
+        FROM exames_marcacoes
+        WHERE escola_id = @e AND tipo = 'Teórico' AND resultado = 'Aprovado' AND data IS NOT NULL
+        GROUP BY aluno_id
+      ) min_exame
+      CROSS APPLY (
+        SELECT TOP 1 data
+        FROM aulas
+        WHERE escola_id = @e AND aluno_id = min_exame.aluno_id AND (tipo = 'Prática' OR LOWER(tipo) LIKE '%pr%tica%') AND (estado IS NULL OR estado NOT LIKE '%Cancelad%') AND data IS NOT NULL
+        ORDER BY data ASC, hora ASC
+      ) min_aula
+      JOIN alunos a ON a.id = min_exame.aluno_id
+      LEFT JOIN espacos e ON e.id = a.espaco_id
+      WHERE DATEDIFF(day, min_exame.data, min_aula.data) > 60
+      ORDER BY diasEspera DESC
+    `, { e: req.escolaId });
+
+    (esperaRes.recordset || []).forEach(r => {
+      alertas.push({
+        tipo: 'Espera exame teórico → prática',
+        gravidade: 'alta',
+        texto: `${r.nome} (${r.espacoNome || '—'}) tem ${r.diasEspera} dias entre a aprovação no exame teórico (${formatarDataPt(r.dataExameAprovado)}) e a 1.ª aula prática.`
+      });
+    });
+  } catch (err) {
+    if (tenant.aulas && tenant.aulas.length) {
+      calcularEsperaTeoricaPratica(tenant).filter(r => r.diasEspera > 60).slice(0, 20).forEach(r => {
+        alertas.push({
+          tipo: 'Espera exame teórico → prática',
+          gravidade: 'alta',
+          texto: `${r.nome} (${r.espacoNome}) tem ${r.diasEspera} dias entre a aprovação no exame teórico (${formatarDataPt(r.dataExameAprovado)}) e a 1.ª aula prática.`
+        });
+      });
+    }
+  }
+
+  try {
+    const limiteRes = await query(`
+      SELECT TOP (20)
+        au.aluno_id AS alunoId,
+        CONVERT(VARCHAR(10), au.data, 23) AS dataAula,
+        SUM(ISNULL(au.duracao, 50)) AS minutos,
+        a.nome AS alunoNome
+      FROM aulas au
+      LEFT JOIN alunos a ON a.id = au.aluno_id
+      WHERE au.escola_id = @e
+        AND (au.tipo = 'Prática' OR LOWER(au.tipo) LIKE '%pr%tica%')
+        AND (au.estado IS NULL OR au.estado NOT LIKE '%Cancelad%')
+        AND au.data >= DATEADD(day, -7, GETDATE())
+      GROUP BY au.aluno_id, au.data, a.nome
+      HAVING SUM(ISNULL(au.duracao, 50)) > @limiteMin
+      ORDER BY au.data DESC
+    `, { e: req.escolaId, limiteMin: LIMITE_DIARIO_PRATICA_MIN });
+
+    (limiteRes.recordset || []).forEach(r => {
       alertas.push({
         tipo: 'Limite diário excedido',
         gravidade: 'alta',
-        texto: `${aluno?.nome || 'Aluno'} tem ${(minutos / 60).toFixed(1)}h de prática marcadas em ${dataAula} (limite de referência: 4h/dia).`
+        texto: `${r.alunoNome || 'Aluno'} tem ${(r.minutos / 60).toFixed(1)}h de prática marcadas em ${r.dataAula} (limite de referência: 4h/dia).`
+      });
+    });
+  } catch (err) {
+    if (tenant.aulas && tenant.aulas.length) {
+      const totaisPorAlunoDia = {};
+      tenant.aulas.filter(a => isTipo(a, 'Prática') && !isEstadoCancelada(a.estado)).forEach(a => {
+        const chave = `${a.alunoId}|${a.data}`;
+        totaisPorAlunoDia[chave] = (totaisPorAlunoDia[chave] || 0) + (a.duracao || 50);
+      });
+      Object.entries(totaisPorAlunoDia).forEach(([chave, minutos]) => {
+        if (minutos > LIMITE_DIARIO_PRATICA_MIN) {
+          const [alunoId, dataAula] = chave.split('|');
+          const aluno = (tenant.alunos || []).find(al => al.id === Number(alunoId));
+          alertas.push({
+            tipo: 'Limite diário excedido',
+            gravidade: 'alta',
+            texto: `${aluno?.nome || 'Aluno'} tem ${(minutos / 60).toFixed(1)}h de prática marcadas em ${dataAula} (limite de referência: 4h/dia).`
+          });
+        }
       });
     }
-  });
+  }
 
     ok(res, {
       totalAlunos: Number(totalAlunos || 0),
