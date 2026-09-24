@@ -2097,6 +2097,44 @@ app.use('/api/contratos', collectionRoutes('contratos', {
     await sincronizarItensContaContrato(req, item.id, sync);
     await gravarParcelasPersonalizadas(item.id, sync.usaParcelasPersonalizadas ? sync.parcelasPersonalizadas : []);
   },
+  onDelete: async (atual, tenant, req) => {
+    // 1. Remover débitos pendentes da conta corrente gerados por este contrato
+    await query(
+      `DELETE FROM itens_conta WHERE origem_contrato_id = @id AND (estado = 'Pendente' OR estado IS NULL)`,
+      { id: atual.id }
+    );
+
+    // 2. Se houver algum item de conta já pago/liquidado com origem_contrato_id, desvincula a referência
+    await query(
+      `UPDATE itens_conta SET origem_contrato_id = NULL WHERE origem_contrato_id = @id`,
+      { id: atual.id }
+    );
+
+    // 3. Desvincular documentos fiscais eventualmente associados ao contrato
+    await query(
+      `UPDATE documentos_fiscais SET contrato_id = NULL WHERE contrato_id = @id`,
+      { id: atual.id }
+    );
+
+    // 4. Remover parcelas personalizadas associadas
+    await query(
+      `DELETE FROM contrato_parcelas_personalizadas WHERE contrato_id = @id`,
+      { id: atual.id }
+    );
+
+    return null;
+  },
+  onAfterDelete: async (removed, tenant, req) => {
+    if (removed?.alunoId) {
+      await atualizarEstadosContaCorrente(req, removed.alunoId);
+    }
+    if (tenant.itensConta) {
+      tenant.itensConta = tenant.itensConta.filter(it => it.origemContratoId !== removed?.id);
+    }
+    if (tenant.contratos) {
+      tenant.contratos = tenant.contratos.filter(c => c.id !== removed?.id);
+    }
+  },
   transformAll: async (rows, tenant, req) => {
     if (!rows || !rows.length) return rows || [];
     const ids = rows.map(r => r.id).filter(Boolean);
