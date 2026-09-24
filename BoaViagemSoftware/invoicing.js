@@ -52,10 +52,10 @@ ${escola.nome}`;
 function linhasFromPagamento(pagamento, escola) {
   const p = escola?.primavera || {};
   const artigo = (pagamento && (pagamento.artigo || pagamento.codigo)) || p.artigoFormacao || 'FORMACAO';
-  const descricao = (pagamento && pagamento.descricao) || 'Serviços de formação para condução';
+  const descricao = (pagamento && (pagamento.itemContaDescricao || pagamento.descricao || pagamento.itemDescricao)) || 'Serviços de formação para condução';
   return [{
     Artigo: artigo,
-    Quantidade: 1.0,
+    Quantidade: Number(pagamento?.quantidade) || 1.0,
     PrecoUnitario: Number(pagamento?.valor) || 0,
     Desconto: Number(pagamento?.desconto || 0),
     Armazem: p.armazem || 'A1',
@@ -129,21 +129,26 @@ async function emitirFatura(escola, tenant, aluno, pagamento, options = {}) {
  * Faturação de Contratos (FA)
  * ========================================================================= */
 function linhasFromContrato(contrato, escola) {
-  const p = escola.primavera;
+  const p = escola?.primavera || {};
   const itens = Array.isArray(contrato.itensCarta) && contrato.itensCarta.length
     ? contrato.itensCarta
     : [{ descricao: `Contrato de formação — categoria ${contrato.categoria || '—'}`, valor: contrato.valorTotal || 0, taxaIva: p.taxaIvaDefault ?? 23 }];
 
-  return itens.map(it => ({
-    Artigo: p.artigoFormacao || 'FORMACAO',
-    Quantidade: 1.0,
-    PrecoUnitario: Number(it.valor) || 0,
-    Desconto: 0,
-    Armazem: p.armazem || 'A1',
-    DescricaoNovoArtigo: it.descricao,
-    CodIvaNovoArtigo: codIvaFromTaxa(it.taxaIva, p.taxaIvaDefault),
-    IvaDedutivel: true
-  }));
+  return itens.map(it => {
+    const artigo = it.codigo || it.artigo || p.artigoFormacao || 'FORMACAO';
+    const descricao = it.descricao || 'Serviços de formação';
+    return {
+      Artigo: artigo,
+      Quantidade: Number(it.quantidade) || 1.0,
+      PrecoUnitario: Number(it.valorUnitario ?? it.valor) || 0,
+      Desconto: Number(it.desconto || 0),
+      Armazem: p.armazem || 'A1',
+      Descricao: descricao,
+      DescricaoNovoArtigo: descricao,
+      CodIvaNovoArtigo: codIvaFromTaxa(it.taxaIva, p.taxaIvaDefault),
+      IvaDedutivel: true
+    };
+  });
 }
 
 async function emitirFaturaContrato(escola, tenant, aluno, contrato, options = {}) {

@@ -2975,40 +2975,58 @@ async function handleEmissao(req, res, tipo) {
     const pagamento = dbRowToJs(pagamentoRow);
     const { tenant } = currentTenant(req);
 
-    // Garantir que o artigo e a taxa de IVA correspondem exatamente ao item da conta corrente
-    if (!pagamento.artigo) {
-      if (pagamento.item_conta_id || pagamento.itemContaId) {
-        const itemContaRes = await query(
-          'SELECT * FROM itens_conta WHERE id=@id AND escola_id=@escolaId',
-          { id: pagamento.item_conta_id || pagamento.itemContaId, escolaId: req.escolaId }
-        );
-        if (itemContaRes.recordset[0]) {
-          const it = dbRowToJs(itemContaRes.recordset[0]);
-          if (it.codigo) pagamento.artigo = it.codigo;
-          if (pagamento.taxaIva == null && it.taxaIva != null) pagamento.taxaIva = it.taxaIva;
-        }
+    // Garantir que o artigo, descrição e taxa de IVA correspondem exatamente ao item da conta corrente do aluno
+    let itemContaEncontrado = null;
+    if (pagamento.item_conta_id || pagamento.itemContaId) {
+      const itemContaRes = await query(
+        'SELECT * FROM itens_conta WHERE id=@id AND escola_id=@escolaId',
+        { id: pagamento.item_conta_id || pagamento.itemContaId, escolaId: req.escolaId }
+      );
+      if (itemContaRes.recordset[0]) {
+        itemContaEncontrado = dbRowToJs(itemContaRes.recordset[0]);
       }
-      if (!pagamento.artigo && pagamento.alunoId && pagamento.descricao) {
-        const itemContaDescRes = await query(
-          'SELECT TOP 1 * FROM itens_conta WHERE aluno_id=@alunoId AND escola_id=@escolaId AND (descricao=@desc OR @desc LIKE \'%\' + descricao + \'%\') ORDER BY id DESC',
-          { alunoId: pagamento.alunoId, escolaId: req.escolaId, desc: pagamento.descricao }
-        );
-        if (itemContaDescRes.recordset[0]) {
-          const it = dbRowToJs(itemContaDescRes.recordset[0]);
-          if (it.codigo) pagamento.artigo = it.codigo;
-          if (pagamento.taxaIva == null && it.taxaIva != null) pagamento.taxaIva = it.taxaIva;
-        }
+    }
+
+    if (!itemContaEncontrado && pagamento.alunoId && pagamento.artigo) {
+      const itemContaArtRes = await query(
+        'SELECT TOP 1 * FROM itens_conta WHERE aluno_id=@alunoId AND escola_id=@escolaId AND codigo=@artigo ORDER BY id DESC',
+        { alunoId: pagamento.alunoId, escolaId: req.escolaId, artigo: pagamento.artigo }
+      );
+      if (itemContaArtRes.recordset[0]) {
+        itemContaEncontrado = dbRowToJs(itemContaArtRes.recordset[0]);
       }
-      if (!pagamento.artigo && pagamento.descricao) {
-        const prodRes = await query(
-          'SELECT TOP 1 * FROM produtos WHERE escola_id=@escolaId AND (descricao=@desc OR @desc LIKE \'%\' + descricao + \'%\')',
-          { escolaId: req.escolaId, desc: pagamento.descricao }
-        );
-        if (prodRes.recordset[0]) {
-          const pr = dbRowToJs(prodRes.recordset[0]);
-          if (pr.codigo) pagamento.artigo = pr.codigo;
-          if (pagamento.taxaIva == null && pr.taxaIva != null) pagamento.taxaIva = pr.taxaIva;
-        }
+    }
+
+    if (!itemContaEncontrado && pagamento.alunoId && pagamento.descricao) {
+      const itemContaDescRes = await query(
+        'SELECT TOP 1 * FROM itens_conta WHERE aluno_id=@alunoId AND escola_id=@escolaId AND (descricao=@desc OR @desc LIKE \'%\' + descricao + \'%\' OR descricao LIKE \'%\' + @desc + \'%\') ORDER BY id DESC',
+        { alunoId: pagamento.alunoId, escolaId: req.escolaId, desc: pagamento.descricao }
+      );
+      if (itemContaDescRes.recordset[0]) {
+        itemContaEncontrado = dbRowToJs(itemContaDescRes.recordset[0]);
+      }
+    }
+
+    if (itemContaEncontrado) {
+      if (itemContaEncontrado.codigo) pagamento.artigo = itemContaEncontrado.codigo;
+      if (itemContaEncontrado.descricao) {
+        pagamento.descricao = itemContaEncontrado.descricao;
+        pagamento.itemContaDescricao = itemContaEncontrado.descricao;
+      }
+      if (itemContaEncontrado.taxaIva != null) pagamento.taxaIva = itemContaEncontrado.taxaIva;
+      if (itemContaEncontrado.quantidade != null) pagamento.quantidade = itemContaEncontrado.quantidade;
+    }
+
+    // Se o artigo ainda não está definido, tentar obter do catálogo de produtos pelo nome/descrição
+    if (!pagamento.artigo && pagamento.descricao) {
+      const prodRes = await query(
+        'SELECT TOP 1 * FROM produtos WHERE escola_id=@escolaId AND (descricao=@desc OR @desc LIKE \'%\' + descricao + \'%\' OR descricao LIKE \'%\' + @desc + \'%\')',
+        { escolaId: req.escolaId, desc: pagamento.descricao }
+      );
+      if (prodRes.recordset[0]) {
+        const pr = dbRowToJs(prodRes.recordset[0]);
+        if (pr.codigo) pagamento.artigo = pr.codigo;
+        if (pagamento.taxaIva == null && pr.taxaIva != null) pagamento.taxaIva = pr.taxaIva;
       }
     }
 
@@ -3021,7 +3039,16 @@ async function handleEmissao(req, res, tipo) {
       if (prodTaxaRes.recordset[0]) {
         const pr = dbRowToJs(prodTaxaRes.recordset[0]);
         if (pr.taxaIva != null) pagamento.taxaIva = pr.taxaIva;
+        if (!pagamento.descricao && pr.descricao) pagamento.descricao = pr.descricao;
       }
+    }
+
+    // Atualizar no registo do pagamento o artigo e descrição sincronizados caso tenham sido obtidos da conta corrente
+    if (pagamento.artigo && pagamento.id) {
+      await query(
+        'UPDATE pagamentos SET artigo=@artigo, descricao=@desc WHERE id=@id AND escola_id=@escolaId',
+        { artigo: pagamento.artigo, desc: pagamento.descricao, id: pagamento.id, escolaId: req.escolaId }
+      ).catch(() => {});
     }
 
     const serieDoc = await obterSerieParaAluno(req, aluno);
