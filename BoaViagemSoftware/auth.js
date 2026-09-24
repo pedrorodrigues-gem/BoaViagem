@@ -67,7 +67,7 @@ function invalidateTenantCache(escolaId) {
   }
 }
 
-const COLUNAS_LEVES_ALUNOS = 'id, escola_id, pessoa_id, espaco_id, numero_aluno, nome, email, telefone, categoria, estado, data_inscricao, aulas_teoricas, aulas_praticas, notas, data_nascimento, nif, tipo_documento, numero_documento, validade_documento, morada, codigo_postal, localidade, dispensa_modulos, desconto, tipo_desconto, cartas_categorias, atestado_data_emissao, atestado_data_validade, atestado_apto, psicotecnico_aplicavel, psicotecnico_data_emissao, psicotecnico_data_validade, imt_numero, imt_data_emissao, imt_data_validade';
+const COLUNAS_LEVES_ALUNOS = 'id, escola_id, pessoa_id, espaco_id, numero_aluno, nome, email, telefone, categoria, estado, data_inscricao, aulas_teoricas, aulas_praticas, notas, data_nascimento, nif, tipo_documento, numero_documento, validade_documento, morada, codigo_postal, localidade, dispensa_modulos, desconto, tipo_desconto, cartas_categorias, atestado_data_emissao, atestado_data_validade, atestado_apto, psicotecnico_aplicavel, psicotecnico_data_emissao, psicotecnico_data_validade, imt_numero, imt_data_emissao, imt_data_validade, plano_carta_id';
 const COLUNAS_LEVES_INSTRUTORES = 'id, escola_id, pessoa_id, nome, email, telefone, estado, cargo, nif, titulo_profissional_numero, titulo_profissional_validade';
 
 async function loadTenantForEscola(escolaId) {

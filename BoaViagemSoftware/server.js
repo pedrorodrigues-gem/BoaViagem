@@ -395,7 +395,7 @@ function fotoParaBuffer(value) {
    a uma coluna (ex: itensCarta, parcelasPersonalizadas, avisoRecibo),
    evitando erros de SQL "Invalid column name". */
 const COLUMNS_BY_TABLE = {
-  alunos: ['pessoa_id', 'espaco_id', 'numero_aluno', 'nome', 'email', 'telefone', 'categoria', 'estado', 'data_inscricao', 'aulas_teoricas', 'aulas_praticas', 'notas', 'data_nascimento', 'nif', 'tipo_documento', 'numero_documento', 'validade_documento', 'morada', 'codigo_postal', 'localidade', 'dispensa_modulos', 'desconto', 'tipo_desconto', 'cartas_categorias', 'foto', 'atestado_data_emissao', 'atestado_data_validade', 'atestado_apto', 'psicotecnico_aplicavel', 'psicotecnico_data_emissao', 'psicotecnico_data_validade', 'imt_numero', 'imt_data_emissao', 'imt_data_validade'],
+  alunos: ['pessoa_id', 'espaco_id', 'numero_aluno', 'nome', 'email', 'telefone', 'categoria', 'plano_carta_id', 'estado', 'data_inscricao', 'aulas_teoricas', 'aulas_praticas', 'notas', 'data_nascimento', 'nif', 'tipo_documento', 'numero_documento', 'validade_documento', 'morada', 'codigo_postal', 'localidade', 'dispensa_modulos', 'desconto', 'tipo_desconto', 'cartas_categorias', 'foto', 'atestado_data_emissao', 'atestado_data_validade', 'atestado_apto', 'psicotecnico_aplicavel', 'psicotecnico_data_emissao', 'psicotecnico_data_validade', 'imt_numero', 'imt_data_emissao', 'imt_data_validade'],
   instrutores: ['pessoa_id', 'nome', 'email', 'telefone', 'estado', 'cargo', 'nif', 'titulo_profissional_numero', 'titulo_profissional_validade', 'foto'],
   pessoas: ['nome', 'tipo_pessoa', 'origem_collection', 'origem_id', 'email', 'telefone', 'estado'],
   espacos: ['nome', 'observacoes', 'serie'],
@@ -482,7 +482,7 @@ function collectionTableName(name) {
 }
 
 const LISTAGEM_SEM_FOTO = {
-  alunos: 'pessoa_id, espaco_id, numero_aluno, nome, email, telefone, categoria, estado, data_inscricao, aulas_teoricas, aulas_praticas, notas, data_nascimento, nif, tipo_documento, numero_documento, validade_documento, morada, codigo_postal, localidade, dispensa_modulos, desconto, tipo_desconto, cartas_categorias, atestado_data_emissao, atestado_data_validade, atestado_apto, psicotecnico_aplicavel, psicotecnico_data_emissao, psicotecnico_data_validade, imt_numero, imt_data_emissao, imt_data_validade',
+  alunos: 'pessoa_id, espaco_id, numero_aluno, nome, email, telefone, categoria, plano_carta_id, estado, data_inscricao, aulas_teoricas, aulas_praticas, notas, data_nascimento, nif, tipo_documento, numero_documento, validade_documento, morada, codigo_postal, localidade, dispensa_modulos, desconto, tipo_desconto, cartas_categorias, atestado_data_emissao, atestado_data_validade, atestado_apto, psicotecnico_aplicavel, psicotecnico_data_emissao, psicotecnico_data_validade, imt_numero, imt_data_emissao, imt_data_validade',
   instrutores: 'pessoa_id, nome, email, telefone, estado, cargo, nif, titulo_profissional_numero, titulo_profissional_validade'
 };
 
@@ -1163,7 +1163,7 @@ app.get('/api/alunos/lista', async (req, res) => {
     const total = countResult.recordset[0]?.total || 0;
 
     const colunasComContagens = `
-      a.id, a.escola_id, a.pessoa_id, a.espaco_id, a.numero_aluno, a.nome, a.email, a.telefone, a.categoria,
+      a.id, a.escola_id, a.pessoa_id, a.espaco_id, a.numero_aluno, a.nome, a.email, a.telefone, a.categoria, a.plano_carta_id,
       a.estado, a.data_inscricao, a.aulas_teoricas, a.aulas_praticas, a.notas, a.data_nascimento, a.nif,
       a.tipo_documento, a.numero_documento, a.validade_documento, a.morada, a.codigo_postal, a.localidade,
       a.dispensa_modulos, a.desconto, a.tipo_desconto, a.cartas_categorias, a.atestado_data_emissao, a.atestado_data_validade, a.atestado_apto,
@@ -2688,7 +2688,7 @@ app.post('/api/preinscricoes', async (req, res) => {
 app.put('/api/preinscricoes/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!id) return badRequest(res, 'ID inválido.');
+    if (isNaN(id) || id < 0) return badRequest(res, 'ID inválido.');
     const preChk = await query('SELECT * FROM pre_inscricoes WHERE id=@id AND escola_id=@escolaId', { id, escolaId: req.escolaId });
     const existing = preChk.recordset[0];
     if (!existing) return notFound(res, 'Pré-inscrição não encontrada.');
@@ -2734,7 +2734,7 @@ app.put('/api/preinscricoes/:id', async (req, res) => {
 app.delete('/api/preinscricoes/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!id) return badRequest(res, 'ID inválido.');
+    if (isNaN(id) || id < 0) return badRequest(res, 'ID inválido.');
     await query('DELETE FROM pre_inscricoes WHERE id=@id AND escola_id=@escolaId', { id, escolaId: req.escolaId });
     invalidateTenantCache(req.escolaId);
     const { tenant } = currentTenant(req);
@@ -4122,6 +4122,14 @@ app.get('/api/relatorios/aluno/:id', async (req, res) => {
   if (estadoProcesso === 'expirado') alertasDocumentais.push('Licença de aprendizagem / processo IMT expirado.');
   else if (estadoProcesso === 'a_expirar') alertasDocumentais.push('Licença de aprendizagem a expirar em breve.');
 
+  const examesRes = await query(`
+    SELECT id, tipo, data, hora, hora_fim AS horaFim, local, estado, observacoes, resultado
+    FROM exames_marcacoes
+    WHERE aluno_id = @alunoId AND escola_id = @escolaId
+    ORDER BY data DESC, hora DESC
+  `, { alunoId, escolaId: req.escolaId });
+  const exames = (examesRes.recordset || []).map(dbRowToJs);
+
   ok(res, {
     aluno,
     requisito,
@@ -4137,7 +4145,8 @@ app.get('/api/relatorios/aluno/:id', async (req, res) => {
     },
     praticas,
     teoricasIndividuais,
-    turmasTeoricas: turmas
+    turmasTeoricas: turmas,
+    exames
   });
 });
 
@@ -5441,33 +5450,52 @@ app.get('/api/dashboard', async (req, res) => {
 
   const alertas = [];
 
-  // Alunos com documentos expirados ou a expirar (diretamente do SQL para suportar 500k alunos sem loop em memória)
+  // Alunos com documentos expirados ou a expirar (CC, Licença de Aprendizagem a chegar a 2 anos, Atestado, Psicotécnico)
   try {
     const alunosAlertasRes = await query(`
-      SELECT TOP (30) id, nome, atestado_data_validade, psicotecnico_aplicavel, psicotecnico_data_validade, imt_data_validade
+      SELECT TOP (40) id, nome, validade_documento, atestado_data_validade, psicotecnico_aplicavel, psicotecnico_data_validade, imt_data_validade, imt_data_emissao
       FROM alunos
       WHERE escola_id = @e AND (estado = 'Ativo' OR estado IS NULL)
         AND (
+          (validade_documento IS NOT NULL AND validade_documento <= DATEADD(day, 30, GETDATE())) OR
           (atestado_data_validade IS NOT NULL AND atestado_data_validade <= DATEADD(day, 30, GETDATE())) OR
           (psicotecnico_aplicavel = 1 AND psicotecnico_data_validade IS NOT NULL AND psicotecnico_data_validade <= DATEADD(day, 30, GETDATE())) OR
-          (imt_data_validade IS NOT NULL AND imt_data_validade <= DATEADD(day, 30, GETDATE()))
+          (imt_data_validade IS NOT NULL AND imt_data_validade <= DATEADD(day, 30, GETDATE())) OR
+          (imt_data_emissao IS NOT NULL AND DATEADD(year, 2, imt_data_emissao) <= DATEADD(day, 30, GETDATE()))
         )
     `, { e: req.escolaId });
 
     (alunosAlertasRes.recordset || []).forEach(a => {
+      // 1. Cartão de Cidadão / Documento de identificação
+      if (a.validade_documento) {
+        const estCC = estadoValidade(dstr(a.validade_documento).slice(0, 10));
+        const dtCC = formatarDataPt(dstr(a.validade_documento).slice(0, 10));
+        if (estCC === 'expirado') alertas.push({ tipo: 'Cartão de Cidadão', gravidade: 'alta', texto: `Cartão de Cidadão / documento de ${a.nome} está expirado (${dtCC}).` });
+        else if (estCC === 'a_expirar') alertas.push({ tipo: 'Cartão de Cidadão', gravidade: 'media', texto: `Cartão de Cidadão / documento de ${a.nome} expira em breve (${dtCC}).` });
+      }
+
+      // 2. Licença de Aprendizagem a caducar (a chegar a 2 anos ou expirada)
+      const dataLA = a.imt_data_validade 
+        ? dstr(a.imt_data_validade).slice(0, 10) 
+        : (a.imt_data_emissao ? new Date(new Date(a.imt_data_emissao).setFullYear(new Date(a.imt_data_emissao).getFullYear() + 2)).toISOString().slice(0, 10) : null);
+      if (dataLA) {
+        const estLA = estadoValidade(dataLA);
+        const dtLA = formatarDataPt(dataLA);
+        if (estLA === 'expirado') alertas.push({ tipo: 'Licença de aprendizagem', gravidade: 'alta', texto: `Licença de aprendizagem de ${a.nome} está expirada / ultrapassou os 2 anos (${dtLA}).` });
+        else if (estLA === 'a_expirar') alertas.push({ tipo: 'Licença de aprendizagem', gravidade: 'alta', texto: `Licença de aprendizagem de ${a.nome} a caducar / a chegar aos 2 anos (${dtLA}).` });
+      }
+
+      // 3. Atestado médico
       const estAtestado = estadoValidade(dstr(a.atestado_data_validade).slice(0, 10));
       if (estAtestado === 'expirado') alertas.push({ tipo: 'Atestado médico', gravidade: 'alta', texto: `Atestado médico de ${a.nome} está expirado.` });
       else if (estAtestado === 'a_expirar') alertas.push({ tipo: 'Atestado médico', gravidade: 'media', texto: `Atestado médico de ${a.nome} expira em breve.` });
 
+      // 4. Exame psicotécnico
       if (a.psicotecnico_aplicavel) {
         const estP = estadoValidade(dstr(a.psicotecnico_data_validade).slice(0, 10));
         if (estP === 'expirado') alertas.push({ tipo: 'Exame psicotécnico', gravidade: 'alta', texto: `Exame psicotécnico de ${a.nome} está expirado.` });
         else if (estP === 'a_expirar') alertas.push({ tipo: 'Exame psicotécnico', gravidade: 'media', texto: `Exame psicotécnico de ${a.nome} expira em breve.` });
       }
-
-      const estIMT = estadoValidade(dstr(a.imt_data_validade).slice(0, 10));
-      if (estIMT === 'expirado') alertas.push({ tipo: 'Processo IMT', gravidade: 'alta', texto: `Licença de aprendizagem de ${a.nome} está expirada.` });
-      else if (estIMT === 'a_expirar') alertas.push({ tipo: 'Processo IMT', gravidade: 'media', texto: `Licença de aprendizagem de ${a.nome} expira em breve.` });
     });
   } catch (err) {
     (tenant.alunos || []).slice(0, 50).forEach(a => {
@@ -5475,6 +5503,46 @@ app.get('/api/dashboard', async (req, res) => {
       if (est === 'expirado') alertas.push({ tipo: 'Atestado médico', gravidade: 'alta', texto: `Atestado médico de ${a.nome} está expirado.` });
       else if (est === 'a_expirar') alertas.push({ tipo: 'Atestado médico', gravidade: 'media', texto: `Atestado médico de ${a.nome} expira em breve.` });
     });
+  }
+
+  // Alunos ativos cujo exame de código aprovado está a chegar a 1 ano (ou já ultrapassou)
+  try {
+    const exameCodigo1AnoRes = await query(`
+      SELECT TOP (20)
+        a.id AS alunoId,
+        a.nome,
+        CONVERT(VARCHAR(10), ex.data, 23) AS dataExame,
+        DATEDIFF(day, ex.data, GETDATE()) AS diasPassados
+      FROM (
+        SELECT aluno_id, MAX(data) AS data
+        FROM exames_marcacoes
+        WHERE escola_id = @e AND tipo = 'Teórico' AND resultado = 'Aprovado' AND data IS NOT NULL
+        GROUP BY aluno_id
+      ) ex
+      JOIN alunos a ON a.id = ex.aluno_id
+      WHERE a.escola_id = @e AND (a.estado = 'Ativo' OR a.estado IS NULL)
+        AND DATEDIFF(day, ex.data, GETDATE()) >= 335
+      ORDER BY ex.data ASC
+    `, { e: req.escolaId });
+
+    (exameCodigo1AnoRes.recordset || []).forEach(r => {
+      const diasRestantes = 365 - r.diasPassados;
+      if (diasRestantes <= 0) {
+        alertas.push({
+          tipo: 'Exame de código caducado',
+          gravidade: 'alta',
+          texto: `Exame de código de ${r.nome} aprovado em ${formatarDataPt(r.dataExame)} caducou (ultrapassou 1 ano) e o aluno continua ativo.`
+        });
+      } else {
+        alertas.push({
+          tipo: 'Exame de código a caducar',
+          gravidade: 'alta',
+          texto: `Exame de código de ${r.nome} (aprovado em ${formatarDataPt(r.dataExame)}) caduca dentro de ${diasRestantes} dia${diasRestantes === 1 ? '' : 's'} (limite de 1 ano).`
+        });
+      }
+    });
+  } catch (err) {
+    console.warn('Aviso ao calcular alertas de exame de código a caducar:', err.message || err);
   }
 
   tenant.instrutores.forEach(i => {

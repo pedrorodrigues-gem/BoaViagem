@@ -183,6 +183,7 @@ CREATE TABLE alunos (
     email                       NVARCHAR(200) NULL,
     telefone                    NVARCHAR(50)  NULL,
     categoria                   NVARCHAR(10)  NULL,
+    plano_carta_id              INT NULL REFERENCES planos_carta(id),
     estado                      NVARCHAR(30)  NOT NULL DEFAULT 'Ativo',
     data_inscricao               DATE NULL,
     aulas_teoricas               INT  NULL,
