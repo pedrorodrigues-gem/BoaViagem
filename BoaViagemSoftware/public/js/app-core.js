@@ -487,9 +487,13 @@
     var hidden = form.querySelector('[name="alunoId"]');
     if (!input || !hidden) return;
     var sync = function () {
+      var prev = hidden.value;
       var nome = input.value.trim().toLowerCase();
       var aluno = state.alunos.find(function (a) { return String(a.nome || '').trim().toLowerCase() === nome; });
       hidden.value = aluno ? aluno.id : '';
+      if (String(hidden.value) !== String(prev)) {
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      }
     };
     input.addEventListener('input', sync);
     input.addEventListener('change', sync);

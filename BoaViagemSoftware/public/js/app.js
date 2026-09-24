@@ -922,7 +922,7 @@ function renderPreInscricoes() {
 }
 
 function abrirEditarPreInscricaoForm(id) {
-  const pre = (state.preInscricoes || []).find(p => p.id === id);
+  const pre = (state.preInscricoes || []).find(p => Number(p.id) === Number(id));
   if (!pre) return;
 
   const dataPre = pre.dataPreInscricao ? String(pre.dataPreInscricao).slice(0, 10) : '';
@@ -983,7 +983,7 @@ function abrirEditarPreInscricaoForm(id) {
         observacoes: fd.get('observacoes') || ''
       };
       try {
-        await api('PUT', `/api/preinscricoes/${id}`, payload);
+        await api('PUT', `/api/preinscricoes/${pre.id}`, payload);
         await refreshCollections(['preInscricoes']);
         closeModal();
         renderPreInscricoes();
@@ -996,7 +996,7 @@ function abrirEditarPreInscricaoForm(id) {
 }
 
 async function eliminarPreInscricao(id) {
-  const pre = (state.preInscricoes || []).find(p => p.id === id);
+  const pre = (state.preInscricoes || []).find(p => Number(p.id) === Number(id));
   if (!confirm(`Tens a certeza que desejas eliminar a pré-inscrição de ${pre ? pre.nome : 'este aluno'}?`)) return;
   try {
     await api('DELETE', `/api/preinscricoes/${id}`);
@@ -1010,7 +1010,7 @@ async function eliminarPreInscricao(id) {
 }
 
 function openConverterPreInscricaoForm(id) {
-  const pre = state.preInscricoes.find(p => p.id === id);
+  const pre = (state.preInscricoes || []).find(p => Number(p.id) === Number(id));
   if (!pre) return;
   openModal('Converter pré-inscrição em aluno', `
     <form id="converterPreForm">
@@ -3270,7 +3270,7 @@ function openAlunoForm(id) {
         </div>
         <div class="form-field">
           <label>Plano de preço da carta</label>
-          <select id="alunoPlanoCartaSelect"></select>
+          <select id="alunoPlanoCartaSelect" name="planoCartaId"></select>
         </div>
         <div class="form-field">
           <label>Desconto do aluno</label>
@@ -3336,7 +3336,7 @@ function openAlunoForm(id) {
   `);
 
   const form = document.getElementById('alunoForm');   // <-- moved up here
-  let alunoPlanoCartaIdAtual = null;
+  let alunoPlanoCartaIdAtual = item?.planoCartaId ? Number(item.planoCartaId) : null;
 
   async function atualizarPrevisaoCartaAluno() {
     const box = document.getElementById('alunoPrevisaoCarta');
@@ -3408,7 +3408,9 @@ function openAlunoForm(id) {
       tipoDocumento: fd.get('tipoDocumento'), numeroDocumento: fd.get('numeroDocumento'), validadeDocumento: fd.get('validadeDocumento'),
       morada: fd.get('morada'), codigoPostal: fd.get('codigoPostal'), localidade: fd.get('localidade'),
       email: fd.get('email'), telefone: fd.get('telefone'),
-      categoria: fd.get('categoria'), estado: fd.get('estado'), dataInscricao: fd.get('dataInscricao'),
+      categoria: fd.get('categoria'),
+      planoCartaId: alunoPlanoCartaIdAtual ? Number(alunoPlanoCartaIdAtual) : (Number(fd.get('planoCartaId')) || null),
+      estado: fd.get('estado'), dataInscricao: fd.get('dataInscricao'),
       desconto: Number(fd.get('desconto') || 0),
       tipoDesconto: fd.get('tipoDesconto') || 'valor',
       dispensaModulos: fd.get('dispensaModulos'),
@@ -5664,7 +5666,7 @@ async function exportarFolhaCaixaPdf(dataStr) {
 }
 
 function renderRelatorioAlunoHTML(rel) {
-  const { aluno, requisito, resumo, praticas, teoricasIndividuais, turmasTeoricas, alertasDocumentais } = rel;
+  const { aluno, requisito, resumo, praticas, teoricasIndividuais, turmasTeoricas, alertasDocumentais, exames } = rel;
   const mapaTeoricasRel = new Map();
   (turmasTeoricas || []).forEach(t => {
     const h = t.horaInicio || t.hora || '';
@@ -5752,7 +5754,7 @@ function renderRelatorioAlunoHTML(rel) {
     </div>
 
     <h4 style="margin-bottom:8px; font-size:14px">Aulas práticas frequentadas</h4>
-    <div class="table-wrap" style="box-shadow:none">
+    <div class="table-wrap" style="box-shadow:none; margin-bottom:18px">
       <table>
         <thead><tr><th>Data</th><th>Hora</th><th>Instrutor</th><th>Veículo</th><th>Módulo</th><th>Km</th><th>Duração</th><th>Estado</th></tr></thead>
         <tbody>
@@ -5762,6 +5764,36 @@ function renderRelatorioAlunoHTML(rel) {
               <td>${esc(p.veiculoMatricula)}</td><td>${esc(p.modulo || '—')}</td><td>${p.km ?? '—'}</td><td>${p.duracaoMin} min</td>
               <td><span class="${badgeClass(p.estado)}">${esc(p.estado)}</span></td>
             </tr>`).join('') : `<tr><td colspan="8" class="muted">Sem registos práticos.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+
+    <h4 style="margin-bottom:8px; font-size:14px">Exames marcados e resultados</h4>
+    <div class="table-wrap" style="box-shadow:none">
+      <table>
+        <thead><tr><th>Tipo</th><th>Data</th><th>Hora</th><th>Local</th><th>Estado</th><th>Resultado</th><th>Observações</th></tr></thead>
+        <tbody>
+          ${(exames && exames.length) ? exames.map(ex => {
+            let resBadge = '<span class="muted">—</span>';
+            if (ex.resultado === 'Aprovado') {
+              resBadge = '<span class="badge" style="background:#10b981;color:#fff;font-weight:600">✓ Aprovado</span>';
+            } else if (ex.resultado === 'Reprovado') {
+              resBadge = '<span class="badge" style="background:#ef4444;color:#fff;font-weight:600">✗ Reprovado</span>';
+            } else if (ex.resultado) {
+              resBadge = `<span class="badge">${esc(ex.resultado)}</span>`;
+            }
+            return `
+              <tr>
+                <td style="font-weight:600">${esc(ex.tipo || '—')}</td>
+                <td>${fmtDate(ex.data)}</td>
+                <td>${esc(ex.hora || '—')}${ex.horaFim ? ' - ' + esc(ex.horaFim) : ''}</td>
+                <td>${esc(ex.local || '—')}</td>
+                <td><span class="${badgeClass(ex.estado)}">${esc(ex.estado || '—')}</span></td>
+                <td>${resBadge}</td>
+                <td class="muted" style="font-size:12.5px">${esc(ex.observacoes || '—')}</td>
+              </tr>
+            `;
+          }).join('') : `<tr><td colspan="7" class="muted">Sem exames marcados ou realizados para este aluno.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -6607,22 +6639,26 @@ function openEscolaForm() {
   });
 }
 
-function openContratoForm(id) {
+function openContratoForm(id, initialAlunoId) {
   const item = id ? state.contratos.find(c => c.id === id) : null;
+  const initialAluno = (!item && initialAlunoId) ? findAluno(initialAlunoId) : null;
+  const alunoPreSelecionado = item ? findAluno(item.alunoId) : initialAluno;
   let planoAtual = item?.planoPagamento || PLANOS_PAGAMENTO[0];
   let parcelas = (item?.parcelasPersonalizadas && item.parcelasPersonalizadas.length)
     ? item.parcelasPersonalizadas.map(p => ({ descricao: p.descricao || '', valor: p.valor ?? '' }))
     : [{ descricao: '', valor: '' }];
   let itensCartaAtual = Array.isArray(item?.itensCarta) ? item.itensCarta : [];
   let valorCartaCalculado = Number(item?.valorCartaCalculado ?? item?.valorTotal ?? 0);
+  let categoriaInicial = item?.categoria || alunoPreSelecionado?.categoria || 'B';
+  let planoCartaIdAtual = item?.planoCartaId || alunoPreSelecionado?.planoCartaId || null;
 
   openModal(item ? 'Editar Contrato' : 'Novo Contrato', `
     <form id="contratoForm">
       <div class="form-grid">
-        ${renderAlunoPickerHtml(item?.alunoId, { label: 'Aluno', required: !item, hint: 'Escolhe um aluno existente ou escreve o nome completo.' })}
+        ${renderAlunoPickerHtml(item?.alunoId || alunoPreSelecionado?.id, { label: 'Aluno', required: !item, hint: 'Escolhe um aluno existente ou escreve o nome completo.' })}
         <div class="form-field">
           <label>Categoria</label>
-          <select name="categoria" id="contratoCategoriaSelect">${['A', 'A1', 'A2', 'AM', 'B', 'B1', 'C', 'C+E', 'D'].map(c => `<option ${item?.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}</select>        
+          <select name="categoria" id="contratoCategoriaSelect">${['A', 'A1', 'A2', 'AM', 'B', 'B1', 'C', 'C+E', 'D'].map(c => `<option ${categoriaInicial === c ? 'selected' : ''}>${c}</option>`).join('')}</select>        
         </div>
         <div class="form-field">
           <label>Plano de preço da carta</label>
@@ -6682,7 +6718,8 @@ function openContratoForm(id) {
     if (!categoria || !select) return [];
     try {
       const planos = await api('GET', `/api/planosCarta/${encodeURIComponent(categoria)}`);
-      if (resetToFirst || !planoCartaIdAtual || !planos.some(p => p.id === Number(planoCartaIdAtual))) {
+      const temPlanoAtual = planoCartaIdAtual && planos.some(p => p.id === Number(planoCartaIdAtual));
+      if (resetToFirst || !temPlanoAtual) {
         planoCartaIdAtual = planos[0]?.id || null;
       }
       select.innerHTML = planos.length
@@ -6962,26 +6999,46 @@ function openContratoForm(id) {
 
   const form = document.getElementById('contratoForm');
   bindAlunoPicker(form);
-  // Ao escolher/alterar o aluno: se ainda não houver contrato (novo), sugere
-  // a categoria do próprio aluno e preenche o desconto do aluno.
-  const alunoNomeInput = form.querySelector('[name="alunoNome"]');
-  if (alunoNomeInput) {
-    alunoNomeInput.addEventListener('change', () => {
-      const aluno = findAluno(alunoIdAtual());
-      if (!item) {
-        if (aluno?.categoria) document.getElementById('contratoCategoriaSelect').value = aluno.categoria;
-        if (aluno) {
-          const dInp = document.getElementById('contratoDescontoInput');
-          const tSel = document.getElementById('contratoTipoDescontoSelect');
-          if (dInp) dInp.value = aluno.desconto ?? 0;
-          if (tSel) tSel.value = aluno.tipoDesconto || 'valor';
-        }
+
+  async function sincronizarAlunoComContrato(aluno) {
+    if (!item && aluno) {
+      if (aluno.categoria) {
+        const catSelect = document.getElementById('contratoCategoriaSelect');
+        if (catSelect) catSelect.value = aluno.categoria;
       }
+      if (aluno.planoCartaId) {
+        planoCartaIdAtual = Number(aluno.planoCartaId);
+      }
+      const dInp = document.getElementById('contratoDescontoInput');
+      const tSel = document.getElementById('contratoTipoDescontoSelect');
+      if (dInp) dInp.value = aluno.desconto ?? 0;
+      if (tSel) tSel.value = aluno.tipoDesconto || 'valor';
+      await atualizarValorCarta(false);
+      renderAlertaContratoExistente();
+    }
+  }
+
+  const alunoNomeInput = form.querySelector('[name="alunoNome"]');
+  const alunoHiddenInput = form.querySelector('[name="alunoId"]');
+
+  const onAlunoChanged = () => {
+    const aluno = findAluno(alunoIdAtual());
+    if (aluno) {
+      sincronizarAlunoComContrato(aluno);
+    } else {
       atualizarValorCarta(true);
       renderAlertaContratoExistente();
-    });
+    }
+  };
+
+  if (alunoHiddenInput) alunoHiddenInput.addEventListener('change', onAlunoChanged);
+  if (alunoNomeInput) alunoNomeInput.addEventListener('change', onAlunoChanged);
+
+  if (!item && alunoPreSelecionado) {
+    sincronizarAlunoComContrato(alunoPreSelecionado);
+  } else {
+    atualizarValorCarta(true);
   }
-  atualizarValorCarta(true);
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
