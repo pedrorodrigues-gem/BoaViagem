@@ -6710,8 +6710,6 @@ function openContratoForm(id, initialAlunoId) {
     if (campo) campo.value = v;
   }
 
-  let planoCartaIdAtual = item?.planoCartaId || null;
-
   async function carregarPlanosCarta(resetToFirst) {
     const categoria = document.getElementById('contratoCategoriaSelect')?.value;
     const select = document.getElementById('planoCartaSelect');
