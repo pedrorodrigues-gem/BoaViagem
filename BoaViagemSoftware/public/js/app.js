@@ -38,7 +38,7 @@ function construirIndiceGlobal() {
   (state.contratos || []).forEach(c => {
     const al = findAluno(c.alunoId);
     idx.push({
-      tipo: 'Contrato', label: `Contrato · ${al?.nome || 'Aluno removido'}`, sub: `${c.categoria || '—'} · ${c.estado || ''}`,
+      tipo: 'Contrato', label: `Contrato N.º ${c.id} · ${al?.nome || 'Aluno removido'}`, sub: `${c.categoria || '—'} · ${c.estado || ''}`,
       acao: () => switchView('contratos')
     });
   });
@@ -4286,7 +4286,7 @@ function agruparItensConta(itens, contratos) {
     const contrato = (contratos || []).find(c => c.id === contratoId);
     const plano = its[0]?.origemPlano || contrato?.planoPagamento || 'Contrato';
     return {
-      titulo: `Contrato de formação${contrato ? ' — Categoria ' + esc(contrato.categoria || '—') : ''}`,
+      titulo: `Contrato N.º ${contratoId} de formação${contrato ? ' — Categoria ' + esc(contrato.categoria || '—') : ''}`,
       plano,
       itens: its.sort((a, b) => (a.ordem ?? a.id) - (b.ordem ?? b.id))
     };
@@ -6528,7 +6528,7 @@ function renderContratos() {
   }
   list = list.filter(c => {
     const aluno = findAluno(c.alunoId);
-    return !q || (aluno && aluno.nome.toLowerCase().includes(q));
+    return !q || (aluno && aluno.nome.toLowerCase().includes(q)) || String(c.id).includes(q);
   }).sort((a, b) => (b.dataCriacao || '').localeCompare(a.dataCriacao || ''));
 
   const pData = paginateList(list, 'contratos', 20);
@@ -6569,7 +6569,7 @@ function renderContratos() {
         <tbody>
           ${pageItems.map(c => {
     const aluno = findAluno(c.alunoId);
-    const numContrato = aluno?.numeroAluno ?? aluno?.id ?? c.numero ?? c.id;
+    const numContrato = c.id ?? c.numero;
     return `
             <tr>
               <td>
@@ -6577,7 +6577,7 @@ function renderContratos() {
               </td>
               <td>
                 <div class="cell-primary">${esc(aluno?.nome || 'Aluno removido')}</div>
-                <div class="cell-sub">Criado em ${fmtDate(c.dataCriacao)}</div>
+                <div class="cell-sub">${aluno ? `Aluno Nº ${esc(aluno.numeroAluno ?? aluno.id)} · ` : ''}Criado em ${fmtDate(c.dataCriacao)}</div>
               </td>
               <td>${esc(c.categoria || '—')}</td>
               <td>${fmtMoney(c.valorTotal)}</td>
@@ -6652,7 +6652,7 @@ function openContratoForm(id, initialAlunoId) {
   let categoriaInicial = item?.categoria || alunoPreSelecionado?.categoria || 'B';
   let planoCartaIdAtual = item?.planoCartaId || alunoPreSelecionado?.planoCartaId || null;
 
-  openModal(item ? 'Editar Contrato' : 'Novo Contrato', `
+  openModal(item ? `Editar Contrato N.º ${item.id}` : 'Novo Contrato', `
     <form id="contratoForm">
       <div class="form-grid">
         ${renderAlunoPickerHtml(item?.alunoId || alunoPreSelecionado?.id, { label: 'Aluno', required: !item, hint: 'Escolhe um aluno existente ou escreve o nome completo.' })}
@@ -7106,7 +7106,7 @@ function openContratoForm(id, initialAlunoId) {
 function gerarTextoContrato(contrato) {
   const aluno = findAluno(contrato.alunoId) || {};
   const escola = state.escola || {};
-  const numContrato = aluno.numeroAluno ?? aluno.id ?? contrato.numero ?? contrato.id ?? '—';
+  const numContrato = contrato.id ?? contrato.numero ?? '—';
 
   // Data de assinatura por extenso
   const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -7339,7 +7339,7 @@ function abrirAssinaturaContrato(id) {
   const contrato = state.contratos.find(c => c.id === id);
   if (!contrato) return;
   const aluno = findAluno(contrato.alunoId);
-  const numContrato = aluno ? (aluno.numeroAluno ?? aluno.id) : (contrato.numero ?? contrato.id);
+  const numContrato = contrato.id ?? contrato.numero ?? '—';
   const texto = gerarTextoContrato(contrato);
   const idade = calcularIdadeAluno(aluno);
   const eMenor = idade !== null && idade < 18;
@@ -7517,6 +7517,10 @@ function imprimirContrato(id) {
   const contrato = state.contratos.find(c => c.id === id);
   if (!contrato) return;
   let texto = contrato.textoContrato || gerarTextoContrato(contrato);
+  if (contrato.id) {
+    texto = texto.replace(/Contrato<br>\s*n\.º\s*[^<]*/i, `Contrato<br>n.º ${contrato.id}`);
+    texto = texto.replace(/Contrato\s+N\.º\s*(\d+|—)/gi, `Contrato N.º ${contrato.id}`);
+  }
 
   // A caixa da assinatura tem sempre 65px de altura fixa (esteja vazia ou
   // preenchida), para a linha "____" ficar sempre alinhada nas 3 colunas,
