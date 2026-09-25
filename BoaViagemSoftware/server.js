@@ -77,6 +77,9 @@ async function ensureSchemaColumns() {
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('pagamentos') AND name = 'item_conta_id')
         ALTER TABLE pagamentos ADD item_conta_id INT NULL;
 
+      IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('pagamentos') AND name = 'linhas_json')
+        ALTER TABLE pagamentos ADD linhas_json NVARCHAR(MAX) NULL;
+
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('users') AND name = 'aluno_id')
         ALTER TABLE users ADD aluno_id INT NULL;
 
@@ -411,7 +414,7 @@ const COLUMNS_BY_TABLE = {
   requisitos: ['categoria', 'horas_teoricas_min', 'horas_praticas_min', 'km_pratica_min'],
   produtos: ['codigo', 'descricao', 'categoria', 'valor', 'descontavel', 'taxa_iva'],
   contratos: ['aluno_id', 'categoria', 'plano_carta_id', 'plano_pagamento', 'numero_prestacoes', 'estado', 'valor_carta_calculado', 'desconto_aplicado', 'tipo_desconto', 'valor_total', 'texto_contrato', 'assinatura_nome_digitado', 'assinatura_data_hora', 'assinatura_imagem', 'assinatura_tutor_nome_digitado', 'assinatura_tutor_imagem', 'pdf_assinado_filename', 'pdf_assinado_uploaded_at', 'pdf_assinado_tamanho_bytes'],
-  pagamentos: ['aluno_id', 'valor', 'data', 'descricao', 'taxa_iva', 'estado', 'modo_pagamento', 'nao_faturar', 'artigo', 'item_conta_id', 'faturacao_tipo', 'faturacao_serie', 'faturacao_numero', 'faturacao_entidade', 'faturacao_nome', 'faturacao_nif', 'faturacao_data_emissao'],
+  pagamentos: ['aluno_id', 'valor', 'data', 'descricao', 'taxa_iva', 'estado', 'modo_pagamento', 'nao_faturar', 'artigo', 'item_conta_id', 'faturacao_tipo', 'faturacao_serie', 'faturacao_numero', 'faturacao_entidade', 'faturacao_nome', 'faturacao_nif', 'faturacao_data_emissao', 'linhas_json'],
   itens_conta: ['aluno_id', 'origem_contrato_id', 'codigo', 'descricao', 'categoria', 'valor', 'valor_unitario', 'quantidade', 'desconto', 'descontavel', 'taxa_iva', 'estado', 'origem_plano', 'ordem', 'observacoes'],
   pre_inscricoes: ['nome', 'email', 'categoria', 'desconto', 'estado', 'observacoes', 'data_pre_inscricao', 'data_inscricao', 'aluno_id'],
   exames_marcacoes: ['aluno_id', 'tipo', 'data', 'hora', 'hora_fim', 'duracao', 'local', 'estado', 'observacoes', 'resultado'],
@@ -1611,9 +1614,55 @@ app.get('/api/pagamentos/anos', async (req, res) => {
 });
 
 app.use('/api/pagamentos', collectionRoutes('pagamentos', {
-  validate: (p) => (!p.valor ? 'O valor do pagamento é obrigatório' : null),
+  validate: async (p, tenant, req) => {
+    const valorPago = Number(p.valor);
+    if (!valorPago || valorPago <= 0) return 'O valor do pagamento é obrigatório e deve ser superior a zero';
+
+    // Regra: só permitir até ao total do valor em dívida do aluno
+    if (p.alunoId && !p.naoFaturar && !p.nao_faturar) {
+      try {
+        const alunoId = Number(p.alunoId);
+        const [itensRes, pagamentosRes] = await Promise.all([
+          query('SELECT * FROM itens_conta WHERE aluno_id = @alunoId AND escola_id = @escolaId ORDER BY ordem, id', { alunoId, escolaId: req.escolaId }),
+          query('SELECT * FROM pagamentos WHERE aluno_id = @alunoId AND escola_id = @escolaId', { alunoId, escolaId: req.escolaId })
+        ]);
+        const itens = (itensRes.recordset || []).map(dbRowToJs);
+        if (itens.length > 0) {
+          const pags = (pagamentosRes.recordset || []).map(dbRowToJs);
+          const pagsFiltrados = p.id ? pags.filter(x => x.id !== Number(p.id)) : pags;
+          const { saldoTotal } = calcularContaCorrente(itens, pagsFiltrados);
+          if (saldoTotal <= 0 && valorPago > 0) {
+            return `O aluno não possui valor em dívida pendente (0.00 €). Só é permitido o total do valor em dívida.`;
+          }
+          if (valorPago > (saldoTotal + 0.01)) {
+            return `O valor indicado (${valorPago.toFixed(2)} €) excede o total do valor em dívida do aluno (${saldoTotal.toFixed(2)} €). Só é permitido o total do valor em dívida.`;
+          }
+        }
+      } catch (err) {
+        console.warn('Aviso ao validar dívida do aluno:', err.message || err);
+      }
+    }
+    return null;
+  },
   onCreate: async (item, tenant, req) => {
     if (!item.modoPagamento && !item.modo_pagamento) item.modoPagamento = 'PGNUM';
+    if (item.linhas && typeof item.linhas !== 'string') {
+      item.linhas_json = JSON.stringify(item.linhas);
+    }
+    if (item.alunoId && (!item.linhas || !item.linhas.length) && !item.naoFaturar && !item.nao_faturar) {
+      try {
+        const alunoId = Number(item.alunoId);
+        const itensRes = await query('SELECT * FROM itens_conta WHERE aluno_id = @alunoId AND escola_id = @escolaId ORDER BY ordem, id', { alunoId, escolaId: req.escolaId });
+        const itens = (itensRes.recordset || []).map(dbRowToJs);
+        if (itens.length > 0) {
+          const dist = invoicing.distribuirValorPorItens(itens, Number(item.valor), item.itemContaId || item.item_conta_id);
+          if (dist.linhas && dist.linhas.length > 0) {
+            item.linhas_json = JSON.stringify(dist.linhas);
+            item.linhas = dist.linhas;
+          }
+        }
+      } catch (e) {}
+    }
     if (!item.naoFaturar && !item.nao_faturar) {
       await tentarEmitirReciboAutomatico(item, tenant, req);
     }
@@ -1621,6 +1670,9 @@ app.use('/api/pagamentos', collectionRoutes('pagamentos', {
   onAfterCreate: async (saved, tenant, req) => { if (saved.alunoId) await atualizarEstadosContaCorrente(req, saved.alunoId); return saved; },
   onUpdate: async (atualizado, anterior, tenant, req) => {
     if (!atualizado.modoPagamento && !atualizado.modo_pagamento) atualizado.modoPagamento = anterior?.modoPagamento || 'PGNUM';
+    if (atualizado.linhas && typeof atualizado.linhas !== 'string') {
+      atualizado.linhas_json = JSON.stringify(atualizado.linhas);
+    }
     if (atualizado.estado === 'Pago' && anterior.estado !== 'Pago' && !atualizado.naoFaturar && !atualizado.nao_faturar) {
       await tentarEmitirReciboAutomatico(atualizado, tenant, req);
     }
@@ -3078,8 +3130,35 @@ async function handleEmissao(req, res, tipo) {
       ).catch(() => {});
     }
 
+    // Obter linhas para faturação (ou distribuir artigos se o valor for superior ao do item escolhido)
+    let linhasParaFaturar = req.body?.linhas || null;
+    if (!linhasParaFaturar && (pagamento.linhasJson || pagamento.linhas_json)) {
+      try {
+        linhasParaFaturar = JSON.parse(pagamento.linhasJson || pagamento.linhas_json);
+      } catch (e) {}
+    }
+    if (!linhasParaFaturar && pagamento.alunoId && (tipo === 'FA' || tipo === 'FR')) {
+      try {
+        const itensRes = await query(
+          'SELECT * FROM itens_conta WHERE aluno_id=@alunoId AND escola_id=@escolaId ORDER BY ordem, id',
+          { alunoId: pagamento.alunoId, escolaId: req.escolaId }
+        );
+        const itensConta = (itensRes.recordset || []).map(dbRowToJs);
+        if (itensConta.length > 0) {
+          const dist = invoicing.distribuirValorPorItens(itensConta, Number(pagamento.valor), pagamento.item_conta_id || pagamento.itemContaId || itemContaEncontrado?.id);
+          if (dist.linhas && dist.linhas.length > 0) {
+            linhasParaFaturar = dist.linhas;
+          }
+        }
+      } catch (e) {}
+    }
+
     const serieDoc = await obterSerieParaAluno(req, aluno);
     const options = { serie: serieDoc, ...(req.body || {}), nomeFaturar, nifFaturar: nifEfetivo };
+    if (linhasParaFaturar && Array.isArray(linhasParaFaturar) && linhasParaFaturar.length > 0) {
+      options.linhas = linhasParaFaturar;
+      pagamento.linhas = linhasParaFaturar;
+    }
     let out;
     try {
       if (tipo === 'FA') out = await invoicing.emitirFatura(req.escola, tenant, aluno, pagamento, options);

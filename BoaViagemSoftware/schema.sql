@@ -191,7 +191,7 @@ CREATE TABLE alunos (
     notas                       NVARCHAR(MAX) NULL,
     data_nascimento              DATE NULL,
     nif                          NVARCHAR(20) NULL,
-    tipo_documento                NVARCHAR(10) NULL,
+    tipo_documento                NVARCHAR(50) NULL,
     numero_documento              NVARCHAR(50) NULL,
     validade_documento            DATE NULL,
     morada                       NVARCHAR(300) NULL,
@@ -350,7 +350,8 @@ CREATE TABLE pagamentos (
     faturacao_entidade           NVARCHAR(100) NULL,
     faturacao_nome               NVARCHAR(200) NULL,
     faturacao_nif                NVARCHAR(50) NULL,
-    faturacao_data_emissao        DATETIME2 NULL
+    faturacao_data_emissao        DATETIME2 NULL,
+    linhas_json                  NVARCHAR(MAX) NULL
 );
 GO
 

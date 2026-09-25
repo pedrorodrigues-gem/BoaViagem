@@ -49,8 +49,102 @@ Com os melhores cumprimentos,
 ${escola.nome}`;
 }
 
+/**
+ * Distribui o valor de um pagamento pelos itens da conta corrente.
+ * Se o valor pago for maior que o valor do item escolhido (ex: pagou 300€ e o item é 100€),
+ * insere os outros artigos em dívida até perfazer o valor pago (300€).
+ * Se o valor total em dívida for inferior ao valor pago, permite apenas o total em dívida.
+ */
+function distribuirValorPorItens(itensConta, valorPago, itemEscolhidoId) {
+  const valorTotalPago = Number(valorPago) || 0;
+  if (valorTotalPago <= 0 || !Array.isArray(itensConta) || !itensConta.length) {
+    return { linhas: [], totalDivida: 0, sobra: 0, totalAlocado: 0, excedeuDivida: false };
+  }
+
+  // Ordenar itens: colocar o item escolhido em primeiro lugar (se existir),
+  // seguido dos restantes itens por ordem/id
+  const itensOrdenados = [...itensConta].sort((a, b) => {
+    if (itemEscolhidoId) {
+      if (a.id === itemEscolhidoId) return -1;
+      if (b.id === itemEscolhidoId) return 1;
+    }
+    return (a.ordem ?? a.id) - (b.ordem ?? b.id);
+  });
+
+  // Calcular total em dívida dos itens
+  let totalDivida = 0;
+  itensOrdenados.forEach(it => {
+    const pendente = it.saldo !== undefined ? Number(it.saldo) : Number(it.valor);
+    if (pendente > 0) totalDivida += pendente;
+  });
+  totalDivida = +totalDivida.toFixed(2);
+
+  // Se houver dívida total calculada e o valor pago a exceder, permitir apenas o total em dívida
+  const excedeuDivida = totalDivida > 0 && valorTotalPago > totalDivida;
+  const valorEfetivo = excedeuDivida ? totalDivida : valorTotalPago;
+
+  let restante = valorEfetivo;
+  const linhas = [];
+
+  for (const it of itensOrdenados) {
+    if (restante <= 0.0001) break;
+    const pendente = it.saldo !== undefined ? Number(it.saldo) : Number(it.valor);
+    if (pendente <= 0.0001 && it.id !== itemEscolhidoId) continue;
+
+    const capacidadeItem = pendente > 0 ? pendente : (Number(it.valor) || restante);
+    const aplicar = +Math.min(restante, capacidadeItem).toFixed(2);
+    if (aplicar <= 0.0001) continue;
+
+    linhas.push({
+      itemContaId: it.id,
+      artigo: it.codigo || it.artigo || 'FORMACAO',
+      descricao: it.descricao || 'Serviços de formação',
+      valor: aplicar,
+      taxaIva: it.taxaIva != null ? Number(it.taxaIva) : 18,
+      quantidade: 1.0
+    });
+
+    restante = +(restante - aplicar).toFixed(2);
+  }
+
+  const totalAlocado = +linhas.reduce((acc, l) => acc + l.valor, 0).toFixed(2);
+  const sobra = +(valorTotalPago - totalAlocado).toFixed(2);
+
+  return {
+    linhas,
+    totalDivida,
+    valorPermitido: valorEfetivo,
+    excedeuDivida,
+    totalAlocado,
+    sobra
+  };
+}
+
 function linhasFromPagamento(pagamento, escola) {
   const p = escola?.primavera || {};
+  const linhasArray = (pagamento && Array.isArray(pagamento.linhas) && pagamento.linhas.length)
+    ? pagamento.linhas
+    : (pagamento && Array.isArray(pagamento.itensFaturar) && pagamento.itensFaturar.length ? pagamento.itensFaturar : null);
+
+  if (linhasArray) {
+    return linhasArray.map(l => {
+      const artigo = l.artigo || l.codigo || p.artigoFormacao || 'FORMACAO';
+      const descricao = l.descricao || l.itemDescricao || 'Serviços de formação para condução';
+      const taxa = l.taxaIva != null ? l.taxaIva : (pagamento.taxaIva != null ? pagamento.taxaIva : (p.taxaIvaDefault ?? 18));
+      return {
+        Artigo: artigo,
+        Quantidade: Number(l.quantidade) || 1.0,
+        PrecoUnitario: Number(l.valor ?? l.precoUnitario) || 0,
+        Desconto: Number(l.desconto || 0),
+        Armazem: p.armazem || 'A1',
+        Descricao: descricao,
+        DescricaoNovoArtigo: descricao,
+        CodIvaNovoArtigo: codIvaFromTaxa(taxa, p.taxaIvaDefault),
+        IvaDedutivel: false
+      };
+    });
+  }
+
   const artigo = (pagamento && (pagamento.artigo || pagamento.codigo)) || p.artigoFormacao || 'FORMACAO';
   const descricao = (pagamento && (pagamento.itemContaDescricao || pagamento.descricao || pagamento.itemDescricao)) || 'Serviços de formação para condução';
   return [{
@@ -99,7 +193,9 @@ function cabecalhoComum(escola, aluno, pagamento, tipoDocumento, entidade, refer
       Assunto: `${tipoDocumento} · ${escola.nome} — ${referenciaExterna}`,
       CorpoEmail: corpoEmail(escola, tipoLabel)
     },
-    Linhas: linhasFromPagamento(pagamento, escola)
+    Linhas: (options && Array.isArray(options.linhas) && options.linhas.length)
+      ? (options.linhas[0]?.Artigo ? options.linhas : linhasFromPagamento({ ...pagamento, linhas: options.linhas }, escola))
+      : linhasFromPagamento(pagamento, escola)
   };
 }
 
@@ -260,6 +356,7 @@ async function emitirReciboContrato(escola, tenant, aluno, contrato, pagamento, 
 }
 
 module.exports = {
+  distribuirValorPorItens,
   emitirFaturaRecibo,
   obterEntidadeAluno,
   emitirFatura,
