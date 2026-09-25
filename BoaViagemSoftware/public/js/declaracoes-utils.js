@@ -96,14 +96,14 @@
     },
     {
       id: 'transferencia',
-      label: 'Comprovativo de Transferência',
+      label: 'Transferência',
       descricao: 'Certidão / declaração de transferência de processo de condução para outra escola ou DGV',
       icone: '🔄',
       categoriaTipo: 'estado'
     },
     {
       id: 'cancelamento',
-      label: 'Comprovativo de Cancelamento',
+      label: 'Cancelamento',
       descricao: 'Declaração oficial de cancelamento / anulação de inscrição na escola',
       icone: '🛑',
       categoriaTipo: 'estado'
