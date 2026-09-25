@@ -1444,6 +1444,8 @@ function bindUploadDocumentoAluno(alunoId, rerenderFn) {
     const file = form.querySelector('[name="ficheiro"]').files[0];
     if (!file) return;
     if (file.size > 15 * 1024 * 1024) { toast('O ficheiro não pode exceder 15MB.', 'error'); return; }
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'A carregar…'; }
     try {
       const dataBase64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -1451,11 +1453,17 @@ function bindUploadDocumentoAluno(alunoId, rerenderFn) {
         reader.onerror = () => reject(new Error('Não foi possível ler o ficheiro.'));
         reader.readAsDataURL(file);
       });
-      await api('POST', `/api/alunos/${alunoId}/documentos`, { nome, filename: file.name, mimeType: file.type, dataBase64 });
-      await refreshCollections(['alunos']);
+      const res = await api('POST', `/api/alunos/${alunoId}/documentos`, { nome, filename: file.name, mimeType: file.type, dataBase64 });
+      const aluno = findAluno(alunoId);
+      if (aluno && res && res.documentos) {
+        aluno.documentos = res.documentos;
+      }
       toast('Documento carregado.');
-      rerenderFn();
-    } catch (err) { toast(err.message, 'error'); }
+      await abrirDocumentosAlunoModal(alunoId);
+    } catch (err) {
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Carregar documento'; }
+      toast(err.message, 'error');
+    }
   });
 }
 
@@ -1463,20 +1471,30 @@ async function removerDocumentoAluno(alunoId, docId) {
   if (!confirm('Tens a certeza que queres remover este documento?')) return;
   try {
     await api('DELETE', `/api/alunos/${alunoId}/documentos/${docId}`);
-    await refreshCollections(['alunos']);
+    const aluno = findAluno(alunoId);
+    if (aluno && aluno.documentos) {
+      aluno.documentos = aluno.documentos.filter(d => d.id !== docId);
+    }
     toast('Documento removido.');
-    abrirDocumentosAlunoModal(alunoId);
+    await abrirDocumentosAlunoModal(alunoId);
   } catch (err) { toast(err.message, 'error'); }
 }
 
-function abrirDocumentosAlunoModal(alunoId) {
+async function abrirDocumentosAlunoModal(alunoId) {
   const aluno = findAluno(alunoId);
   if (!aluno) return;
-  openModal(`Documentos · ${aluno.nome}`, `
-    ${renderDocumentosAlunoHTML(aluno)}
-    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Fechar</button></div>
-  `);
-  bindUploadDocumentoAluno(alunoId, () => abrirDocumentosAlunoModal(alunoId));
+  openModal(`Documentos · ${esc(aluno.nome)}`, `<div class="muted" style="padding:20px; text-align:center">A carregar documentos...</div>`);
+  try {
+    const res = await api('GET', `/api/alunos/${alunoId}/documentos`);
+    aluno.documentos = res.documentos || [];
+    openModal(`Documentos · ${esc(aluno.nome)}`, `
+      ${renderDocumentosAlunoHTML(aluno)}
+      <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Fechar</button></div>
+    `);
+    bindUploadDocumentoAluno(alunoId, () => abrirDocumentosAlunoModal(alunoId));
+  } catch (err) {
+    openModal(`Documentos · ${esc(aluno.nome)}`, emptyState('Erro ao carregar documentos', err.message));
+  }
 }
 
 /* ==================== ALUNOS ==================== */
@@ -1601,7 +1619,6 @@ function renderAlunos() {
       </div>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         <button type="button" class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(null, 'modC3')" title="Preencher pauta oficial SCTT Mod. C3 para requerimento de licença de aprendizagem">📄 Mod. C3 (Licença Aprendizagem)</button>
-        <button type="button" class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(null, 'mod1IMT')" title="Preencher impresso oficial Modelo 1 - IMT">📄 Modelo 1 - IMT</button>
       </div>
     </div>
     <div id="alunosTableWrap" class="table-wrap">
@@ -3222,6 +3239,9 @@ function openAlunoForm(id) {
   const am = item?.atestadoMedico || {};
   const ep = item?.examePsicotecnico || {};
   const pi = item?.processoIMT || {};
+  const piNumero = pi.numero ?? item?.imtNumero ?? item?.numeroLA ?? '';
+  const piDataEmissao = pi.dataEmissao ?? item?.imtDataEmissao ?? '';
+  const piDataValidade = pi.dataValidade ?? item?.imtDataValidade ?? '';
 
   openModal(item ? `Editar Aluno · Nº ${item.numeroAluno ?? item.id}` : 'Novo Aluno', `
     <form id="alunoForm">
@@ -3242,9 +3262,9 @@ function openAlunoForm(id) {
         <div class="form-field"><label>NIF</label><input name="nif" value="${esc(item?.nif || '')}" maxlength="9" placeholder="123456789"></div>
         <div class="form-field">
           <label>Tipo de documento</label>
-          <select name="tipoDocumento">${['CC', 'Passaporte'].map(t => `<option ${item?.tipoDocumento === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+          <select name="tipoDocumento">${['CC', 'Passaporte', 'Título de Residência'].map(t => `<option ${item?.tipoDocumento === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
         </div>
-        <div class="form-field"><label>N.º do documento (CC / Passaporte) *</label><input name="numeroDocumento" required placeholder="Ex: 12345678" value="${esc(item?.numeroDocumento || '')}"></div>
+        <div class="form-field"><label>N.º do documento (CC / Passaporte / Título de Residência) *</label><input name="numeroDocumento" required placeholder="Ex: 12345678" value="${esc(item?.numeroDocumento || '')}"></div>
         <div class="form-field"><label>Validade do documento</label><input name="validadeDocumento" type="date" value="${item?.validadeDocumento || ''}"></div>
         <div class="form-field full"><label>Morada</label><input name="morada" value="${esc(item?.morada || '')}"></div>
         <div class="form-field"><label>Código postal</label><input name="codigoPostal" value="${esc(item?.codigoPostal || '')}" placeholder="0000-000"></div>
@@ -3295,9 +3315,9 @@ function openAlunoForm(id) {
         <div class="form-field"><label>Data de inscrição</label><input name="dataInscricao" type="date" value="${item?.dataInscricao || ''}"></div>
         <div class="form-field full"><label>Dispensa de módulos (ex: já detém categoria B)</label><input name="dispensaModulos" value="${esc(item?.dispensaModulos || '')}" placeholder="Ex: dispensa de módulos teóricos comuns"></div>
         <div class="form-field full"><label>Cartas de condução já detidas (categoria, n.º da carta, emissão e validade)</label><div id="cartasCategoriasList"></div><button type="button" class="btn btn-ghost btn-sm" id="btnAdicionarCartaCategoria">+ Adicionar categoria</button></div>
-        <div class="form-field"><label>N.º processo / licença de aprendizagem (IMT)</label><input name="pi_numero" value="${esc(pi.numero || '')}"></div>
-        <div class="form-field"><label>Data de emissão</label><input name="pi_dataEmissao" type="date" value="${pi.dataEmissao || ''}"></div>
-        <div class="form-field"><label>Data de validade</label><input name="pi_dataValidade" type="date" value="${pi.dataValidade || ''}"></div>
+        <div class="form-field"><label>N.º licença de aprendizagem / processo (IMT)</label><input name="pi_numero" value="${esc(piNumero)}"></div>
+        <div class="form-field"><label>Data de emissão da licença</label><input name="pi_dataEmissao" type="date" value="${piDataEmissao}"></div>
+        <div class="form-field"><label>Data de validade da licença</label><input name="pi_dataValidade" type="date" value="${piDataValidade}"></div>
       </div>
 
       <h4 class="form-section-title">Aptidão médica e psicológica</h4>
@@ -3403,6 +3423,9 @@ function openAlunoForm(id) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
+    const numLA = (fd.get('pi_numero') || '').trim();
+    const emissaoLA = fd.get('pi_dataEmissao') || null;
+    const validadeLA = fd.get('pi_dataValidade') || null;
     const payload = {
       nome: fd.get('nome'), dataNascimento: fd.get('dataNascimento'), nif: fd.get('nif'),
       tipoDocumento: fd.get('tipoDocumento'), numeroDocumento: fd.get('numeroDocumento'), validadeDocumento: fd.get('validadeDocumento'),
@@ -3414,7 +3437,11 @@ function openAlunoForm(id) {
       desconto: Number(fd.get('desconto') || 0),
       tipoDesconto: fd.get('tipoDesconto') || 'valor',
       dispensaModulos: fd.get('dispensaModulos'),
-      processoIMT: { numero: fd.get('pi_numero'), dataEmissao: fd.get('pi_dataEmissao'), dataValidade: fd.get('pi_dataValidade') },
+      imtNumero: numLA || null,
+      imtDataEmissao: emissaoLA,
+      imtDataValidade: validadeLA,
+      numeroLA: numLA || null,
+      processoIMT: { numero: numLA || null, dataEmissao: emissaoLA, dataValidade: validadeLA },
       cartasCategorias: JSON.stringify(cartasCategoriasEdit.filter(c => c.categoria && (c.dataValidade || c.numeroCarta || c.dataEmissao))),
       atestadoMedico: { dataEmissao: fd.get('am_dataEmissao'), dataValidade: fd.get('am_dataValidade'), apto: fd.get('am_apto') === 'true' },
       examePsicotecnico: { aplicavel: !!fd.get('ep_aplicavel'), dataEmissao: fd.get('ep_dataEmissao'), dataValidade: fd.get('ep_dataValidade') },
@@ -3442,6 +3469,8 @@ function openAlunoForm(id) {
             if (idxAtivo >= 0) state.alunosAtivos.splice(idxAtivo, 1);
           }
         }
+        if (typeof cacheAluno === 'function') cacheAluno(savedAluno);
+        if (typeof rebuildIndexes === 'function') rebuildIndexes();
         refreshCollections(['dashboard']).catch(console.error);
       }, item ? 'A guardar dados do aluno…' : 'A criar aluno…');
       closeModal();
@@ -5714,7 +5743,7 @@ function renderRelatorioAlunoHTML(rel) {
       <div><strong>NIF</strong><br>${esc(aluno.nif || '—')}</div>
       <div><strong>Documento</strong><br>${esc(aluno.tipoDocumento || '—')} ${esc(aluno.numeroDocumento || '')}</div>
       <div><strong>Data nascimento</strong><br>${fmtDate(aluno.dataNascimento)}</div>
-      <div><strong>Processo IMT</strong><br>${esc(aluno.processoIMT?.numero || '—')}</div>
+      <div><strong>Licença de Aprendizagem (IMT)</strong><br>${esc(aluno.processoIMT?.numero || aluno.imtNumero || aluno.numeroLA || '—')}</div>
       <div><strong>Atestado médico válido até</strong><br>${fmtDate(aluno.atestadoMedico?.dataValidade)}</div>
       <div><strong>Dispensa de módulos</strong><br>${esc(aluno.dispensaModulos || 'Nenhuma')}</div>
     </div>
@@ -6459,7 +6488,7 @@ function imprimirRelatorioAluno() {
         <tr><td><strong>Nº Aluno</strong></td><td>${aluno.numeroAluno ?? aluno.id}</td><td><strong>Categoria</strong></td><td>${esc(aluno.categoria || '—')}</td></tr>
         <tr><td><strong>Nome</strong></td><td>${esc(aluno.nome)}</td><td><strong>Estado</strong></td><td>${esc(aluno.estado || '—')}</td></tr>
         <tr><td><strong>Email</strong></td><td>${esc(aluno.email || '—')}</td><td><strong>Telefone</strong></td><td>${esc(aluno.telefone || '—')}</td></tr>
-        <tr><td><strong>Data de inscrição</strong></td><td>${fmtDate(aluno.dataInscricao)}</td><td></td><td></td></tr>
+        <tr><td><strong>Data de inscrição</strong></td><td>${fmtDate(aluno.dataInscricao)}</td><td><strong>Licença Aprendizagem</strong></td><td>${esc(aluno.processoIMT?.numero || aluno.imtNumero || aluno.numeroLA || '—')}</td></tr>
       </tbody></table>
       <table class="print-info" style="margin-top:10px"><tbody>
         <tr><td><strong>Horas teóricas realizadas</strong></td><td>${fmtHorasMin(resumo.horasTeoricasRealizadas)} ${requisito.horasTeoricasMin ? `(mín. configurado: ${fmtHorasMin(requisito.horasTeoricasMin)})` : ''}</td></tr>
@@ -7357,25 +7386,38 @@ function abrirAssinaturaContrato(id) {
       </div>
       ${renderSignaturePadHTML()}
 
-      ${eMenor ? `
-        <div class="inline-alert inline-alert-warning" style="margin:16px 0 10px">
-          <strong>Aluno menor de idade (${idade} anos):</strong> É obrigatória a identificação e assinatura do encarregado de educação / tutor legal abaixo.
-        </div>
-        <div class="form-field full">
-          <label>Nome completo do Encarregado de Educação / Tutor</label>
-          <input name="nomeDigitadoTutor" id="nomeDigitadoTutor" required placeholder="Nome completo do tutor">
-        </div>
-        <div class="form-field full" style="margin-bottom:10px">
-          <label>Assinatura do Encarregado de Educação / Tutor</label>
-          <div style="border:2px dashed var(--border); border-radius:10px; overflow:hidden; touch-action:none; background:#fff">
-            <canvas id="assinaturaTutorCanvas" style="width:100%; height:200px; display:block; cursor:crosshair"></canvas>
+      <details id="seccaoTutor" ${eMenor ? 'open' : ''} style="margin:16px 0; border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 14px; background:var(--bg-subtle, #f8fafc)">
+        <summary style="font-weight:600; font-size:13.5px; cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; outline:none">
+          <span style="display:flex; align-items:center; gap:8px">
+            ✍️ Assinatura do Encarregado de Educação / Tutor Legal
+            ${eMenor ? `<span class="chip active" style="font-size:11px; padding:2px 8px">Obrigatório (menor de idade · ${idade} anos)</span>` : `<span class="muted" style="font-size:12px; font-weight:normal">(Obrigatório caso o aluno seja menor de idade)</span>`}
+          </span>
+          <span class="muted" style="font-size:12px">Expandir / Recolher</span>
+        </summary>
+        <div style="margin-top:14px">
+          ${eMenor ? `
+            <div class="inline-alert inline-alert-warning" style="margin-bottom:12px">
+              <strong>Aluno menor de idade (${idade} anos):</strong> É obrigatória a identificação e assinatura do encarregado de educação / tutor legal abaixo.
+            </div>
+          ` : `
+            <p class="muted" style="margin-bottom:12px; font-size:12.5px">Caso o formando seja menor de 18 anos à data de assinatura, preencha o nome do encarregado de educação ou tutor legal e recolha a sua assinatura abaixo.</p>
+          `}
+          <div class="form-field full">
+            <label>Nome completo do Encarregado de Educação / Tutor</label>
+            <input name="nomeDigitadoTutor" id="nomeDigitadoTutor" placeholder="Nome completo do tutor ou encarregado de educação" value="${esc(contrato.assinaturaTutorNomeDigitado || '')}">
           </div>
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px">
-            <span class="muted" style="font-size:12px">Assina dentro da caixa acima.</span>
-            <button type="button" class="btn btn-ghost btn-sm" id="btnLimparAssinaturaTutor">Limpar</button>
+          <div class="form-field full" style="margin-bottom:6px">
+            <label>Assinatura do Encarregado de Educação / Tutor</label>
+            <div style="border:2px dashed var(--border); border-radius:10px; overflow:hidden; touch-action:none; background:#fff">
+              <canvas id="assinaturaTutorCanvas" style="width:100%; height:200px; display:block; cursor:crosshair"></canvas>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px">
+              <span class="muted" style="font-size:12px">Assina dentro da caixa acima.</span>
+              <button type="button" class="btn btn-ghost btn-sm" id="btnLimparAssinaturaTutor">Limpar</button>
+            </div>
           </div>
         </div>
-      ` : ''}
+      </details>
 
       <label style="display:flex; align-items:center; gap:8px; text-transform:none; font-weight:500; color:var(--ink); margin:12px 0">
         <input type="checkbox" name="aceite" required> Li e aceito os termos e condições descritos acima.
@@ -7389,7 +7431,16 @@ function abrirAssinaturaContrato(id) {
   alargarModal();
 
   const pad = bindSignaturePad('assinaturaCanvas', 'btnLimparAssinatura');
-  const padTutor = eMenor ? bindSignaturePad('assinaturaTutorCanvas', 'btnLimparAssinaturaTutor') : null;
+  const padTutor = bindSignaturePad('assinaturaTutorCanvas', 'btnLimparAssinaturaTutor');
+
+  const seccaoTutor = document.getElementById('seccaoTutor');
+  if (seccaoTutor) {
+    seccaoTutor.addEventListener('toggle', () => {
+      if (seccaoTutor.open) {
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
+      }
+    });
+  }
 
   const form = document.getElementById('assinaturaForm');
   form.addEventListener('submit', async (e) => {
@@ -7398,18 +7449,39 @@ function abrirAssinaturaContrato(id) {
       toast('É necessário desenhar a assinatura do formando antes de confirmar.', 'error');
       return;
     }
-    if (eMenor && padTutor && !padTutor.temAssinatura()) {
-      toast('É necessário desenhar a assinatura do encarregado de educação / tutor legal.', 'error');
-      return;
-    }
-    const btnSub = document.getElementById('btnConfirmarAssinatura');
-    if (btnSub) { btnSub.disabled = true; btnSub.textContent = 'A processar…'; }
 
     const fd = new FormData(form);
     const nomeDigitado = fd.get('nomeDigitado');
-    const nomeDigitadoTutor = eMenor ? fd.get('nomeDigitadoTutor') : null;
+    const nomeDigitadoTutor = (fd.get('nomeDigitadoTutor') || '').trim();
+    const temSigTutor = padTutor && padTutor.temAssinatura();
+
+    if (eMenor) {
+      if (!temSigTutor) {
+        if (seccaoTutor && !seccaoTutor.open) {
+          seccaoTutor.open = true;
+          setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
+        }
+        toast('É obrigatória a assinatura do encarregado de educação / tutor legal para alunos menores de idade.', 'error');
+        return;
+      }
+      if (!nomeDigitadoTutor) {
+        if (seccaoTutor && !seccaoTutor.open) seccaoTutor.open = true;
+        toast('Por favor, indica o nome completo do encarregado de educação / tutor legal.', 'error');
+        return;
+      }
+    } else {
+      if (temSigTutor && !nomeDigitadoTutor) {
+        toast('Por favor, indica o nome completo do encarregado de educação / tutor legal.', 'error');
+        return;
+      }
+    }
+
+    const btnSub = document.getElementById('btnConfirmarAssinatura');
+    if (btnSub) { btnSub.disabled = true; btnSub.textContent = 'A processar…'; }
+
     const sigFormando = pad.obterImagemBase64();
-    const sigTutor = (eMenor && padTutor) ? padTutor.obterImagemBase64() : null;
+    const sigTutor = temSigTutor ? padTutor.obterImagemBase64() : null;
+    const tutorFinalNome = temSigTutor ? nomeDigitadoTutor : null;
 
     try {
       await withScreenLoader(async () => {
@@ -7460,7 +7532,7 @@ function abrirAssinaturaContrato(id) {
               ${docTexto}
               <div style="margin-top:20px; font-size:11.5px; border-top:1px solid #d2dcea; padding-top:10px">
                 <p><strong>Aceite eletronicamente por:</strong> ${esc(nomeDigitado)}</p>
-                ${nomeDigitadoTutor ? `<p><strong>Tutor / Encarregado de Educação:</strong> ${esc(nomeDigitadoTutor)}</p>` : ''}
+                ${tutorFinalNome ? `<p><strong>Tutor / Encarregado de Educação:</strong> ${esc(tutorFinalNome)}</p>` : ''}
                 <p><strong>Data/hora:</strong> ${new Date().toLocaleString('pt-PT')}</p>
               </div>
             </div>
@@ -7487,7 +7559,7 @@ function abrirAssinaturaContrato(id) {
           nomeDigitado,
           textoContrato: docTexto,
           assinaturaImagem: sigFormando,
-          nomeDigitadoTutor,
+          nomeDigitadoTutor: tutorFinalNome,
           assinaturaTutorImagem: sigTutor,
           pdfBase64,
           filename: `contrato-${id}-assinado.pdf`
