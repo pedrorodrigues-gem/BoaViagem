@@ -6563,8 +6563,8 @@ async function abrirModalGerarDocumentoAluno(alunoId, tipoPredefinido) {
     { id: 'licao_pratica', label: 'Lição Prática', icone: '🚘' },
     { id: 'licao_teorica', label: 'Lição Teórica', icone: '📖' },
     { id: 'medico', label: 'Consulta Médica', icone: '🩺' },
-    { id: 'transferencia', label: 'Comprovativo de Transferência', icone: '🔄' },
-    { id: 'cancelamento', label: 'Comprovativo de Cancelamento', icone: '🛑' }
+    { id: 'transferencia', label: 'Transferência', icone: '🔄' },
+    { id: 'cancelamento', label: 'Cancelamento', icone: '🛑' }
   ];
 
   function renderizarConteudoModal() {
