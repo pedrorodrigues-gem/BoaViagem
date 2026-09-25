@@ -1619,7 +1619,6 @@ function renderAlunos() {
         </div>
       </div>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-        <button type="button" class="btn btn-secondary btn-sm" onclick="abrirModalGerarDocumentoAluno()" title="Gerar declarações de presença, exames ou comprovativos">📄 Gerar Declarações</button>
         <button type="button" class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(null, 'modC3')" title="Preencher pauta oficial SCTT Mod. C3 para requerimento de licença de aprendizagem">📄 Mod. C3 (Licença Aprendizagem)</button>
       </div>
     </div>
