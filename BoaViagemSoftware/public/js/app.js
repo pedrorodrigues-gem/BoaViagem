@@ -1582,6 +1582,7 @@ function renderAlunos() {
               <button class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(${a.id})">Preencher PDF</button>
               <button class="btn btn-ghost btn-sm" onclick="openAlunoForm(${a.id})">Editar</button>
               <button class="btn btn-ghost btn-sm" onclick="abrirDocumentosAlunoModal(${a.id})">Documentos</button>
+              <button class="btn btn-ghost btn-sm" onclick="abrirModalGerarDocumentoAluno(${a.id})" title="Gerar declarações de presença, exames ou comprovativos">Declarações</button>
               <button class="btn btn-danger-ghost btn-sm" onclick="deleteItem('alunos', ${a.id}, '${escJs(a.nome)}')">Remover</button>
             </div>
           </td>
@@ -1618,6 +1619,7 @@ function renderAlunos() {
         </div>
       </div>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="abrirModalGerarDocumentoAluno()" title="Gerar declarações de presença, exames ou comprovativos">📄 Gerar Declarações</button>
         <button type="button" class="btn btn-ghost btn-sm" onclick="openAutoFillPdfModal(null, 'modC3')" title="Preencher pauta oficial SCTT Mod. C3 para requerimento de licença de aprendizagem">📄 Mod. C3 (Licença Aprendizagem)</button>
       </div>
     </div>
@@ -3510,9 +3512,12 @@ async function abrirModalTransferirAluno(alunoId) {
   const hoje = new Date().toISOString().slice(0, 10);
 
   const avisoJaTransferido = aluno.estado === 'Transferido'
-    ? `<div class="inline-alert inline-alert-warning" style="margin-bottom:14px">
-         <strong>Aviso:</strong> Este aluno já se encontra com o estado <strong>Transferido</strong>.
-         Se prosseguires, será lançado um novo débito de taxa de transferência na sua conta corrente.
+    ? `<div class="inline-alert inline-alert-warning" style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+         <div>
+           <strong>Aviso:</strong> Este aluno já se encontra com o estado <strong>Transferido</strong>.
+           Se prosseguires, será lançado um novo débito de taxa de transferência na sua conta corrente.
+         </div>
+         <button type="button" class="btn btn-secondary btn-sm" onclick="abrirModalGerarDocumentoAluno(${aluno.id}, 'transferencia')">📄 Emitir Comprovativo</button>
        </div>`
     : '';
 
@@ -6521,6 +6526,441 @@ function imprimirMapaGeral() {
   exportarHtmlParaPdf(mapaHtml, 'mapa-geral-assiduidade.pdf');
 }
 
+/* ==================== DECLARAÇÕES E COMPROVATIVOS DE ALUNOS ==================== */
+async function abrirModalGerarDocumentoAluno(alunoId, tipoPredefinido) {
+  let alunosList = (state.alunos && state.alunos.length)
+    ? state.alunos
+    : ((state.alunosAtivos && state.alunosAtivos.length) ? state.alunosAtivos : []);
+  
+  if (!alunosList.length && typeof ensureAlunosTodos === 'function') {
+    try {
+      await ensureAlunosTodos();
+      alunosList = state.alunos || [];
+    } catch (_) {}
+  }
+
+  let aluno = null;
+  if (alunoId != null) {
+    aluno = typeof findAluno === 'function' ? findAluno(alunoId) : null;
+    if (!aluno && state.alunos) aluno = state.alunos.find(a => a.id === alunoId);
+    if (!aluno && state.alunosAtivos) aluno = state.alunosAtivos.find(a => a.id === alunoId);
+  }
+
+  if (!aluno && alunosList.length) {
+    aluno = alunosList[0];
+  }
+
+  if (!aluno) {
+    toast('Nenhum aluno registado no sistema para gerar documentos.', 'warning');
+    return;
+  }
+
+  let tipoSelecionado = tipoPredefinido || 'exame_pratico';
+  const hoje = new Date().toISOString().slice(0, 10);
+  const tipos = typeof obterTiposDocumentos === 'function' ? obterTiposDocumentos() : [
+    { id: 'exame_pratico', label: 'Exame Prático', icone: '🚗' },
+    { id: 'exame_teorico', label: 'Exame Teórico', icone: '💻' },
+    { id: 'licao_pratica', label: 'Lição Prática', icone: '🚘' },
+    { id: 'licao_teorica', label: 'Lição Teórica', icone: '📖' },
+    { id: 'medico', label: 'Consulta Médica', icone: '🩺' },
+    { id: 'transferencia', label: 'Comprovativo de Transferência', icone: '🔄' },
+    { id: 'cancelamento', label: 'Comprovativo de Cancelamento', icone: '🛑' }
+  ];
+
+  function renderizarConteudoModal() {
+    const contagens = typeof getAlunoContagens === 'function' ? getAlunoContagens(aluno) : { aulasTeoricas: 0, aulasPraticas: 0 };
+    const numLA = aluno.processoIMT?.numero || aluno.imtNumero || aluno.pi_numero || aluno.numeroLA || '—';
+    const tipoDoc = aluno.tipoDocumento || aluno.tipo_documento || 'CC';
+    const numDoc = aluno.numeroDocumento || aluno.numero_documento || '—';
+
+    let defaultLocal = 'IMTT PONTA DELGADA';
+    if (tipoSelecionado === 'licao_pratica' || tipoSelecionado === 'licao_teorica') {
+      defaultLocal = state.escola?.nome || 'Escola de Condução Boa Viagem';
+    } else if (tipoSelecionado === 'medico') {
+      defaultLocal = 'Consultório Médico';
+    }
+
+    let avisoEstadoHtml = '';
+    if (tipoSelecionado === 'transferencia') {
+      if (aluno.estado === 'Transferido') {
+        avisoEstadoHtml = `
+          <div class="inline-alert inline-alert-success" style="margin-bottom:12px; font-size:12.5px;">
+            ✓ Aluno registado com o estado <strong>Transferido</strong>.
+          </div>
+        `;
+      } else {
+        avisoEstadoHtml = `
+          <div class="inline-alert inline-alert-warning" style="margin-bottom:12px; font-size:12.5px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <div>
+              ⚠ O aluno encontra-se no estado <strong>${esc(aluno.estado || 'Ativo')}</strong>.
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="btnMarcarComoTransferido" style="font-size:11.5px; padding:3px 8px;">
+              Alterar aluno para "Transferido"
+            </button>
+          </div>
+        `;
+      }
+    } else if (tipoSelecionado === 'cancelamento') {
+      if (aluno.estado === 'Cancelado' || aluno.estado === 'Desistente' || aluno.estado === 'Suspenso') {
+        avisoEstadoHtml = `
+          <div class="inline-alert inline-alert-success" style="margin-bottom:12px; font-size:12.5px;">
+            ✓ Aluno registado com o estado <strong>${esc(aluno.estado)}</strong>.
+          </div>
+        `;
+      } else {
+        avisoEstadoHtml = `
+          <div class="inline-alert inline-alert-warning" style="margin-bottom:12px; font-size:12.5px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <div>
+              ℹ O aluno encontra-se no estado <strong>${esc(aluno.estado || 'Ativo')}</strong>.
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="btnMarcarComoCancelado" style="font-size:11.5px; padding:3px 8px;">
+              Alterar aluno para "Cancelado"
+            </button>
+          </div>
+        `;
+      }
+    }
+
+    return `
+      <div style="display:flex; flex-direction:column; gap:16px;">
+        <div style="background:var(--bg-subtle, #f8fafc); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+            <div style="flex:1; min-width:240px;">
+              <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--muted); margin-bottom:4px; display:block;">Selecionar Aluno</label>
+              <select id="modalDocSelectAluno" style="width:100%; padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:13.5px; background:#fff;">
+                ${alunosList.map(a => `
+                  <option value="${a.id}" ${a.id === aluno.id ? 'selected' : ''}>
+                    #${a.numeroAluno ?? a.id} · ${esc(a.nome)} (${esc(a.categoria || '—')} · ${esc(a.estado || 'Ativo')})
+                  </option>
+                `).join('')}
+              </select>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; flex-wrap:wrap; gap:14px; font-size:12.5px; color:var(--muted);">
+            <div><strong>NIF:</strong> ${esc(aluno.nif || '—')}</div>
+            <div><strong>${esc(tipoDoc)}:</strong> ${esc(numDoc)}</div>
+            <div><strong>Licença:</strong> ${esc(numLA)}</div>
+            <div><strong>Estado:</strong> <span class="${badgeClass(aluno.estado)}">${esc(aluno.estado || 'Ativo')}</span></div>
+            <div><strong>Formação:</strong> ${contagens.aulasTeoricas} teóricas · ${contagens.aulasPraticas} práticas</div>
+          </div>
+        </div>
+
+        <div>
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--muted); margin-bottom:8px; display:block;">Tipo de Documento a Gerar</label>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:6px;">
+            ${tipos.map(t => `
+              <button type="button" class="btn ${tipoSelecionado === t.id ? 'btn-accent' : 'btn-ghost'} btn-sm btn-tipo-doc"
+                data-tipo="${t.id}" style="justify-content:center; text-align:center; padding:8px 4px; font-size:12px; gap:4px; height:auto; flex-direction:column;">
+                <span style="font-size:16px;">${t.icone}</span>
+                <span>${esc(t.label)}</span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+
+        ${avisoEstadoHtml}
+
+        <div style="display:grid; grid-template-columns:minmax(280px, 340px) 1fr; gap:16px; align-items:start;">
+          <div style="background:#fff; border:1px solid var(--border); border-radius:var(--radius-md); padding:14px; display:flex; flex-direction:column; gap:12px;">
+            <div style="font-weight:700; font-size:13px; border-bottom:1px solid var(--border); padding-bottom:6px; color:var(--ink);">
+              ⚙️ Parâmetros do Documento
+            </div>
+
+            <div class="form-field full" style="margin-bottom:0">
+              <label style="font-size:12px;">Data da Atividade / Prova *</label>
+              <input type="date" id="modalDocInputData" value="${hoje}">
+            </div>
+
+            ${(tipoSelecionado !== 'transferencia' && tipoSelecionado !== 'cancelamento') ? `
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <div class="form-field full" style="margin-bottom:0">
+                  <label style="font-size:12px;">Hora Início</label>
+                  <input type="time" id="modalDocInputHoraInicio" value="10:00">
+                </div>
+                <div class="form-field full" style="margin-bottom:0">
+                  <label style="font-size:12px;">Hora Fim</label>
+                  <input type="time" id="modalDocInputHoraFim" value="11:00">
+                </div>
+              </div>
+
+              <div class="form-field full" style="margin-bottom:0">
+                <label style="font-size:12px;">Local / Entidade / Centro</label>
+                <input type="text" id="modalDocInputLocal" value="${esc(defaultLocal)}" placeholder="Ex: IMTT PONTA DELGADA">
+              </div>
+            ` : ''}
+
+            <div class="form-field full" style="margin-bottom:0">
+              <label style="font-size:12px;">Categoria de Carta</label>
+              <input type="text" id="modalDocInputCategoria" value="${esc(aluno.categoria || 'B')}" style="text-transform:uppercase;">
+            </div>
+
+            ${tipoSelecionado === 'transferencia' ? `
+              <div class="form-field full" style="margin-bottom:0">
+                <label style="font-size:12px;">DGV / Escola de Destino</label>
+                <input type="text" id="modalDocInputDestino" value="${esc(aluno.transferenciaDestino || 'DGV Ponta Delgada')}" placeholder="Ex: DGV Ponta Delgada, Escola...">
+              </div>
+            ` : ''}
+
+            ${tipoSelecionado === 'cancelamento' ? `
+              <div class="form-field full" style="margin-bottom:0">
+                <label style="font-size:12px;">Motivo do Cancelamento</label>
+                <input type="text" id="modalDocInputMotivo" value="desistência a pedido do próprio formando" placeholder="Ex: a pedido do próprio formando">
+              </div>
+            ` : ''}
+
+            <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
+              <button type="button" class="btn btn-accent" id="btnImprimirDoc" style="width:100%; justify-content:center; gap:8px;">
+                🖨️ Imprimir / Guardar PDF
+              </button>
+              <button type="button" class="btn btn-ghost" id="btnGuardarDocumentoAluno" style="width:100%; justify-content:center; gap:8px; font-size:12.5px;">
+                💾 Guardar nos Documentos do Aluno
+              </button>
+              <button type="button" class="btn btn-ghost" id="btnCopiarTextoDoc" style="width:100%; justify-content:center; gap:8px; font-size:12px;">
+                📋 Copiar Texto
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <span style="font-weight:700; font-size:12.5px; color:var(--muted); text-transform:uppercase;">
+                📄 Pré-visualização em Tempo Real
+              </span>
+              <span style="font-size:11.5px; color:var(--muted)">Formato A4 Timbrado</span>
+            </div>
+            <div id="modalDocPreviewWrap" style="background:#ffffff; border:1px solid #cbd5e1; box-shadow:0 4px 12px rgba(0,0,0,0.06); border-radius:6px; max-height:480px; overflow-y:auto; padding:8px;">
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions" style="margin-top:4px;">
+          <button type="button" class="btn btn-ghost" onclick="closeModal()">Fechar</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function obterParametrosAtuais() {
+    const inputData = document.getElementById('modalDocInputData');
+    const inputHoraInicio = document.getElementById('modalDocInputHoraInicio');
+    const inputHoraFim = document.getElementById('modalDocInputHoraFim');
+    const inputLocal = document.getElementById('modalDocInputLocal');
+    const inputCat = document.getElementById('modalDocInputCategoria');
+    const inputDestino = document.getElementById('modalDocInputDestino');
+    const inputMotivo = document.getElementById('modalDocInputMotivo');
+
+    const contagens = typeof getAlunoContagens === 'function' ? getAlunoContagens(aluno) : { aulasTeoricas: 0, aulasPraticas: 0 };
+
+    return {
+      aluno,
+      escola: state.escola || {},
+      escolaNome: state.escola?.nome || 'Escola de Condução Boa Viagem',
+      tipo: tipoSelecionado,
+      data: inputData ? inputData.value : hoje,
+      horaInicio: inputHoraInicio ? inputHoraInicio.value : '10:00',
+      horaFim: inputHoraFim ? inputHoraFim.value : '11:00',
+      local: inputLocal ? inputLocal.value.trim() : null,
+      categoria: inputCat ? inputCat.value.trim() : (aluno.categoria || 'B'),
+      destino: inputDestino ? inputDestino.value.trim() : 'DGV Ponta Delgada',
+      motivo: inputMotivo ? inputMotivo.value.trim() : 'desistência a pedido do próprio formando',
+      aulasTeoricas: contagens.aulasTeoricas,
+      aulasPraticas: contagens.aulasPraticas
+    };
+  }
+
+  function atualizarPreview() {
+    const wrap = document.getElementById('modalDocPreviewWrap');
+    if (!wrap) return;
+    const params = obterParametrosAtuais();
+    const html = typeof gerarHtmlDeclaracaoAluno === 'function'
+      ? gerarHtmlDeclaracaoAluno(tipoSelecionado, params)
+      : '<p>Gerador não carregado.</p>';
+    wrap.innerHTML = html;
+  }
+
+  function bindEventos() {
+    const selAluno = document.getElementById('modalDocSelectAluno');
+    if (selAluno) {
+      selAluno.addEventListener('change', () => {
+        const novoId = Number(selAluno.value);
+        const novoAluno = alunosList.find(a => a.id === novoId);
+        if (novoAluno) {
+          aluno = novoAluno;
+          montarEExibirModal();
+        }
+      });
+    }
+
+    document.querySelectorAll('.btn-tipo-doc').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const novoTipo = btn.getAttribute('data-tipo');
+        if (novoTipo && novoTipo !== tipoSelecionado) {
+          tipoSelecionado = novoTipo;
+          montarEExibirModal();
+        }
+      });
+    });
+
+    ['modalDocInputData', 'modalDocInputHoraInicio', 'modalDocInputHoraFim', 'modalDocInputLocal', 'modalDocInputCategoria', 'modalDocInputDestino', 'modalDocInputMotivo'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', atualizarPreview);
+        el.addEventListener('change', atualizarPreview);
+      }
+    });
+
+    const btnTransf = document.getElementById('btnMarcarComoTransferido');
+    if (btnTransf) {
+      btnTransf.addEventListener('click', async () => {
+        if (!confirm(`Deseja alterar o estado do aluno "${aluno.nome}" para "Transferido"?`)) return;
+        try {
+          btnTransf.disabled = true;
+          const atualizado = await api('PUT', `/api/alunos/${aluno.id}`, { ...aluno, estado: 'Transferido' });
+          aluno.estado = 'Transferido';
+          if (state.alunos) {
+            const idx = state.alunos.findIndex(a => a.id === aluno.id);
+            if (idx >= 0) state.alunos[idx].estado = 'Transferido';
+          }
+          if (state.alunosAtivos) {
+            state.alunosAtivos = state.alunosAtivos.filter(a => a.id !== aluno.id);
+          }
+          if (typeof cacheAluno === 'function') cacheAluno(atualizado || aluno);
+          toast('Estado do aluno alterado para Transferido.', 'success');
+          montarEExibirModal();
+          if (typeof renderAlunos === 'function') renderAlunos();
+        } catch (err) {
+          toast('Erro ao alterar estado: ' + err.message, 'error');
+          btnTransf.disabled = false;
+        }
+      });
+    }
+
+    const btnCanc = document.getElementById('btnMarcarComoCancelado');
+    if (btnCanc) {
+      btnCanc.addEventListener('click', async () => {
+        if (!confirm(`Deseja alterar o estado do aluno "${aluno.nome}" para "Cancelado"?`)) return;
+        try {
+          btnCanc.disabled = true;
+          const atualizado = await api('PUT', `/api/alunos/${aluno.id}`, { ...aluno, estado: 'Cancelado' });
+          aluno.estado = 'Cancelado';
+          if (state.alunos) {
+            const idx = state.alunos.findIndex(a => a.id === aluno.id);
+            if (idx >= 0) state.alunos[idx].estado = 'Cancelado';
+          }
+          if (state.alunosAtivos) {
+            state.alunosAtivos = state.alunosAtivos.filter(a => a.id !== aluno.id);
+          }
+          if (typeof cacheAluno === 'function') cacheAluno(atualizado || aluno);
+          toast('Estado do aluno alterado para Cancelado.', 'success');
+          montarEExibirModal();
+          if (typeof renderAlunos === 'function') renderAlunos();
+        } catch (err) {
+          toast('Erro ao alterar estado: ' + err.message, 'error');
+          btnCanc.disabled = false;
+        }
+      });
+    }
+
+    const btnImp = document.getElementById('btnImprimirDoc');
+    if (btnImp) {
+      btnImp.addEventListener('click', () => {
+        const params = obterParametrosAtuais();
+        const html = typeof gerarHtmlDeclaracaoAluno === 'function' ? gerarHtmlDeclaracaoAluno(tipoSelecionado, params) : '';
+        const slugAluno = (aluno.nome || 'aluno').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        const filename = `declaracao-${tipoSelecionado}-${slugAluno}.pdf`;
+        exportarHtmlParaPdf(html, filename);
+        toast('Janela de impressão / exportação de PDF aberta.', 'info');
+      });
+    }
+
+    const btnCopiar = document.getElementById('btnCopiarTextoDoc');
+    if (btnCopiar) {
+      btnCopiar.addEventListener('click', async () => {
+        const params = obterParametrosAtuais();
+        const texto = typeof gerarTextoDeclaracaoAluno === 'function' ? gerarTextoDeclaracaoAluno(tipoSelecionado, params) : '';
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(texto);
+          } else {
+            const ta = document.createElement('textarea');
+            ta.value = texto;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+          }
+          toast('Texto da declaração copiado para a área de transferência!', 'success');
+        } catch (e) {
+          toast('Erro ao copiar texto: ' + e.message, 'error');
+        }
+      });
+    }
+
+    const btnGuardarDoc = document.getElementById('btnGuardarDocumentoAluno');
+    if (btnGuardarDoc) {
+      btnGuardarDoc.addEventListener('click', async () => {
+        btnGuardarDoc.disabled = true;
+        btnGuardarDoc.textContent = 'A guardar documento…';
+        try {
+          const params = obterParametrosAtuais();
+          const previewWrap = document.getElementById('modalDocPreviewWrap');
+          const slugAluno = (aluno.nome || 'aluno').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+          const tipoObj = tipos.find(t => t.id === tipoSelecionado) || { label: tipoSelecionado };
+          const nomeDoc = `Declaração - ${tipoObj.label}`;
+          const filename = `declaracao-${tipoSelecionado}-${slugAluno}.pdf`;
+
+          let pdfBase64 = null;
+          if (window.html2pdf && previewWrap) {
+            try {
+              const opt = {
+                margin: [8, 8, 8, 8],
+                filename,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2, useCORS: true, logging: false },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+              };
+              pdfBase64 = await window.html2pdf().set(opt).from(previewWrap).output('datauristring');
+            } catch (errPdf) {
+              console.warn('html2pdf falhou:', errPdf);
+            }
+          }
+
+          if (!pdfBase64) {
+            const htmlConteudo = typeof gerarHtmlDeclaracaoAluno === 'function' ? gerarHtmlDeclaracaoAluno(tipoSelecionado, params) : '';
+            pdfBase64 = 'data:text/html;base64,' + btoa(unescape(encodeURIComponent(htmlConteudo)));
+          }
+
+          await api('POST', `/api/alunos/${aluno.id}/documentos`, {
+            nome: nomeDoc,
+            filename,
+            mimeType: pdfBase64.startsWith('data:application/pdf') ? 'application/pdf' : 'text/html',
+            dataBase64: pdfBase64
+          });
+
+          toast(`Documento "${nomeDoc}" guardado com sucesso no arquivo do aluno!`, 'success');
+        } catch (err) {
+          toast('Erro ao guardar documento: ' + err.message, 'error');
+        } finally {
+          btnGuardarDoc.disabled = false;
+          btnGuardarDoc.textContent = '💾 Guardar nos Documentos do Aluno';
+        }
+      });
+    }
+
+    atualizarPreview();
+  }
+
+  function montarEExibirModal() {
+    openModal('Gerar Declaração / Documento Oficial', renderizarConteudoModal(), { maxWidth: '960px', width: '95vw' });
+    const caixa = document.querySelector('#modalBackdrop .modal') || document.querySelector('#modalBackdrop > div');
+    if (caixa) { caixa.style.maxWidth = '960px'; caixa.style.width = '95vw'; }
+    bindEventos();
+  }
+
+  montarEExibirModal();
+}
+window.abrirModalGerarDocumentoAluno = abrirModalGerarDocumentoAluno;
+
 /* ==================== CONTRATOS ==================== */
 const PLANOS_PAGAMENTO = ['Pagamento único', 'Mensalidades', 'Personalizado'];
 
@@ -8553,6 +8993,7 @@ window.imprimirComprovativoRevalidacao = imprimirComprovativoRevalidacao;
 window.imprimirResumoRevalidacoes = imprimirResumoRevalidacoes;
 window.abrirEditarPreInscricaoForm = abrirEditarPreInscricaoForm;
 window.eliminarPreInscricao = eliminarPreInscricao;
+window.abrirModalGerarDocumentoAluno = abrirModalGerarDocumentoAluno;
 
 /* ---------------- Modal ---------------- */
 function openModal(title, bodyHtml, options = {}) {
