@@ -4724,6 +4724,7 @@ function abrirPagamentoContaForm(alunoId) {
           <input name="taxaIva" id="pagamentoContaTaxaIva" type="number" step="1" min="0" max="100" value="${state.escola?.primavera?.taxaIvaDefault ?? 18}">
           <small id="pagamentoContaIvaBadge" class="muted" style="display:block; margin-top:2px"></small>
         </div>
+        <div id="pagamentoContaDistribuicaoWrap" class="form-field full" style="display:none; margin-top:4px"></div>
         <div class="form-field">
           <label>Data</label>
           <input name="data" type="date" value="${new Date().toISOString().slice(0, 10)}">
@@ -4743,7 +4744,7 @@ function abrirPagamentoContaForm(alunoId) {
           </select>
         </div>
       </div>
-      <p class="muted" style="margin-top:6px">Ao gravar como "Pago", o valor é registado e associado ao item selecionado da conta corrente.</p>
+      <p class="muted" style="margin-top:6px">Ao gravar como "Pago", o valor é registado e associado ao item selecionado da conta corrente. Se o valor for superior ao item, os artigos seguintes serão automaticamente incluídos até perfazer o total.</p>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" onclick="abrirContaCorrente(${alunoId})">Cancelar</button>
         <button type="submit" class="btn btn-accent">Registar</button>
@@ -4759,10 +4760,83 @@ function abrirPagamentoContaForm(alunoId) {
   const valorInput = document.getElementById('pagamentoContaValor');
   const taxaIvaInput = document.getElementById('pagamentoContaTaxaIva');
   const ivaBadge = document.getElementById('pagamentoContaIvaBadge');
+  const distWrap = document.getElementById('pagamentoContaDistribuicaoWrap');
 
   let itens = (state.contaCorrenteAtual && state.contaCorrenteAtual.aluno?.id === alunoId && Array.isArray(state.contaCorrenteAtual.itens))
     ? state.contaCorrenteAtual.itens
     : [];
+
+  function recalcularDistribuicao() {
+    if (!distWrap) return;
+    const selectedId = Number(selectItemConta?.value);
+    const it = itens.find(x => x.id === selectedId);
+    const valorDigitado = Number(valorInput?.value) || 0;
+
+    if (!itens.length || valorDigitado <= 0) {
+      distWrap.style.display = 'none';
+      distWrap.innerHTML = '';
+      return;
+    }
+
+    const fnDistribuir = window.distribuirValorPorItens || (typeof distribuirValorPorItens === 'function' ? distribuirValorPorItens : null);
+    if (!fnDistribuir) return;
+
+    const dist = fnDistribuir(itens, valorDigitado, it?.id);
+
+    if (dist.excedeuDivida) {
+      distWrap.style.display = 'block';
+      distWrap.innerHTML = `
+        <div class="inline-alert inline-alert-warning" style="margin-bottom:0">
+          <strong>⚠ Limite de dívida excedido:</strong> O valor indicado (${fmtMoney(valorDigitado)}) excede o total em dívida do aluno (${fmtMoney(dist.totalDivida)}). Só é permitido o total do valor em dívida.
+          <div style="margin-top:6px">
+            <button type="button" class="btn btn-sm btn-ghost" id="btnAjustarAoTotalDivida">Ajustar valor para ${fmtMoney(dist.totalDivida)}</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('btnAjustarAoTotalDivida')?.addEventListener('click', () => {
+        if (valorInput) {
+          valorInput.value = dist.totalDivida;
+          recalcularDistribuicao();
+        }
+      });
+      return;
+    }
+
+    if (dist.linhas && dist.linhas.length > 1) {
+      distWrap.style.display = 'block';
+      distWrap.innerHTML = `
+        <div style="background:var(--bg-subtle,#f8fafc); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 12px">
+          <div style="font-size:12px; font-weight:700; color:var(--text); margin-bottom:6px; display:flex; align-items:center; gap:6px">
+            <span>ℹ</span> O valor de ${fmtMoney(valorDigitado)} cobre ${dist.linhas.length} artigos da conta corrente:
+          </div>
+          <table style="width:100%; font-size:11.5px; border-collapse:collapse">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border); color:var(--muted); text-align:left">
+                <th style="padding:4px">Artigo</th>
+                <th style="padding:4px">Descrição</th>
+                <th style="padding:4px; text-align:right">Valor Alocado</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${dist.linhas.map((l, idx) => `
+                <tr style="border-bottom:1px solid var(--border)">
+                  <td style="padding:4px"><code style="font-size:11px">${esc(l.artigo || '—')}</code></td>
+                  <td style="padding:4px">${esc(l.descricao || 'Item')} ${idx === 0 ? '<span class="badge" style="font-size:9.5px; background:var(--accent-subtle); color:var(--accent)">Escolhido</span>' : '<span class="badge" style="font-size:9.5px">Artigo seguinte</span>'}</td>
+                  <td style="padding:4px; text-align:right; font-weight:600">${fmtMoney(l.valor)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <p class="muted" style="font-size:11px; margin:6px 0 0 0">
+            Estes ${dist.linhas.length} artigos serão discriminados automaticamente na faturação até perfazer ${fmtMoney(valorDigitado)}.
+          </p>
+        </div>
+      `;
+    } else {
+      distWrap.style.display = 'none';
+      distWrap.innerHTML = '';
+    }
+  }
 
   function atualizarCampos() {
     const selectedId = Number(selectItemConta?.value);
@@ -4773,6 +4847,7 @@ function abrirPagamentoContaForm(alunoId) {
       if (itemContaIdHidden) itemContaIdHidden.value = '';
       if (ivaBadge) ivaBadge.textContent = '';
       if (itemInfo) itemInfo.textContent = '';
+      recalcularDistribuicao();
       return;
     }
     if (descHidden) descHidden.value = it.descricao || '';
@@ -4789,6 +4864,7 @@ function abrirPagamentoContaForm(alunoId) {
       const saldoPendente = fmtMoney(it.saldo !== undefined ? it.saldo : it.valor);
       itemInfo.innerHTML = `Código do artigo: <strong>${esc(it.codigo || 'sem código')}</strong> · Saldo pendente: <strong>${saldoPendente}</strong>`;
     }
+    recalcularDistribuicao();
   }
 
   async function inicializarItens() {
@@ -4820,10 +4896,13 @@ function abrirPagamentoContaForm(alunoId) {
     if (itens.length === 1) {
       selectItemConta.value = itens[0].id;
       atualizarCampos();
+    } else {
+      recalcularDistribuicao();
     }
   }
 
   selectItemConta?.addEventListener('change', atualizarCampos);
+  valorInput?.addEventListener('input', recalcularDistribuicao);
   inicializarItens();
 
   form.addEventListener('submit', async (e) => {
@@ -4835,6 +4914,19 @@ function abrirPagamentoContaForm(alunoId) {
       toast('Seleciona um item da conta corrente do aluno.', 'error');
       return;
     }
+
+    const valorPago = Number(fd.get('valor'));
+    const fnDistribuir = window.distribuirValorPorItens || (typeof distribuirValorPorItens === 'function' ? distribuirValorPorItens : null);
+    let dist = null;
+    if (fnDistribuir && itens.length > 0) {
+      dist = fnDistribuir(itens, valorPago, it?.id);
+      if (dist.excedeuDivida && valorPago > (dist.totalDivida + 0.01)) {
+        toast(`O valor indicado excede o total em dívida do aluno (${fmtMoney(dist.totalDivida)}). Só é permitido o total do valor em dívida.`, 'error');
+        if (valorInput) valorInput.focus();
+        return;
+      }
+    }
+
     const itemContaId = it ? it.id : (Number(fd.get('itemContaId')) || null);
     const artigo = it ? (it.codigo || null) : (fd.get('artigo') || null);
     const descricao = it ? it.descricao : (fd.get('descricao') || 'Depósito');
@@ -4843,13 +4935,16 @@ function abrirPagamentoContaForm(alunoId) {
       alunoId,
       itemContaId,
       artigo,
-      valor: Number(fd.get('valor')),
+      valor: valorPago,
       data: fd.get('data'),
       descricao,
       modoPagamento: fd.get('modoPagamento') || 'PGNUM',
       estado: fd.get('estado'),
       taxaIva
     };
+    if (dist && dist.linhas && dist.linhas.length > 0) {
+      payload.linhas = dist.linhas;
+    }
     try {
       await withScreenLoader(async () => {
         await api('POST', '/api/pagamentos', payload);
@@ -4999,12 +5094,13 @@ function openPagamentoForm(id, initialAlunoId) {
           <input name="taxaIva" id="pagamentoTaxaIvaInput" type="number" min="0" max="100" value="${item?.taxaIva ?? state.escola?.primavera?.taxaIvaDefault ?? 18}">
           <div id="pagamentoIvaBadge" class="muted" style="font-size:11.5px; margin-top:2px"></div>
         </div>
+        <div id="pagamentoDistribuicaoWrap" class="form-field full" style="display:none; margin-top:4px"></div>
         <div class="form-field">
           <label>Estado</label>
           <select name="estado">${['Pago', 'Pendente'].map(c => `<option ${item?.estado === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
         </div>
       </div>
-      <p class="muted" style="margin-top:4px">O NIF e o email usados na faturação são os que estão na ficha do aluno selecionado. O código do artigo e a taxa de IVA associada ao item da conta corrente serão transmitidos para a Cegid Primavera.</p>
+      <p class="muted" style="margin-top:4px">O NIF e o email usados na faturação são os que estão na ficha do aluno selecionado. Se o valor pago for superior ao item, os artigos seguintes da conta corrente serão incluídos automaticamente até perfazer o total.</p>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
         <button type="submit" class="btn btn-accent">${item ? 'Guardar alterações' : 'Registar pagamento'}</button>
@@ -5016,6 +5112,81 @@ function openPagamentoForm(id, initialAlunoId) {
   bindAlunoPicker(form);
 
   let itensContaAluno = [];
+
+  function recalcularDistribuicaoPagamentoForm() {
+    const wrap = document.getElementById('pagamentoDistribuicaoWrap');
+    if (!wrap) return;
+    const select = document.getElementById('pagamentoItemContaSelect');
+    const valorInput = form.querySelector('[name="valor"]');
+    const selectedId = Number(select?.value);
+    const it = itensContaAluno.find(x => x.id === selectedId);
+    const valorDigitado = Number(valorInput?.value) || 0;
+
+    if (!itensContaAluno.length || valorDigitado <= 0) {
+      wrap.style.display = 'none';
+      wrap.innerHTML = '';
+      return;
+    }
+
+    const fnDistribuir = window.distribuirValorPorItens || (typeof distribuirValorPorItens === 'function' ? distribuirValorPorItens : null);
+    if (!fnDistribuir) return;
+
+    const dist = fnDistribuir(itensContaAluno, valorDigitado, it?.id);
+
+    if (dist.excedeuDivida) {
+      wrap.style.display = 'block';
+      wrap.innerHTML = `
+        <div class="inline-alert inline-alert-warning" style="margin-bottom:0">
+          <strong>⚠ Limite de dívida excedido:</strong> O valor indicado (${fmtMoney(valorDigitado)}) excede o total em dívida do aluno (${fmtMoney(dist.totalDivida)}). Só é permitido o total do valor em dívida.
+          <div style="margin-top:6px">
+            <button type="button" class="btn btn-sm btn-ghost" id="btnAjustarAoTotalDividaPag">Ajustar valor para ${fmtMoney(dist.totalDivida)}</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('btnAjustarAoTotalDividaPag')?.addEventListener('click', () => {
+        if (valorInput) {
+          valorInput.value = dist.totalDivida;
+          recalcularDistribuicaoPagamentoForm();
+        }
+      });
+      return;
+    }
+
+    if (dist.linhas && dist.linhas.length > 1) {
+      wrap.style.display = 'block';
+      wrap.innerHTML = `
+        <div style="background:var(--bg-subtle,#f8fafc); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 12px">
+          <div style="font-size:12px; font-weight:700; color:var(--text); margin-bottom:6px; display:flex; align-items:center; gap:6px">
+            <span>ℹ</span> O valor de ${fmtMoney(valorDigitado)} cobre ${dist.linhas.length} artigos da conta corrente:
+          </div>
+          <table style="width:100%; font-size:11.5px; border-collapse:collapse">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border); color:var(--muted); text-align:left">
+                <th style="padding:4px">Artigo</th>
+                <th style="padding:4px">Descrição</th>
+                <th style="padding:4px; text-align:right">Valor Alocado</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${dist.linhas.map((l, idx) => `
+                <tr style="border-bottom:1px solid var(--border)">
+                  <td style="padding:4px"><code style="font-size:11px">${esc(l.artigo || '—')}</code></td>
+                  <td style="padding:4px">${esc(l.descricao || 'Item')} ${idx === 0 ? '<span class="badge" style="font-size:9.5px; background:var(--accent-subtle); color:var(--accent)">Escolhido</span>' : '<span class="badge" style="font-size:9.5px">Artigo seguinte</span>'}</td>
+                  <td style="padding:4px; text-align:right; font-weight:600">${fmtMoney(l.valor)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <p class="muted" style="font-size:11px; margin:6px 0 0 0">
+            Estes ${dist.linhas.length} artigos serão discriminados automaticamente na faturação até perfazer ${fmtMoney(valorDigitado)}.
+          </p>
+        </div>
+      `;
+    } else {
+      wrap.style.display = 'none';
+      wrap.innerHTML = '';
+    }
+  }
 
   function atualizarCamposItemSelecionado() {
     const select = document.getElementById('pagamentoItemContaSelect');
@@ -5037,6 +5208,7 @@ function openPagamentoForm(id, initialAlunoId) {
         if (ivaBadge) ivaBadge.textContent = '';
         if (itemInfo) itemInfo.textContent = '';
       }
+      recalcularDistribuicaoPagamentoForm();
       return;
     }
 
@@ -5060,6 +5232,7 @@ function openPagamentoForm(id, initialAlunoId) {
       const saldoPendente = fmtMoney(it.saldo !== undefined ? it.saldo : it.valor);
       itemInfo.innerHTML = `Código do artigo: <strong>${esc(it.codigo || 'sem código')}</strong> · Saldo pendente: <strong>${saldoPendente}</strong>`;
     }
+    recalcularDistribuicaoPagamentoForm();
   }
 
   async function carregarItensContaAluno(alunoId) {
@@ -5071,6 +5244,7 @@ function openPagamentoForm(id, initialAlunoId) {
       select.disabled = true;
       if (itemInfo) itemInfo.textContent = '';
       itensContaAluno = [];
+      recalcularDistribuicaoPagamentoForm();
       return;
     }
 
@@ -5085,6 +5259,7 @@ function openPagamentoForm(id, initialAlunoId) {
         select.innerHTML = '<option value="">O aluno não possui itens na conta corrente</option>';
         select.disabled = false;
         if (itemInfo) itemInfo.innerHTML = '<span style="color:var(--warning)">⚠ Este aluno ainda não tem itens nem contrato lançado na conta corrente.</span>';
+        recalcularDistribuicaoPagamentoForm();
         return;
       }
 
@@ -5112,16 +5287,21 @@ function openPagamentoForm(id, initialAlunoId) {
       select.innerHTML = optionsHtml;
       if (itemMatched || (item && !itemMatched)) {
         atualizarCamposItemSelecionado();
+      } else {
+        recalcularDistribuicaoPagamentoForm();
       }
     } catch (err) {
       select.disabled = false;
       select.innerHTML = '<option value="">Erro ao carregar conta corrente</option>';
       if (itemInfo) itemInfo.innerHTML = `<span style="color:var(--danger)">Erro: ${esc(err.message)}</span>`;
+      recalcularDistribuicaoPagamentoForm();
     }
   }
 
   const selectItemConta = document.getElementById('pagamentoItemContaSelect');
   selectItemConta?.addEventListener('change', atualizarCamposItemSelecionado);
+  const valorInputElem = form.querySelector('[name="valor"]');
+  valorInputElem?.addEventListener('input', recalcularDistribuicaoPagamentoForm);
 
   const alunoNomeInput = form.querySelector('[name="alunoNome"]');
   const alunoIdHidden = form.querySelector('[name="alunoId"]');
@@ -5165,17 +5345,33 @@ function openPagamentoForm(id, initialAlunoId) {
       return;
     }
 
+    const valorPago = Number(fd.get('valor'));
+    const fnDistribuir = window.distribuirValorPorItens || (typeof distribuirValorPorItens === 'function' ? distribuirValorPorItens : null);
+    let dist = null;
+    if (fnDistribuir && itensContaAluno.length > 0) {
+      dist = fnDistribuir(itensContaAluno, valorPago, it?.id);
+      if (dist.excedeuDivida && valorPago > (dist.totalDivida + 0.01)) {
+        toast(`O valor indicado excede o total em dívida do aluno (${fmtMoney(dist.totalDivida)}). Só é permitido o total do valor em dívida.`, 'error');
+        if (valorInputElem) valorInputElem.focus();
+        return;
+      }
+    }
+
     const payload = {
       alunoId,
       itemContaId,
       artigo,
       descricao,
-      valor: Number(fd.get('valor')),
+      valor: valorPago,
       data: fd.get('data'),
       modoPagamento: fd.get('modoPagamento') || 'PGNUM',
       taxaIva: Number(fd.get('taxaIva') ?? 18),
       estado: fd.get('estado')
     };
+
+    if (dist && dist.linhas && dist.linhas.length > 0) {
+      payload.linhas = dist.linhas;
+    }
 
     try {
       await withScreenLoader(async () => {
@@ -5296,6 +5492,30 @@ function abrirFaturacaoModal(pagamentoId) {
   const primaveraAtivo = !!state.escola?.primavera?.ativo;
   const hasEmpresa = !!(p.faturacaoNome || p.faturacao_nome);
 
+  let linhasFaturar = null;
+  if (p.linhas && Array.isArray(p.linhas)) {
+    linhasFaturar = p.linhas;
+  } else if (p.linhasJson || p.linhas_json) {
+    try {
+      linhasFaturar = JSON.parse(p.linhasJson || p.linhas_json);
+    } catch (e) {}
+  }
+
+  if (!linhasFaturar && aluno) {
+    const fnDistribuir = window.distribuirValorPorItens || (typeof distribuirValorPorItens === 'function' ? distribuirValorPorItens : null);
+    const itensAluno = (state.contaCorrenteAtual && state.contaCorrenteAtual.aluno?.id === aluno.id && Array.isArray(state.contaCorrenteAtual.itens))
+      ? state.contaCorrenteAtual.itens
+      : (state.itensConta || []).filter(x => x.alunoId === aluno.id);
+    if (fnDistribuir && itensAluno.length > 0) {
+      const dist = fnDistribuir(itensAluno, Number(p.valor), p.itemContaId || p.item_conta_id);
+      if (dist.linhas && dist.linhas.length > 1) {
+        linhasFaturar = dist.linhas;
+      }
+    }
+  }
+
+  p._linhasFaturar = linhasFaturar;
+
   const avisos = [];
   if (!primaveraAtivo) avisos.push('A integração com a Cegid Primavera não está ativa nesta escola.');
   if (!aluno) avisos.push('Este pagamento não está associado a um aluno válido.');
@@ -5307,9 +5527,37 @@ function abrirFaturacaoModal(pagamentoId) {
     <div class="print-info-grid" style="margin-bottom:16px">
       <div><strong>Descrição</strong><br>${esc(p.descricao || '—')}</div>
       <div><strong>Código de Artigo</strong><br><span class="badge" style="font-family:monospace">${esc(p.artigo || p.codigo || (state.escola?.primavera?.artigoFormacao || 'FORMACAO'))}</span></div>
-      <div><strong>Valor</strong><br>${fmtMoney(p.valor)}</div>
+      <div><strong>Valor Total</strong><br>${fmtMoney(p.valor)}</div>
       <div><strong>NIF do aluno</strong><br>${esc(aluno?.nif || 'Não preenchido')}</div>
     </div>
+
+    ${linhasFaturar && linhasFaturar.length > 1 ? `
+      <div style="margin-bottom:16px; padding:12px; background:var(--bg-subtle,#f8fafc); border:1px solid var(--border); border-radius:var(--radius-sm)">
+        <label style="font-weight:700; font-size:12px; text-transform:uppercase; color:var(--muted); display:block; margin-bottom:8px">
+          Artigos a Faturar (${linhasFaturar.length} linhas para perfazer ${fmtMoney(p.valor)})
+        </label>
+        <table style="width:100%; font-size:12px; border-collapse:collapse">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border); color:var(--muted); text-align:left">
+              <th style="padding:4px">Artigo</th>
+              <th style="padding:4px">Descrição</th>
+              <th style="padding:4px; text-align:center">Taxa IVA</th>
+              <th style="padding:4px; text-align:right">Valor Alocado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${linhasFaturar.map((l, idx) => `
+              <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:4px"><code style="font-size:11px">${esc(l.artigo || '—')}</code></td>
+                <td style="padding:4px">${esc(l.descricao || 'Item')} ${idx === 0 ? '<span class="badge" style="font-size:9.5px; background:var(--accent-subtle); color:var(--accent)">Escolhido</span>' : '<span class="badge" style="font-size:9.5px">Artigo adicional</span>'}</td>
+                <td style="padding:4px; text-align:center">${l.taxaIva ?? 18}%</td>
+                <td style="padding:4px; text-align:right; font-weight:600">${fmtMoney(l.valor)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    ` : ''}
 
     <div style="margin-bottom:16px; padding:12px; background:var(--bg-subtle,#f8fafc); border:1px solid var(--border); border-radius:var(--radius-sm)">
       <label style="font-weight:700; font-size:12px; text-transform:uppercase; color:var(--muted); display:block; margin-bottom:8px">Dados de Faturação / Titular da Fatura</label>
@@ -5372,6 +5620,16 @@ async function emitirDocumentoPagamento(pagamentoId, tipo) {
   const aluno = p ? findAluno(p.alunoId) : null;
   const isEmpresa = document.querySelector('input[name="faturacaoDestinatario"]:checked')?.value === 'empresa';
   const body = {};
+
+  if (p && (p._linhasFaturar || p.linhas || p.linhasJson || p.linhas_json)) {
+    let linhas = p._linhasFaturar || p.linhas;
+    if (!linhas && (p.linhasJson || p.linhas_json)) {
+      try { linhas = JSON.parse(p.linhasJson || p.linhas_json); } catch (e) {}
+    }
+    if (linhas && Array.isArray(linhas) && linhas.length > 0) {
+      body.linhas = linhas;
+    }
+  }
 
   if (isEmpresa) {
     const nome = (document.getElementById('faturacaoEmpresaNome')?.value || '').trim();

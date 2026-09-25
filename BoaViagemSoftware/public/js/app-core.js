@@ -897,6 +897,70 @@
   window.loadAll = loadAll;
   window.findAluno = findAluno;
   window.cacheAluno = cacheAluno;
+  function distribuirValorPorItens(itensConta, valorPago, itemEscolhidoId) {
+    var valorTotalPago = Number(valorPago) || 0;
+    if (valorTotalPago <= 0 || !Array.isArray(itensConta) || !itensConta.length) {
+      return { linhas: [], totalDivida: 0, sobra: 0, totalAlocado: 0, excedeuDivida: false };
+    }
+
+    var itensOrdenados = itensConta.slice().sort(function (a, b) {
+      if (itemEscolhidoId) {
+        if (a.id === itemEscolhidoId) return -1;
+        if (b.id === itemEscolhidoId) return 1;
+      }
+      return (a.ordem !== undefined ? a.ordem : a.id) - (b.ordem !== undefined ? b.ordem : b.id);
+    });
+
+    var totalDivida = 0;
+    itensOrdenados.forEach(function (it) {
+      var pendente = it.saldo !== undefined ? Number(it.saldo) : Number(it.valor);
+      if (pendente > 0) totalDivida += pendente;
+    });
+    totalDivida = Math.round(totalDivida * 100) / 100;
+
+    var excedeuDivida = totalDivida > 0 && valorTotalPago > (totalDivida + 0.001);
+    var valorEfetivo = excedeuDivida ? totalDivida : valorTotalPago;
+
+    var restante = valorEfetivo;
+    var linhas = [];
+
+    for (var i = 0; i < itensOrdenados.length; i++) {
+      if (restante <= 0.0001) break;
+      var it = itensOrdenados[i];
+      var pendente = it.saldo !== undefined ? Number(it.saldo) : Number(it.valor);
+      if (pendente <= 0.0001 && it.id !== itemEscolhidoId) continue;
+
+      var capacidadeItem = pendente > 0 ? pendente : (Number(it.valor) || restante);
+      var aplicar = Math.round(Math.min(restante, capacidadeItem) * 100) / 100;
+      if (aplicar <= 0.0001) continue;
+
+      linhas.push({
+        itemContaId: it.id,
+        artigo: it.codigo || it.artigo || 'FORMACAO',
+        descricao: it.descricao || 'Serviços de formação',
+        valor: aplicar,
+        taxaIva: it.taxaIva != null ? Number(it.taxaIva) : 18,
+        quantidade: 1.0
+      });
+
+      restante = Math.round((restante - aplicar) * 100) / 100;
+    }
+
+    var totalAlocado = 0;
+    linhas.forEach(function (l) { totalAlocado += l.valor; });
+    totalAlocado = Math.round(totalAlocado * 100) / 100;
+    var sobra = Math.round((valorTotalPago - totalAlocado) * 100) / 100;
+
+    return {
+      linhas: linhas,
+      totalDivida: totalDivida,
+      valorPermitido: valorEfetivo,
+      excedeuDivida: excedeuDivida,
+      totalAlocado: totalAlocado,
+      sobra: sobra
+    };
+  }
+
   window.findInstrutor = findInstrutor;
   window.findVeiculo = findVeiculo;
   window.getEspacoNomeById = getEspacoNomeById;
@@ -927,4 +991,5 @@
   window.renderPaginationControls = renderPaginationControls;
   window.setPaginationPage = setPaginationPage;
   window.setPaginationPageSize = setPaginationPageSize;
+  window.distribuirValorPorItens = distribuirValorPorItens;
 })();
