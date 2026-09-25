@@ -2172,8 +2172,8 @@ app.use('/api/contratos', collectionRoutes('contratos', {
     return rows.map(row => {
       row.parcelasPersonalizadas = parcelasMap[row.id] || [];
       const aluno = alunosMap.get(row.alunoId);
-      row.numero = aluno?.numeroAluno ?? aluno?.numero_aluno ?? aluno?.id ?? row.alunoId;
-      row.numeroAluno = row.numero;
+      row.numero = row.id;
+      row.numeroAluno = aluno?.numeroAluno ?? aluno?.numero_aluno ?? aluno?.id ?? row.alunoId;
       row.assinatura = row.assinaturaNomeDigitado ? {
         nomeDigitado: row.assinaturaNomeDigitado,
         dataHora: row.assinaturaDataHora,
@@ -2203,8 +2203,8 @@ app.use('/api/contratos', collectionRoutes('contratos', {
       const aRes = await query('SELECT id, nome, numero_aluno, categoria, tipo_desconto, desconto, espaco_id FROM alunos WHERE id=@id', { id: row.alunoId });
       if (aRes.recordset[0]) aluno = dbRowToJs(aRes.recordset[0]);
     }
-    row.numero = aluno?.numeroAluno ?? aluno?.numero_aluno ?? aluno?.id ?? row.alunoId;
-    row.numeroAluno = row.numero;
+    row.numero = row.id;
+    row.numeroAluno = aluno?.numeroAluno ?? aluno?.numero_aluno ?? aluno?.id ?? row.alunoId;
     row.assinatura = row.assinaturaNomeDigitado ? {
       nomeDigitado: row.assinaturaNomeDigitado,
       dataHora: row.assinaturaDataHora,
@@ -3127,6 +3127,10 @@ async function handleAssinaturaContrato(req, res) {
     const finalNomeTutor = nomeTutorDigitado || nomeDigitadoTutor || null;
 
     let finalTextoContrato = textoContrato || contratoRow.texto_contrato;
+    if (finalTextoContrato) {
+      finalTextoContrato = finalTextoContrato.replace(/Contrato<br>\s*n\.º\s*[^<]*/i, `Contrato<br>n.º ${id}`);
+      finalTextoContrato = finalTextoContrato.replace(/Contrato\s+N\.º\s*(\d+|—)/gi, `Contrato N.º ${id}`);
+    }
     const caminhoAssinaturaPrimeiro = path.join(__dirname, 'public', 'images', 'assinatura.png');
     if (fs.existsSync(caminhoAssinaturaPrimeiro) && finalTextoContrato) {
       try {
@@ -3392,7 +3396,7 @@ app.get('/api/contratos/:id/visualizar', async (req, res) => {
     const c = result.recordset[0];
     if (!c) return notFound(res, 'Contrato não encontrado.');
 
-    const numContrato = c.aluno_numero ?? c.aluno_id;
+    const numContrato = c.id;
 
     let texto = c.texto_contrato || '';
     if (!texto) {
