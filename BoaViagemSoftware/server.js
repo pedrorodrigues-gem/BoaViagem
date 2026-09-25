@@ -128,6 +128,12 @@ async function ensureSchemaColumns() {
       BEGIN CATCH
       END CATCH;
 
+      BEGIN TRY
+        ALTER TABLE alunos ALTER COLUMN tipo_documento NVARCHAR(50) NULL;
+      END TRY
+      BEGIN CATCH
+      END CATCH;
+
       IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('contratos') AND name = 'tipo_desconto')
         ALTER TABLE contratos ADD tipo_desconto NVARCHAR(20) NULL DEFAULT 'valor';
 
@@ -752,11 +758,12 @@ function collectionRoutes(name, { validate, onCreate, onUpdate, onDelete, onAfte
         try { finalSaved = (await onAfterUpdate(saved, tenant, req, atualizado)) || saved; }
         catch (ex) { finalSaved._avisoPosAtualizacao = `O registo foi atualizado, mas ocorreu um aviso: ${ex.message || ex}`; }
       }
+      const outItem = await applyOut(finalSaved, tenant, req);
       const list = tenant[name] || [];
       const pos = list.findIndex(x => Number(x.id) === Number(req.params.id));
-      if (pos >= 0) list[pos] = finalSaved; else list.push(finalSaved);
+      if (pos >= 0) list[pos] = outItem; else list.push(outItem);
       tenant[name] = list;
-      ok(res, await applyOut(finalSaved, tenant, req));
+      ok(res, outItem);
     } catch (ex) {
       res.status(503).json({ success: false, error: `Falha ao atualizar ${name}: ${ex.message || ex}` });
     }
@@ -956,10 +963,13 @@ function flattenAlunoExtras(item) {
     delete item.examePsicotecnico;
   }
   if (item.processoIMT && typeof item.processoIMT === 'object') {
-    item.imtNumero = item.processoIMT.numero ?? item.imtNumero;
-    item.imtDataEmissao = item.processoIMT.dataEmissao ?? item.imtDataEmissao;
-    item.imtDataValidade = item.processoIMT.dataValidade ?? item.imtDataValidade;
+    item.imtNumero = item.processoIMT.numero !== undefined ? (item.processoIMT.numero || null) : (item.imtNumero ?? null);
+    item.imtDataEmissao = item.processoIMT.dataEmissao !== undefined ? (item.processoIMT.dataEmissao || null) : (item.imtDataEmissao ?? null);
+    item.imtDataValidade = item.processoIMT.dataValidade !== undefined ? (item.processoIMT.dataValidade || null) : (item.imtDataValidade ?? null);
     delete item.processoIMT;
+  }
+  if (item.numeroLA !== undefined && !item.imtNumero) {
+    item.imtNumero = item.numeroLA || null;
   }
 
   // Sanitização de campos de data: strings vazias "" devem ser convertidas para null
@@ -1200,7 +1210,7 @@ app.use('/api/alunos', collectionRoutes('alunos', {
   validate: (p) => {
     if (!p.nome || !String(p.nome).trim()) return 'O nome do aluno é obrigatório.';
     const doc = p.numeroDocumento || p.numero_documento;
-    if (!doc || !String(doc).trim()) return 'O número do documento de identificação (CC / Passaporte) é obrigatório.';
+    if (!doc || !String(doc).trim()) return 'O número do documento de identificação (CC / Passaporte / Título de Residência) é obrigatório.';
     const espaco = p.espacoId || p.espaco_id;
     if (!espaco) return 'O espaço físico da escola é obrigatório.';
     return null;
@@ -1247,6 +1257,23 @@ app.get('/api/alunos/:id/foto', async (req, res) => {
   res.send(foto);
 });
 
+app.get('/api/alunos/:id/documentos', async (req, res) => {
+  try {
+    const alunoId = Number(req.params.id);
+    const alunoCheck = await query('SELECT id FROM alunos WHERE id=@id AND escola_id=@escolaId', { id: alunoId, escolaId: req.escolaId });
+    if (!alunoCheck.recordset[0]) return res.status(404).json({ error: 'Aluno não encontrado.' });
+
+    const documentos = await query(
+      `SELECT id, nome, filename, mime_type AS mimeType, tamanho_bytes AS size, uploaded_at AS uploadedAt
+       FROM aluno_documentos WHERE aluno_id=@alunoId ORDER BY id DESC`,
+      { alunoId }
+    );
+    ok(res, { documentos: documentos.recordset || [] });
+  } catch (ex) {
+    res.status(503).json({ error: `Falha ao obter documentos: ${ex.message || ex}` });
+  }
+});
+
 app.post('/api/alunos/:id/documentos', async (req, res) => {
   try {
     const alunoId = Number(req.params.id);
@@ -1268,10 +1295,10 @@ app.post('/api/alunos/:id/documentos', async (req, res) => {
 
     const documentos = await query(
       `SELECT id, nome, filename, mime_type AS mimeType, tamanho_bytes AS size, uploaded_at AS uploadedAt
-       FROM aluno_documentos WHERE aluno_id=@alunoId ORDER BY id`,
+       FROM aluno_documentos WHERE aluno_id=@alunoId ORDER BY id DESC`,
       { alunoId }
     );
-    ok(res, { documentos: documentos.recordset });
+    ok(res, { documentos: documentos.recordset || [] });
   } catch (ex) {
     res.status(503).json({ error: `Falha ao guardar documento: ${ex.message || ex}` });
   }
@@ -4114,6 +4141,8 @@ app.get('/api/relatorios/aluno/:id', async (req, res) => {
     if (alunoRes.recordset[0]) {
       aluno = nestAlunoExtras(dbRowToJs(alunoRes.recordset[0]));
     }
+  } else {
+    aluno = nestAlunoExtras({ ...aluno });
   }
   if (!aluno) return notFound(res);
 
